@@ -17,6 +17,10 @@ const (
 	appName = "ai"
 	// deepSeekKeyEnv is the API key OpenCode reads for the DeepSeek provider.
 	deepSeekKeyEnv = "DEEPSEEK_API_KEY"
+	// profileNameEnv and profileProviderEnv identify the profile to whatever
+	// runs inside the launched session.
+	profileNameEnv     = "AI_PROFILE"
+	profileProviderEnv = "AI_PROVIDER"
 )
 
 type Profile struct {
@@ -25,6 +29,9 @@ type Profile struct {
 	Command     string   `json:"command"`
 	DefaultArgs []string `json:"default_args,omitempty"`
 	Notes       string   `json:"notes,omitempty"`
+	// Indicator names the mechanism that tells the user which profile owns the
+	// screen once the CLI starts. Empty means none; see indicator.go.
+	Indicator string `json:"indicator,omitempty"`
 }
 
 type Config struct {
@@ -99,12 +106,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 		return nil
 	case "integrate":
-		if len(args) != 3 || args[1] != "openusage" {
-			return errors.New("usage: ai integrate openusage <profile>")
+		if len(args) != 3 || (args[1] != "openusage" && args[1] != "statusline") {
+			return errors.New("usage: ai integrate <openusage|statusline> <profile>")
 		}
 		profile, err := findProfile(cfg, args[2])
 		if err != nil {
 			return err
+		}
+		if args[1] == "statusline" {
+			return installIndicator(profile, &cfg, configPath, stdout)
 		}
 		return launchExternal("openusage", []string{"integrations", "install", openUsageIntegration(profile.Provider)}, profile, stdout, stderr)
 	case "path":
@@ -114,6 +124,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 		fmt.Fprintln(stdout, path)
 		return nil
+	case "version", "--version":
+		return versionCommand(stdout)
 	case "help", "--help", "-h":
 		usage(stdout)
 		return nil
@@ -293,15 +305,15 @@ func launchExternal(command string, args []string, profile Profile, stdout, stde
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = append(cleanEnvironment(os.Environ()), profileEnv(profile)...)
-	return runLockedCommand(cmd, workdir)
+	return runLockedCommand(cmd, workdir, sessionTitle(profile))
 }
 
-func runLockedCommand(cmd *exec.Cmd, workdir string) error {
+func runLockedCommand(cmd *exec.Cmd, workdir, title string) error {
 	lockDir, unlock, err := acquireExclusiveRunLock(workdir)
 	if err != nil {
 		return err
 	}
-	return runCommandWithLock(cmd, lockDir, unlock)
+	return runCommandWithLock(cmd, lockDir, unlock, title)
 }
 
 func launchProfileCommand(command string, args []string, profile Profile, stdout, stderr io.Writer) error {
@@ -318,11 +330,21 @@ func launchProfileCommand(command string, args []string, profile Profile, stdout
 	if err != nil {
 		return err
 	}
-	return runCommandWithLock(cmd, lockDir, unlock)
+	cmd, err = applyIndicator(cmd, profile, lockDir)
+	if err != nil {
+		unlock()
+		return err
+	}
+	return runCommandWithLock(cmd, lockDir, unlock, sessionTitle(profile))
 }
 
-func runCommandWithLock(cmd *exec.Cmd, lockDir string, unlock func()) error {
+func runCommandWithLock(cmd *exec.Cmd, lockDir string, unlock func(), title string) error {
 	defer unlock()
+	// A no-op unless this launch was wrapped; the socket outlives the tmux
+	// server that created it.
+	defer stopTmuxServer(lockDir)
+	restoreTitle := markTerminalTitle(cmd.Stdout, title)
+	defer restoreTitle()
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -369,26 +391,29 @@ func updateArgs(provider string) ([]string, error) {
 	}
 }
 
+// profileEnv builds the launch environment for a profile: the provider's own
+// state locations, followed by AI_PROFILE and AI_PROVIDER so a shell prompt, a
+// CLI statusline, or a status bar inside the session can name the account in
+// use. The two markers are set for every provider, including those with no
+// isolated state directory of their own.
 func profileEnv(profile Profile) []string {
-	root, err := profileRoot()
-	if err != nil {
-		return nil
-	}
-	dir := filepath.Join(root, profile.Name)
-	switch profile.Provider {
-	case "codex":
-		return []string{"CODEX_HOME=" + filepath.Join(dir, "codex")}
-	case "claude":
-		return []string{"CLAUDE_CONFIG_DIR=" + filepath.Join(dir, "claude")}
-	case "opencode":
-		return []string{
-			"XDG_CONFIG_HOME=" + filepath.Join(dir, "config"),
-			"XDG_DATA_HOME=" + filepath.Join(dir, "data"),
-			"XDG_STATE_HOME=" + filepath.Join(dir, "state"),
+	var env []string
+	if root, err := profileRoot(); err == nil {
+		dir := filepath.Join(root, profile.Name)
+		switch profile.Provider {
+		case "codex":
+			env = append(env, "CODEX_HOME="+filepath.Join(dir, "codex"))
+		case "claude":
+			env = append(env, "CLAUDE_CONFIG_DIR="+filepath.Join(dir, "claude"))
+		case "opencode":
+			env = append(env,
+				"XDG_CONFIG_HOME="+filepath.Join(dir, "config"),
+				"XDG_DATA_HOME="+filepath.Join(dir, "data"),
+				"XDG_STATE_HOME="+filepath.Join(dir, "state"),
+			)
 		}
-	default:
-		return nil
 	}
+	return append(env, profileNameEnv+"="+profile.Name, profileProviderEnv+"="+profile.Provider)
 }
 
 type authState int
@@ -609,6 +634,7 @@ func cleanEnvironment(values []string) []string {
 	blocked := map[string]bool{
 		"CODEX_HOME": true, "CLAUDE_CONFIG_DIR": true,
 		"XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true, "XDG_STATE_HOME": true,
+		profileNameEnv: true, profileProviderEnv: true,
 	}
 	result := make([]string, 0, len(values))
 	for _, value := range values {
@@ -730,7 +756,9 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  ai <profile> [arguments...]             shorthand for ai run")
 	fmt.Fprintln(w, "  ai env <profile>")
 	fmt.Fprintln(w, "  ai integrate openusage <profile>")
+	fmt.Fprintln(w, "  ai integrate statusline <profile>       show the profile inside the CLI")
 	fmt.Fprintln(w, "  ai path")
+	fmt.Fprintln(w, "  ai version                              build revision and update check")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Providers with isolated state: codex, claude, opencode, deepseek")
 	fmt.Fprintln(w, "Concurrent runs: codex and claude (OpenCode remains exclusive)")
