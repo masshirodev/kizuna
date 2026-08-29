@@ -16,6 +16,15 @@ var (
 	colorInfo    = lipgloss.AdaptiveColor{Light: "#0E7490", Dark: "#67E8F9"}
 	colorWarn    = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FCD34D"}
 	colorDanger  = lipgloss.AdaptiveColor{Light: "#B91C1C", Dark: "#FCA5A5"}
+
+	// The cockpit needs two tones below colorFaint that the stacked layout never
+	// did: one for the hairlines that separate its columns, and one for the
+	// detail beside a value — a reset time, a folder under a session title —
+	// which has to stay subordinate to the thing it annotates.
+	colorRule     = lipgloss.AdaptiveColor{Light: "#E4E4E7", Dark: "#1F1F24"}
+	colorDim      = lipgloss.AdaptiveColor{Light: "#A1A1AA", Dark: "#3F3F46"}
+	colorSelected = lipgloss.AdaptiveColor{Light: "#EDE9FE", Dark: "#181826"}
+	colorInverse  = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#0B0B0E"}
 )
 
 var (
@@ -28,7 +37,12 @@ var (
 	headerTitleStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorText)
 	headerCountStyle   = lipgloss.NewStyle().Foreground(colorFaint)
 	headerProfileStyle = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
-	ruleStyle          = lipgloss.NewStyle().Foreground(colorFaint)
+	ruleStyle          = lipgloss.NewStyle().Foreground(colorRule)
+
+	sectionLabelStyle = lipgloss.NewStyle().Foreground(colorFaint)
+	dimStyle          = lipgloss.NewStyle().Foreground(colorDim)
+	detailNameStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
+	separatorStyle    = lipgloss.NewStyle().Foreground(colorDim)
 
 	columnHeaderStyle  = lipgloss.NewStyle().Foreground(colorFaint)
 	authPresentStyle   = lipgloss.NewStyle().Foreground(colorSuccess)
@@ -60,6 +74,8 @@ var (
 
 	dangerPanelStyle = panelStyle.BorderForeground(colorDanger)
 
+	modalStyle = panelStyle.BorderForeground(colorAccent)
+
 	helpKeyStyle  = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
 	helpDescStyle = lipgloss.NewStyle().Foreground(colorMuted)
 	helpSepStyle  = lipgloss.NewStyle().Foreground(colorFaint)
@@ -72,23 +88,54 @@ var (
 	confirmBodyStyle = lipgloss.NewStyle().Foreground(colorText)
 )
 
-// providerStyle gives each provider a recognisable colour so a long profile
+// providerColor gives each provider a recognisable colour so a long profile
 // list can be scanned by shape rather than read word by word.
-func providerStyle(provider string) lipgloss.Style {
-	var color lipgloss.TerminalColor
+func providerColor(provider string) lipgloss.TerminalColor {
 	switch provider {
 	case "codex":
-		color = lipgloss.AdaptiveColor{Light: "#0E7490", Dark: "#67E8F9"}
+		return lipgloss.AdaptiveColor{Light: "#0E7490", Dark: "#67E8F9"}
 	case "claude":
-		color = lipgloss.AdaptiveColor{Light: "#C2410C", Dark: "#FDBA74"}
+		return lipgloss.AdaptiveColor{Light: "#C2410C", Dark: "#FDBA74"}
 	case "opencode":
-		color = lipgloss.AdaptiveColor{Light: "#6D28D9", Dark: "#D8B4FE"}
+		return lipgloss.AdaptiveColor{Light: "#6D28D9", Dark: "#D8B4FE"}
 	case "deepseek":
-		color = lipgloss.AdaptiveColor{Light: "#1D4ED8", Dark: "#93C5FD"}
+		return lipgloss.AdaptiveColor{Light: "#1D4ED8", Dark: "#93C5FD"}
 	default:
-		color = colorMuted
+		return colorMuted
 	}
-	return lipgloss.NewStyle().Foreground(color)
+}
+
+func providerStyle(provider string) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(providerColor(provider))
+}
+
+// providerBadgeStyle reverses the provider colour into a chip. The detail column
+// names one profile at a time, so the provider has to carry there without the
+// neighbouring rows that make the colour alone legible in the table.
+func providerBadgeStyle(provider string) lipgloss.Style {
+	return lipgloss.NewStyle().Bold(true).Foreground(colorInverse).Background(providerColor(provider)).Padding(0, 1)
+}
+
+// pen carries a row background through the cells of one line. lipgloss closes
+// the pen at the end of every span, so a background wrapped around a finished
+// row would survive only as far as its first coloured cell; it has to be part
+// of each cell instead.
+type pen struct {
+	background lipgloss.TerminalColor
+}
+
+func (p pen) render(style lipgloss.Style, text string) string {
+	if p.background != nil {
+		style = style.Background(p.background)
+	}
+	return style.Render(text)
+}
+
+func selectedPen(selected bool) pen {
+	if selected {
+		return pen{background: colorSelected}
+	}
+	return pen{}
 }
 
 type helpEntry struct {
@@ -102,6 +149,18 @@ func renderHelp(entries []helpEntry) string {
 		parts = append(parts, helpKeyStyle.Render(entry.key)+" "+helpDescStyle.Render(entry.desc))
 	}
 	return strings.Join(parts, helpSepStyle.Render(" · "))
+}
+
+// renderHelpFit drops whole entries from the end until the bar fits. A key list
+// cut mid-word advertises a key that is not there; a shorter list does not.
+func renderHelpFit(entries []helpEntry, width int) string {
+	for len(entries) > 1 {
+		if rendered := renderHelp(entries); lipgloss.Width(rendered) <= width {
+			return rendered
+		}
+		entries = entries[:len(entries)-1]
+	}
+	return truncate(renderHelp(entries), width)
 }
 
 func rule(width int) string {

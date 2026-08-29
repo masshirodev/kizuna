@@ -7,12 +7,17 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
 type usageWindow struct {
 	Percent int
 	Known   bool
+	// Resets is when the window rolls over, zero when the provider did not say.
+	// The percentage alone cannot tell a quota about to refill from one that has
+	// to last the rest of the week.
+	Resets time.Time
 }
 
 type usageRemaining struct {
@@ -134,6 +139,9 @@ func codexWindowsRemaining(windows []*codexRateLimitWindow, now time.Time) usage
 			continue
 		}
 		remaining := remainingFromUsed(*window.UsedPercent)
+		if window.ResetsAt > 0 {
+			remaining.Resets = time.Unix(window.ResetsAt, 0)
+		}
 		switch window.WindowMinutes {
 		case 300:
 			result.FiveHour = mostConstrained(result.FiveHour, remaining)
@@ -169,10 +177,14 @@ func claudeUsageRemaining(path string, now time.Time) usageRemaining {
 		return usageRemaining{}
 	}
 	windowRemaining := func(window limit) usageWindow {
+		var resets time.Time
 		if window.ResetsAt != "" {
 			reset, err := time.Parse(time.RFC3339Nano, window.ResetsAt)
-			if err == nil && !now.Before(reset) {
-				return usageWindow{}
+			if err == nil {
+				if !now.Before(reset) {
+					return usageWindow{}
+				}
+				resets = reset
 			}
 		}
 		used := window.Percent
@@ -182,7 +194,9 @@ func claudeUsageRemaining(path string, now time.Time) usageRemaining {
 		if used == nil {
 			return usageWindow{}
 		}
-		return remainingFromUsed(*used)
+		remaining := remainingFromUsed(*used)
+		remaining.Resets = resets
+		return remaining
 	}
 
 	var result usageRemaining
@@ -214,4 +228,25 @@ func mostConstrained(current, candidate usageWindow) usageWindow {
 func remainingFromUsed(used float64) usageWindow {
 	remaining := int(math.Round(100 - min(max(used, 0), 100)))
 	return usageWindow{Percent: remaining, Known: true}
+}
+
+// formatReset says when a quota window rolls over, in the shortest form that is
+// still unambiguous: a clock time for today, a weekday for later in the week,
+// and a date beyond that. An unknown reset renders as nothing rather than as a
+// placeholder, because the percentage beside it is the useful half.
+func formatReset(now, resets time.Time) string {
+	if resets.IsZero() || !resets.After(now) {
+		return ""
+	}
+	local := resets.Local()
+	switch delta := local.Sub(now); {
+	case delta < 24*time.Hour && local.Day() == now.Day():
+		return "resets " + local.Format("15:04")
+	case delta < 6*24*time.Hour:
+		return "resets " + strings.ToLower(local.Format("Mon"))
+	default:
+		// The weekday reads as a word and stays lowercase with the rest of the
+		// label; a month abbreviation lowercased just looks like a typo.
+		return "resets " + local.Format("2 Jan")
+	}
 }
