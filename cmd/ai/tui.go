@@ -77,7 +77,9 @@ type tuiModel struct {
 	form       profileForm
 	status     string
 	statusKind statusKind
+	log        []logEntry
 	width      int
+	height     int
 	running    bool
 	unlock     func()
 	usage      map[string]usageRemaining
@@ -88,11 +90,85 @@ type tuiModel struct {
 	instance   int
 	describing bool
 	update     updateStatus
+	// filter narrows the accounts column; searching is whether the query is
+	// still being typed. The cursor indexes the filtered list, not profiles.
+	filter    string
+	searching bool
+	// live, recent and activity are the cockpit's read-only panels. They are
+	// filled by commands so nothing that touches the disk runs on a keypress.
+	// loaded says whether the first read has landed, which is what separates
+	// "nothing is running" from "not asked yet" on the opening frame.
+	loaded   bool
+	live     []profileInstance
+	recent   []recordedSession
+	activity activity
+	// now is the clock the frame was rendered against, so uptimes and reset
+	// times are stable within a frame and fixed under test.
+	now time.Time
+}
+
+// logEntry is one line of the log panel.
+type logEntry struct {
+	kind statusKind
+	text string
+}
+
+// logLimit is how many past messages the log panel keeps. It is short on
+// purpose: the panel is there to hold the last thing that went wrong long
+// enough to read, not to become a transcript.
+const logLimit = 8
+
+func (m tuiModel) clock() time.Time {
+	if m.now.IsZero() {
+		return time.Now()
+	}
+	return m.now
+}
+
+// visibleProfiles is the list the cursor moves through. Everything that acts on
+// "the selected profile" goes through it, so a filtered list can never run the
+// account that merely happens to sit at the same index in the full one.
+func (m tuiModel) visibleProfiles() []Profile {
+	if m.filter == "" {
+		return m.profiles
+	}
+	query := strings.ToLower(m.filter)
+	matches := make([]Profile, 0, len(m.profiles))
+	for _, profile := range m.profiles {
+		if strings.Contains(strings.ToLower(profile.Name), query) ||
+			strings.Contains(strings.ToLower(profile.Provider), query) {
+			matches = append(matches, profile)
+		}
+	}
+	return matches
+}
+
+func (m tuiModel) selectedProfile() (Profile, bool) {
+	visible := m.visibleProfiles()
+	if m.cursor < 0 || m.cursor >= len(visible) {
+		return Profile{}, false
+	}
+	return visible[m.cursor], true
+}
+
+// clampCursor keeps the cursor on a profile that is actually on screen after
+// the list changes underneath it — a filter keystroke, or a deletion.
+func (m *tuiModel) clampCursor() {
+	if visible := len(m.visibleProfiles()); m.cursor >= visible {
+		m.cursor = max(visible-1, 0)
+	}
 }
 
 func (m *tuiModel) setStatus(kind statusKind, message string) {
 	m.statusKind = kind
 	m.status = message
+	if message == "" {
+		return
+	}
+	m.log = append([]logEntry{{kind: kind, text: message}}, m.log...)
+	if len(m.log) > logLimit {
+		m.log = m.log[:logLimit]
+	}
 }
 
 func (m *tuiModel) clearStatus() {
@@ -119,7 +195,49 @@ func runTUI() error {
 }
 
 func (m tuiModel) Init() tea.Cmd {
-	return tea.Batch(loadUsageCmd(m.profiles), checkUpdateCmd(false))
+	return tea.Batch(loadUsageCmd(m.profiles), checkUpdateCmd(false), m.loadCockpitCmd(), cockpitTickCmd())
+}
+
+// cockpitRefresh is how often the live panels are re-read. Instances come and
+// go without ai-session being told, so the panel that claims to say what is
+// running has to ask again; ten seconds is often enough to feel current and
+// rare enough that the scan is never what the machine is busy with.
+const cockpitRefresh = 10 * time.Second
+
+type cockpitTickMsg time.Time
+
+func cockpitTickCmd() tea.Cmd {
+	return tea.Tick(cockpitRefresh, func(now time.Time) tea.Msg { return cockpitTickMsg(now) })
+}
+
+// cockpitLoadedMsg carries one refresh of the read-only panels. It names the
+// profile its per-account halves describe: moving the cursor starts a new load
+// without cancelling the one in flight, and a slow read landing after a fast one
+// would otherwise file one account's sessions under another's name.
+type cockpitLoadedMsg struct {
+	profile  string
+	live     []profileInstance
+	recent   []recordedSession
+	activity activity
+	now      time.Time
+}
+
+// loadCockpitCmd reads the panels that describe the world rather than the
+// config: what is running everywhere, and what the selected account has been
+// doing. All of it touches the filesystem, so none of it happens inline.
+func (m tuiModel) loadCockpitCmd() tea.Cmd {
+	profiles := append([]Profile(nil), m.profiles...)
+	selected, hasSelection := m.selectedProfile()
+	return func() tea.Msg {
+		now := time.Now()
+		msg := cockpitLoadedMsg{profile: selected.Name, now: now}
+		msg.live = describeLiveInstances(profiles, allProfileInstances(profiles))
+		if hasSelection {
+			msg.recent = recentSessions(selected, recentSessionLimit)
+			msg.activity = profileActivity(selected, now)
+		}
+		return msg
+	}
 }
 
 func checkUpdateCmd(force bool) tea.Cmd {
@@ -138,7 +256,7 @@ func loadUsageCmd(profiles []Profile) tea.Cmd {
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
+		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 	case tea.KeyMsg:
 		if m.running {
@@ -171,7 +289,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.setStatus(statusOK, "process finished")
 		}
-		return m, loadUsageCmd(m.profiles)
+		return m, tea.Batch(loadUsageCmd(m.profiles), m.loadCockpitCmd())
+	case cockpitTickMsg:
+		return m, tea.Batch(m.loadCockpitCmd(), cockpitTickCmd())
+	case cockpitLoadedMsg:
+		// What is running is true of the whole machine, so it lands either way.
+		m.live, m.now, m.loaded = msg.live, msg.now, true
+		if profile, ok := m.selectedProfile(); ok && profile.Name == msg.profile {
+			m.recent, m.activity = msg.recent, msg.activity
+		}
 	case usageLoadedMsg:
 		m.usage = msg
 	case updateCheckedMsg:
@@ -188,7 +314,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode != tuiHijack && m.mode != tuiConfirmKill {
 			return m, nil
 		}
-		if m.cursor < len(m.profiles) && m.profiles[m.cursor].Name == msg.profile && len(msg.instances) == len(m.instances) {
+		if profile, ok := m.selectedProfile(); ok && profile.Name == msg.profile && len(msg.instances) == len(m.instances) {
 			m.instances = msg.instances
 		}
 	}
@@ -196,17 +322,26 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.searching {
+		return m.updateSearch(msg)
+	}
+	profile, hasSelection := m.selectedProfile()
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
+			return m, m.loadCockpitCmd()
 		}
 	case "down", "j":
-		if m.cursor < len(m.profiles)-1 {
+		if m.cursor < len(m.visibleProfiles())-1 {
 			m.cursor++
+			return m, m.loadCockpitCmd()
 		}
+	case "/":
+		m.searching = true
+		m.clearStatus()
 	case "a":
 		m.mode = tuiForm
 		m.form = profileForm{name: "", provider: "codex", command: "codex", isNew: true}
@@ -216,8 +351,7 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.folderPath = m.workingDir
 		m.clearStatus()
 	case "e":
-		if len(m.profiles) > 0 {
-			profile := m.profiles[m.cursor]
+		if hasSelection {
 			if profileIsRunning(profile) {
 				m.setStatus(statusErr, "cannot edit a running profile")
 				return m, nil
@@ -235,23 +369,22 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "r":
 		m.usage = nil
-		return m, tea.Batch(loadUsageCmd(m.profiles), checkUpdateCmd(true))
+		return m, tea.Batch(loadUsageCmd(m.profiles), checkUpdateCmd(true), m.loadCockpitCmd())
 	case "x":
-		if len(m.profiles) > 0 {
+		if hasSelection {
 			m.mode = tuiConfirmDelete
 			m.clearStatus()
 		}
 	case "K":
-		if len(m.profiles) > 0 {
+		if hasSelection {
 			return m, m.openInstances(tuiConfirmKill)
 		}
 	case "h":
-		if len(m.profiles) > 0 {
+		if hasSelection {
 			return m, m.openInstances(tuiHijack)
 		}
 	case "R":
-		if len(m.profiles) > 0 {
-			profile := m.profiles[m.cursor]
+		if hasSelection {
 			args, err := resumeArgs(profile.Provider)
 			if err != nil {
 				m.setStatus(statusErr, err.Error())
@@ -260,32 +393,72 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.execProfile(profile, profileRunArgs(profile, args), false)
 		}
 	case "p":
-		if len(m.profiles) > 0 {
+		if hasSelection {
 			m.mode = tuiParams
 			m.params = ""
 			m.clearStatus()
 		}
 	case "l":
-		if len(m.profiles) > 0 {
-			return m, m.execProfile(m.profiles[m.cursor], loginArgs(m.profiles[m.cursor].Provider), true)
+		if hasSelection {
+			return m, m.execProfile(profile, loginArgs(profile.Provider), true)
 		}
 	case "enter":
-		if len(m.profiles) > 0 {
-			profile := m.profiles[m.cursor]
+		if hasSelection {
 			return m, m.execProfile(profile, profileRunArgs(profile, nil), false)
 		}
 	case "u":
-		if len(m.profiles) > 0 {
-			return m, m.execUpdate(m.profiles[m.cursor])
+		if hasSelection {
+			return m, m.execUpdate(profile)
 		}
 	}
 	return m, nil
 }
 
+// updateSearch narrows the accounts column as the query is typed. Enter keeps
+// the filter and hands the keys back to the list, so a search is a way to reach
+// one account among many rather than a mode to be dismissed before acting.
+func (m tuiModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.searching, m.filter = false, ""
+		m.clampCursor()
+		return m, m.loadCockpitCmd()
+	case "enter":
+		m.searching = false
+		return m, nil
+	case "up", "ctrl+p":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+		return m, nil
+	case "down", "ctrl+n":
+		if m.cursor < len(m.visibleProfiles())-1 {
+			m.cursor++
+		}
+		return m, nil
+	case "backspace", "ctrl+h":
+		if runes := []rune(m.filter); len(runes) > 0 {
+			m.filter = string(runes[:len(runes)-1])
+		}
+	case "ctrl+u":
+		m.filter = ""
+	default:
+		if msg.Type != tea.KeyRunes {
+			return m, nil
+		}
+		m.filter += string(msg.Runes)
+	}
+	m.clampCursor()
+	return m, m.loadCockpitCmd()
+}
+
 // openInstances shows the running instances of the selected profile and starts
 // resolving what each one is working on.
 func (m *tuiModel) openInstances(mode tuiMode) tea.Cmd {
-	profile := m.profiles[m.cursor]
+	profile, ok := m.selectedProfile()
+	if !ok {
+		return nil
+	}
 	instances, err := activeProfileInstances(profile)
 	if err != nil {
 		m.setStatus(statusErr, err.Error())
@@ -328,7 +501,11 @@ func (m tuiModel) updateHijack(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		instance := m.instances[m.instance]
-		profile := m.profiles[m.cursor]
+		profile, ok := m.selectedProfile()
+		if !ok {
+			m.mode = tuiList
+			return m, nil
+		}
 		args, err := hijackArgs(profile.Provider, instance.session)
 		if err != nil {
 			m.setStatus(statusErr, err.Error())
@@ -362,7 +539,11 @@ func (m tuiModel) updateParams(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus(statusErr, err.Error())
 			return m, nil
 		}
-		profile := m.profiles[m.cursor]
+		profile, ok := m.selectedProfile()
+		if !ok {
+			m.mode = tuiList
+			return m, nil
+		}
 		m.mode = tuiList
 		return m, m.execProfile(profile, profileRunArgs(profile, args), false)
 	case "backspace", "ctrl+h":
@@ -404,12 +585,17 @@ func (m tuiModel) updateKill(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatus(statusErr, "stop failed: "+err.Error())
 			}
 		} else {
-			m.setStatus(statusOK, fmt.Sprintf("stopped %s instance %d (PID %d)", m.profiles[m.cursor].Name, m.instance+1, instance.pid))
+			name, _ := m.selectedProfile()
+			m.setStatus(statusOK, fmt.Sprintf("stopped %s instance %d (PID %d)", name.Name, m.instance+1, instance.pid))
 		}
 		m.instances = nil
 		m.mode = tuiList
 	case "a", "y", "Y":
-		profile := m.profiles[m.cursor]
+		profile, ok := m.selectedProfile()
+		if !ok {
+			m.mode = tuiList
+			return m, nil
+		}
 		if err := terminateProfile(profile); err != nil {
 			var staleErr staleProfileLockError
 			if errors.As(err, &staleErr) {
@@ -464,7 +650,11 @@ func (m tuiModel) updateFolder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m tuiModel) updateDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
-		profile := m.profiles[m.cursor]
+		profile, ok := m.selectedProfile()
+		if !ok {
+			m.mode = tuiList
+			return m, nil
+		}
 		if profileIsRunning(profile) {
 			m.setStatus(statusErr, "cannot delete a running profile")
 			m.mode = tuiList
@@ -492,9 +682,7 @@ func (m tuiModel) updateDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatus(statusErr, "delete failed: "+err.Error())
 			} else {
 				m.profiles = sortedProfiles(cfg.Profiles)
-				if m.cursor >= len(m.profiles) && m.cursor > 0 {
-					m.cursor--
-				}
+				m.clampCursor()
 				m.setStatus(statusOK, "deleted "+profile.Name)
 			}
 		}
@@ -522,7 +710,7 @@ func (m tuiModel) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mode = tuiList
-		return m, loadUsageCmd(m.profiles)
+		return m, tea.Batch(loadUsageCmd(m.profiles), m.loadCockpitCmd())
 	case "shift+tab", "up":
 		if m.form.field > 0 {
 			m.form.field--
@@ -644,8 +832,11 @@ func (m *tuiModel) saveForm() error {
 		return err
 	}
 	m.profiles = sortedProfiles(cfg.Profiles)
+	// A saved profile has to be visible to be selected, and its name need not
+	// match whatever the list was filtered to when the form was opened.
+	m.filter, m.searching = "", false
 	m.cursor = 0
-	for index, profile := range m.profiles {
+	for index, profile := range m.visibleProfiles() {
 		if profile.Name == m.form.name {
 			m.cursor = index
 			break
@@ -768,159 +959,6 @@ func (c trackedExecCommand) Run() error {
 	return c.cmd.Wait()
 }
 
-func (m tuiModel) View() string {
-	width := m.contentWidth()
-	sections := []string{m.headerView(width)}
-	switch m.mode {
-	case tuiForm:
-		sections = append(sections, m.formView(width))
-	case tuiFolder:
-		sections = append(sections, m.folderView(width))
-	case tuiParams:
-		sections = append(sections, m.paramsView(width))
-	case tuiConfirmDelete, tuiConfirmKill, tuiHijack:
-		sections = append(sections, m.listView(width), m.selectedProfileView(width), m.confirmView(width))
-	default:
-		sections = append(sections, m.listView(width), m.selectedProfileView(width))
-	}
-	sections = append(sections, rule(width), m.helpView(width))
-	if update := m.updateView(width); update != "" {
-		sections = append(sections, update)
-	}
-	if status := m.statusView(width); status != "" {
-		sections = append(sections, status)
-	}
-	return "\n" + lipgloss.NewStyle().PaddingLeft(2).Render(
-		lipgloss.JoinVertical(lipgloss.Left, sections...),
-	) + "\n"
-}
-
-// contentWidth keeps the layout comfortable on wide terminals and still usable
-// on narrow ones; a zero width means the terminal size is not known yet.
-func (m tuiModel) contentWidth() int {
-	width := m.width - 4
-	if m.width == 0 {
-		width = 72
-	}
-	return min(max(width, 34), 86)
-}
-
-// headerView names the profile under the cursor beside the count. The row
-// highlight alone says which row is selected but not which account is in play,
-// which is the thing worth reading back before pressing enter.
-func (m tuiModel) headerView(width int) string {
-	title := lipgloss.JoinHorizontal(lipgloss.Center, appBadgeStyle.Render("ai"), " ", headerTitleStyle.Render("session profiles"))
-	count := fmt.Sprintf("%d profiles", len(m.profiles))
-	switch len(m.profiles) {
-	case 0:
-		count = "no profiles"
-	case 1:
-		count = "1 profile"
-	}
-	right := headerCountStyle.Render(count)
-	if name := m.selectedName(); name != "" {
-		// Drop the name rather than the count when the two cannot both fit:
-		// a truncated name is worse than none at identifying an account.
-		if room := width - lipgloss.Width(title) - lipgloss.Width(count) - 4; room >= lipgloss.Width(name) {
-			right = headerProfileStyle.Render(name) + headerCountStyle.Render(" · "+count)
-		}
-	}
-	return spread(title, right, width) + "\n" + rule(width) + "\n"
-}
-
-func (m tuiModel) selectedName() string {
-	if m.cursor < 0 || m.cursor >= len(m.profiles) {
-		return ""
-	}
-	return m.profiles[m.cursor].Name
-}
-
-func (m tuiModel) listView(width int) string {
-	if len(m.profiles) == 0 {
-		return emptyStateStyle.Render("No profiles yet — press a to create one.") + "\n"
-	}
-	nameWidth, providerWidth, modelWidth := 12, 8, len("MODEL")
-	models := make([]string, len(m.profiles))
-	for index, profile := range m.profiles {
-		models[index] = profileModel(profile)
-		nameWidth = max(nameWidth, lipgloss.Width(profile.Name))
-		providerWidth = max(providerWidth, lipgloss.Width(profile.Provider))
-		modelWidth = max(modelWidth, lipgloss.Width(models[index]))
-	}
-	nameWidth, providerWidth, modelWidth = min(nameWidth, 26), min(providerWidth, 12), min(modelWidth, 22)
-
-	// Notes and the full launch command live in the selected-profile panel. The
-	// table keeps the scan-friendly fields, shrinking columns in usefulness order
-	// when the terminal is narrow.
-	total := 2 + nameWidth + 2 + providerWidth + 2 + authWidth + 2 + modelWidth + 2 + usageWidth + 2 + usageWidth
-	showProvider := total <= width
-	if !showProvider {
-		total -= providerWidth + 2
-	}
-	showAuth := true
-	if total > width {
-		showAuth = false
-		total -= authWidth + 2
-	}
-	for total > width && nameWidth > 8 {
-		nameWidth--
-		total--
-	}
-	for total > width && modelWidth > len("MODEL") {
-		modelWidth--
-		total--
-	}
-	for showProvider && total > width && providerWidth > 4 {
-		providerWidth--
-		total--
-	}
-	for total > width && nameWidth > 1 {
-		nameWidth--
-		total--
-	}
-
-	header := pad(truncate("NAME", nameWidth), nameWidth)
-	if showProvider {
-		header += "  " + pad(truncate("PROVIDER", providerWidth), providerWidth)
-	}
-	if showAuth {
-		header += "  " + pad("AUTH", authWidth)
-	}
-	header += "  " + pad(truncate("MODEL", modelWidth), modelWidth) +
-		"  " + pad("5H", usageWidth) +
-		"  " + pad("7D", usageWidth)
-	rows := []string{"  " + columnHeaderStyle.Render(header)}
-	for index, profile := range m.profiles {
-		bar, name := "  ", nameStyle.Render(pad(truncate(profile.Name, nameWidth), nameWidth))
-		if index == m.cursor {
-			bar = cursorBarStyle.Render("▌ ")
-			name = nameActiveStyle.Render(pad(truncate(profile.Name, nameWidth), nameWidth))
-		}
-		left := bar + name
-		if showProvider {
-			provider := providerStyle(profile.Provider).Render(pad(truncate(profile.Provider, providerWidth), providerWidth))
-			left += "  " + provider
-		}
-		if showAuth {
-			left += "  " + authCell(profile)
-		}
-		left += "  " + modelCell(models[index], modelWidth) + "  " + m.usageCell(profile, fiveHourWindow) + "  " + m.usageCell(profile, weeklyWindow)
-		badge := ""
-		if running := profileRunningCount(profile); running > 0 {
-			badgeText := "▶ running"
-			if running > 1 {
-				badgeText = fmt.Sprintf("▶ %d running", running)
-			}
-			badge = liveStyle.Render(badgeText)
-			if lipgloss.Width(left)+1+lipgloss.Width(badge) > width {
-				badge = liveStyle.Render("▶")
-			}
-		}
-		rows = append(rows, spread(left, badge, width))
-	}
-	return strings.Join(rows, "\n") + "\n"
-}
-
 const usageWidth = 4
 
 type usageWindowKind int
@@ -930,65 +968,25 @@ const (
 	weeklyWindow
 )
 
-func (m tuiModel) usageCell(profile Profile, kind usageWindowKind) string {
+// usageCellWith renders one quota figure for the accounts table. The pen carries
+// the row's background so a selected row stays highlighted through a cell that
+// sets its own colour.
+func (m tuiModel) usageCellWith(ink pen, profile Profile, kind usageWindowKind) string {
 	if m.usage == nil {
-		return unknownStyle.Render(pad("…", usageWidth))
+		return ink.render(unknownStyle, pad("…", usageWidth))
 	}
 	usage, exists := m.usage[profile.Name]
 	if !exists {
-		return unknownStyle.Render(pad("—", usageWidth))
+		return ink.render(unknownStyle, pad("—", usageWidth))
 	}
 	window := usage.FiveHour
 	if kind == weeklyWindow {
 		window = usage.Weekly
 	}
 	if !window.Known {
-		return unknownStyle.Render(pad("—", usageWidth))
+		return ink.render(unknownStyle, pad("—", usageWidth))
 	}
-	value := pad(fmt.Sprintf("%d%%", window.Percent), usageWidth)
-	switch {
-	case window.Percent <= 10:
-		return usageCriticalStyle.Render(value)
-	case window.Percent <= 25:
-		return usageWarningStyle.Render(value)
-	default:
-		return usageGoodStyle.Render(value)
-	}
-}
-
-func (m tuiModel) selectedProfileView(width int) string {
-	if len(m.profiles) == 0 || m.cursor >= len(m.profiles) {
-		return ""
-	}
-	profile := m.profiles[m.cursor]
-	launch := formatArguments(append([]string{profile.Command}, profile.DefaultArgs...))
-	defaultArgs := formatArguments(profile.DefaultArgs)
-	if defaultArgs == "" {
-		defaultArgs = "—"
-	}
-	notes := profile.Notes
-	if notes == "" {
-		notes = "—"
-	}
-	workingDir := m.workingDir
-	if workingDir == "" {
-		workingDir = "—"
-	}
-	valueWidth := max(width-18, 1)
-	lines := []string{
-		fieldLabelStyle.Render(pad("Launch", 12)) + " " + fieldValueStyle.Render(truncate(launch, valueWidth)),
-		fieldLabelStyle.Render(pad("Folder", 12)) + " " + fieldValueStyle.Render(truncate(workingDir, valueWidth)),
-		fieldLabelStyle.Render(pad("Default args", 12)) + " " + fieldValueStyle.Render(truncate(defaultArgs, valueWidth)),
-		fieldLabelStyle.Render(pad("Notes", 12)) + " " + fieldValueStyle.Render(truncate(notes, valueWidth)),
-	}
-	return "\n" + sectionTitle.Render("Selected") + "\n" + panelStyle.Width(width-2).Render(strings.Join(lines, "\n")) + "\n"
-}
-
-func modelCell(model string, width int) string {
-	if model == "" {
-		return unknownStyle.Render(pad("—", width))
-	}
-	return modelStyle.Render(pad(truncate(model, width), width))
+	return ink.render(usageStyle(window), pad(fmt.Sprintf("%d%%", window.Percent), usageWidth))
 }
 
 // authWidth fits the widest cell rendered by authCell, plus the AUTH heading.
@@ -1007,7 +1005,7 @@ func authCell(profile Profile) string {
 	}
 }
 
-func (m tuiModel) formView(width int) string {
+func (m tuiModel) formContent() []string {
 	heading := "New profile"
 	if !m.form.isNew {
 		heading = "Edit " + m.form.original
@@ -1019,7 +1017,7 @@ func (m tuiModel) formView(width int) string {
 		{"Default args", m.form.defaultArgs},
 		{"Notes", m.form.notes},
 	}
-	lines := make([]string, 0, len(fields)+1)
+	lines := []string{headerTitleStyle.Render(heading), ""}
 	for index, field := range fields {
 		label, value := fieldLabelStyle.Render(pad(field.label, 12)), fieldValueStyle.Render(field.value)
 		if index == m.form.field {
@@ -1033,46 +1031,68 @@ func (m tuiModel) formView(width int) string {
 	} else if m.form.field == 3 {
 		lines = append(lines, "", hintStyle.Render("shell-style quotes are supported; arguments apply only when running"))
 	}
-	body := panelStyle.Width(width - 2).Render(strings.Join(lines, "\n"))
-	return sectionTitle.Render(heading) + "\n" + body + "\n"
+	return lines
 }
 
-func (m tuiModel) folderView(width int) string {
-	value := fieldValueStyle.Render(m.folderPath) + cursorStyle.Render(" ")
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		fieldLabelActive.Render(pad("Folder", 12))+" "+value,
+func (m tuiModel) folderContent() []string {
+	return []string{
+		headerTitleStyle.Render("Change launch folder"),
+		"",
+		fieldLabelActive.Render(pad("Folder", 12)) + " " + fieldValueStyle.Render(m.folderPath) + cursorStyle.Render(" "),
 		"",
 		hintStyle.Render("Relative paths use the current launch folder. ~ is supported."),
-	)
-	return sectionTitle.Render("Change launch folder") + "\n" + panelStyle.Width(width-2).Render(content) + "\n"
+	}
 }
 
-func (m tuiModel) confirmView(width int) string {
-	if m.cursor >= len(m.profiles) {
-		return ""
+func (m tuiModel) paramsContent() []string {
+	name := "profile"
+	if profile, ok := m.selectedProfile(); ok {
+		name = profile.Name
 	}
-	profile := m.profiles[m.cursor]
-	var body string
-	if m.mode == tuiHijack {
-		lines := append([]string{sectionTitle.Render("Open a running " + profile.Name + " session here")},
+	return []string{
+		headerTitleStyle.Render("Run " + name + " with arguments"),
+		"",
+		fieldLabelActive.Render(pad("Arguments", 12)) + " " + fieldValueStyle.Render(m.params) + cursorStyle.Render(" "),
+		"",
+		hintStyle.Render("Added after the profile default arguments. Shell-style quotes are supported."),
+	}
+}
+
+func (m tuiModel) confirmContent(width int) []string {
+	profile, ok := m.selectedProfile()
+	if !ok {
+		return nil
+	}
+	switch m.mode {
+	case tuiHijack:
+		lines := append([]string{headerTitleStyle.Render("Open a running " + profile.Name + " session here"), ""},
 			m.instanceRows(width, fieldValueStyle)...)
-		lines = append(lines, "", hintStyle.Render("The original instance keeps running; this opens its conversation."))
-		return "\n" + panelStyle.Width(width-2).Render(lipgloss.JoinVertical(lipgloss.Left, lines...)) + "\n"
-	}
-	if m.mode == tuiConfirmKill {
-		lines := append([]string{dangerTextStyle.Render("Stop a " + profile.Name + " instance?")},
+		return append(lines, "", hintStyle.Render("The original instance keeps running; this opens its conversation."))
+	case tuiConfirmKill:
+		lines := append([]string{dangerTextStyle.Render("Stop a " + profile.Name + " instance?"), ""},
 			m.instanceRows(width, dangerTextStyle)...)
-		lines = append(lines, "", confirmBodyStyle.Render("Enter stops the selected instance. a or y stops them all."))
-		body = dangerPanelStyle.Width(width - 2).Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
-		return "\n" + body + "\n"
+		return append(lines, "", confirmBodyStyle.Render("Enter stops the selected instance. a or y stops them all."))
+	default:
+		return []string{
+			dangerTextStyle.Render("Delete " + profile.Name + "?"),
+			"",
+			confirmBodyStyle.Render("Its isolated state directory and stored credentials"),
+			confirmBodyStyle.Render("are removed. This cannot be undone."),
+		}
 	}
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		dangerTextStyle.Render("Delete "+profile.Name+"?"),
-		confirmBodyStyle.Render("Its isolated state directory and stored credentials"),
-		confirmBodyStyle.Render("are removed. This cannot be undone."),
-	)
-	body = dangerPanelStyle.Width(width - 2).Render(content)
-	return "\n" + body + "\n"
+}
+
+// statusIcon marks how a message landed. The log panel and the modal footer
+// share it so one glance means the same thing in both places.
+func statusIcon(kind statusKind) (string, lipgloss.Style) {
+	switch kind {
+	case statusOK:
+		return "✓", statusOKStyle
+	case statusErr:
+		return "✗", statusErrStyle
+	default:
+		return "•", statusInfoStyle
+	}
 }
 
 // instanceRows renders one running instance per two lines: what it is working
@@ -1127,89 +1147,43 @@ func shortenHome(path string) string {
 	return path
 }
 
-func (m tuiModel) paramsView(width int) string {
-	profile := "profile"
-	if m.cursor < len(m.profiles) {
-		profile = m.profiles[m.cursor].Name
-	}
-	value := fieldValueStyle.Render(m.params) + cursorStyle.Render(" ")
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		fieldLabelActive.Render(pad("Arguments", 12))+" "+value,
-		"",
-		hintStyle.Render("Added after the profile default arguments. Shell-style quotes are supported."),
-	)
-	return sectionTitle.Render("Run "+profile+" with arguments") + "\n" + panelStyle.Width(width-2).Render(content) + "\n"
-}
-
-// helpView wraps at the content width so the key list reflows instead of
-// running past the edge of a narrow terminal.
-func (m tuiModel) helpView(width int) string {
-	return lipgloss.NewStyle().Width(width).Render(m.helpEntries())
-}
-
-func (m tuiModel) helpEntries() string {
-	switch m.mode {
-	case tuiForm:
-		return renderHelp([]helpEntry{
+func (m tuiModel) helpEntries() []helpEntry {
+	switch {
+	case m.searching:
+		return []helpEntry{{"type", "filter"}, {"↑↓", "choose"}, {"↵", "keep filter"}, {"esc", "clear"}}
+	case m.mode == tuiForm:
+		return []helpEntry{
 			{"tab/↵", "next field"},
 			{"↵", "save on last field"},
 			{"ctrl-u", "clear"},
 			{"esc", "cancel"},
-		})
-	case tuiFolder:
-		return renderHelp([]helpEntry{{"↵", "set folder"}, {"ctrl-u", "clear"}, {"esc", "cancel"}})
-	case tuiConfirmDelete:
-		return renderHelp([]helpEntry{{"y", "delete"}, {"n/esc", "keep"}})
-	case tuiConfirmKill:
-		return renderHelp([]helpEntry{{"↑↓/jk", "choose instance"}, {"↵", "stop selected"}, {"a/y", "stop all"}, {"n/esc", "keep running"}})
-	case tuiHijack:
-		return renderHelp([]helpEntry{{"↑↓/jk", "choose instance"}, {"↵", "open here"}, {"esc", "cancel"}})
-	case tuiParams:
-		return renderHelp([]helpEntry{{"↵", "run"}, {"ctrl-u", "clear"}, {"esc", "cancel"}})
-	default:
-		if len(m.profiles) == 0 {
-			return renderHelp([]helpEntry{{"a", "add profile"}, {"q", "quit"}})
 		}
-		return renderHelp([]helpEntry{
+	case m.mode == tuiFolder:
+		return []helpEntry{{"↵", "set folder"}, {"ctrl-u", "clear"}, {"esc", "cancel"}}
+	case m.mode == tuiConfirmDelete:
+		return []helpEntry{{"y", "delete"}, {"n/esc", "keep"}}
+	case m.mode == tuiConfirmKill:
+		return []helpEntry{{"↑↓/jk", "choose instance"}, {"↵", "stop selected"}, {"a/y", "stop all"}, {"n/esc", "keep running"}}
+	case m.mode == tuiHijack:
+		return []helpEntry{{"↑↓/jk", "choose instance"}, {"↵", "open here"}, {"esc", "cancel"}}
+	case m.mode == tuiParams:
+		return []helpEntry{{"↵", "run"}, {"ctrl-u", "clear"}, {"esc", "cancel"}}
+	case len(m.profiles) == 0:
+		return []helpEntry{{"a", "add profile"}, {"q", "quit"}}
+	default:
+		return []helpEntry{
 			{"↵", "run"},
-			{"p", "run with args"},
+			{"p", "args"},
 			{"R", "resume"},
 			{"h", "hijack"},
 			{"l", "login"},
-			{"u", "update CLI"},
-			{"c", "change folder"},
-			{"r", "refresh usage"},
-			{"a", "add"},
-			{"e", "edit"},
-			{"x", "delete"},
+			{"u", "update"},
+			{"c", "folder"},
+			{"r", "refresh"},
+			{"a e x", "add edit delete"},
 			{"K", "stop"},
-			{"q", "quit"},
-		})
+		}
 	}
-}
-
-// updateView is shown only when there is something to act on. A check that
-// could not run says so through the status line when the user asks for it with
-// r, rather than nagging on every launch.
-func (m tuiModel) updateView(width int) string {
-	if !m.update.available() {
-		return ""
-	}
-	return "\n" + updateStyle.Width(width).Render("↑ "+m.update.message())
-}
-
-func (m tuiModel) statusView(width int) string {
-	if m.status == "" {
-		return ""
-	}
-	icon, style := "•", statusInfoStyle
-	switch m.statusKind {
-	case statusOK:
-		icon, style = "✓", statusOKStyle
-	case statusErr:
-		icon, style = "✗", statusErrStyle
-	}
-	return "\n" + style.Width(width).Render(icon+" "+m.status)
 }
 
 func terminateProfile(profile Profile) error {

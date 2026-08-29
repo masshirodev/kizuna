@@ -23,8 +23,22 @@ type profileInstance struct {
 	pid     int
 	// folder is the directory the instance was launched in, recorded so a
 	// later hijack can reopen the same conversation from the same place.
-	folder  string
+	folder string
+	// profile names the account this instance runs under. It is set only when
+	// the instance was collected across profiles, where the row has to say
+	// which account it belongs to.
+	profile string
+	// started is when the launch was recorded, zero for an instance whose meta
+	// file was never written or no longer parses.
+	started time.Time
 	session instanceSession
+}
+
+func (instance profileInstance) uptime(now time.Time) time.Duration {
+	if instance.started.IsZero() || instance.started.After(now) {
+		return 0
+	}
+	return now.Sub(instance.started)
 }
 
 // instanceMeta is the launch detail a lock file cannot carry. It is written
@@ -276,13 +290,52 @@ func activeProfileInstances(profile Profile) ([]profileInstance, error) {
 		if err != nil {
 			return nil, err
 		}
+		meta := readInstanceMeta(lockDir)
 		instances = append(instances, profileInstance{
 			lockDir: lockDir,
 			pid:     pid,
-			folder:  readInstanceMeta(lockDir).Folder,
+			folder:  meta.Folder,
+			started: meta.startedAt(),
 		})
 	}
 	return instances, nil
+}
+
+// allProfileInstances collects what is running across every profile, tagged
+// with the account it belongs to. A profile that cannot be inspected is skipped
+// rather than failing the whole list: one unreadable lock directory should not
+// blank the panel that says what is live.
+func allProfileInstances(profiles []Profile) []profileInstance {
+	var all []profileInstance
+	for _, profile := range profiles {
+		instances, err := activeProfileInstances(profile)
+		if err != nil {
+			continue
+		}
+		for _, instance := range instances {
+			instance.profile = profile.Name
+			all = append(all, instance)
+		}
+	}
+	return all
+}
+
+// formatUptime renders how long an instance has been up in the two units that
+// matter at a glance, dropping to minutes under an hour so the common case is
+// the short one.
+func formatUptime(uptime time.Duration) string {
+	switch {
+	case uptime <= 0:
+		return "—"
+	case uptime < time.Minute:
+		return "just now"
+	case uptime < time.Hour:
+		return fmt.Sprintf("%dm", int(uptime.Minutes()))
+	case uptime < 24*time.Hour:
+		return fmt.Sprintf("%dh%02dm", int(uptime.Hours()), int(uptime.Minutes())%60)
+	default:
+		return fmt.Sprintf("%dd%dh", int(uptime.Hours())/24, int(uptime.Hours())%24)
+	}
 }
 
 func profileRunningCount(profile Profile) int {
@@ -316,6 +369,17 @@ func setProfileInstanceMeta(workdir, folder string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(workdir, instanceMetaFile), append(data, '\n'), 0600)
+}
+
+// startedAt reads the launch timestamp back. A meta file written by an older
+// build, or by a launch that failed midway, has no usable time; the caller
+// shows the instance without an uptime rather than inventing one.
+func (meta instanceMeta) startedAt() time.Time {
+	started, err := time.Parse(time.RFC3339, meta.Started)
+	if err != nil {
+		return time.Time{}
+	}
+	return started
 }
 
 func readInstanceMeta(workdir string) instanceMeta {

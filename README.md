@@ -226,11 +226,34 @@ them from each plugin's `package.json` and lockfile after importing.
 Do not actively use the same imported profile on multiple computers: provider
 refresh tokens may rotate when used.
 
-Running `ai` without arguments opens an interactive Bubble Tea TUI. The header
-names the profile under the cursor next to the profile count, so the screen says
-which account is in play rather than leaving it to the row highlight. Providers
-are colour-coded, a profile with active launches is marked `▶ running` or
-`▶ N running`, and the `AUTH` column shows whether the profile has logged in:
+Running `ai` without arguments opens an interactive Bubble Tea TUI: one
+fullscreen screen with a title bar, three columns, and a key bar.
+
+- **Profiles**, on the left — every account with its provider and the two quota
+  figures, then which of them are logged in, and the launch folder pinned to the
+  bottom.
+- **The selected profile**, in the middle — how it launches, what quota it has
+  left and when that resets, how busy it has been over the last day, and what it
+  was last working on.
+- **What is live**, on the right — every running instance across every profile
+  with the conversation it has open and how long it has been up, then a short
+  log of what the launcher has done.
+
+The title bar names the profile under the cursor next to the profile count, so
+the screen says which account is in play rather than leaving it to the row
+highlight, and it carries the launch folder and any pending update.
+
+Everything else — the profile editor, the folder and argument prompts, the
+delete confirmation, and the instance pickers — opens as a box over that screen,
+so the cockpit stays put while you answer.
+
+Narrow terminals fold columns away rather than squeezing them: under 118 columns
+the live panel merges into the middle, and under 78 the whole thing stacks into
+one column. Short terminals drop panels in order of what a glance can afford to
+lose — the activity histogram first, then the log, then the recent list.
+
+Providers are colour-coded, a profile with active launches is marked `▶ running`
+or `▶ N running`, and the `AUTH` block shows whether the profile has logged in:
 
 - `● yes` — the provider's credential file exists in the isolated state
   directory, so `ai run` can use it.
@@ -241,7 +264,7 @@ are colour-coded, a profile with active launches is marked `▶ running` or
 - `· ?` — the provider has no known credential location, so the launcher does
   not guess.
 
-The `MODEL` column shows the model the profile will start with, read from that
+The `model` field shows the model the profile will start with, read from that
 CLI's own settings inside the isolated directory. `—` means the provider has no
 discoverable answer yet:
 
@@ -255,8 +278,9 @@ OpenCode's state file is preferred because it holds the model last chosen in the
 TUI, which is what OpenCode restores on the next start; the config default only
 applies before anything has been picked.
 
-The `5H` and `7D` columns show the remaining five-hour and weekly quotas
-reported by the selected account's own local CLI cache. Codex is read from the
+The `5H` and `7D` columns, and the `QUOTA` meters beside them, show the
+remaining five-hour and weekly quotas reported by the selected account's own
+local CLI cache, along with when each window rolls over. Codex is read from the
 newest rate-limit events in that profile's session logs; Claude Code is read
 from its cached usage utilization. Expired or unavailable windows show `—`.
 OpenCode and DeepSeek do not currently expose comparable local quotas. This is
@@ -274,6 +298,13 @@ launch folder and `~` is supported. The chosen folder applies to subsequent
 CLI launches in that TUI session and does not change the parent shell's
 directory.
 
+`ACTIVITY` counts sessions touched per hour over the last day, from the
+timestamps on the profile's own transcripts. It is deliberately not labelled as
+quota: no provider records what a limit cost at a given hour, so the histogram
+measures the one thing that is actually on disk. `RECENT SESSIONS` reads the
+same transcripts for what each conversation was about, skipping the preamble
+both CLIs write before the first thing you actually typed.
+
 Use the arrow keys or `j`/`k` to select a profile:
 
 - Enter runs the selected profile.
@@ -290,6 +321,9 @@ Use the arrow keys or `j`/`k` to select a profile:
 - `x` deletes it and its isolated state after confirmation.
 - `K` selects a running instance to stop; Enter stops that instance, while
   `a` or `y` stops every instance for the selected profile.
+- `/` filters the profile list by name or provider. Enter keeps the filter and
+  hands the keys back, so a search is a way to reach one account among many
+  rather than a mode to dismiss before acting; Escape clears it.
 - `q` or Escape quits.
 
 Both instance pickers — `h` and `K` — list each running instance with the

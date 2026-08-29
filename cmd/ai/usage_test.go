@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -87,6 +89,49 @@ func TestProfileUsageUnknownForUnsupportedOrStaleProvider(t *testing.T) {
 	for _, profile := range []Profile{{Name: "cl", Provider: "claude"}, {Name: "oc", Provider: "opencode"}} {
 		if got := profileUsageRemaining(profile, now); got.known() {
 			t.Fatalf("%s usage unexpectedly known: %+v", profile.Provider, got)
+		}
+	}
+}
+
+// The percentage alone cannot tell a window about to refill from one that has to
+// last the rest of the week, so both providers' reset times are carried through.
+func TestUsageCarriesWhenEachWindowResets(t *testing.T) {
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	reset := now.Add(90 * time.Minute)
+	used := 82.0
+	windows := []*codexRateLimitWindow{{UsedPercent: &used, WindowMinutes: 300, ResetsAt: reset.Unix()}}
+	got := codexWindowsRemaining(windows, now)
+	if !got.FiveHour.Resets.Equal(reset) {
+		t.Fatalf("codex reset = %s, want %s", got.FiveHour.Resets, reset)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude.json")
+	body := `{"cachedUsageUtilization":{"utilization":{"five_hour":{"percent":45,"resets_at":"` +
+		reset.Format(time.RFC3339) + `"}}}}`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := claudeUsageRemaining(path, now); !got.FiveHour.Resets.Equal(reset) {
+		t.Fatalf("claude reset = %s, want %s", got.FiveHour.Resets, reset)
+	}
+}
+
+func TestFormatResetShortensToTheNearestUsefulUnit(t *testing.T) {
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.Local)
+	cases := []struct {
+		resets time.Time
+		want   string
+	}{
+		{time.Time{}, ""},
+		{now.Add(-time.Hour), ""},
+		{now.Add(2 * time.Hour), "resets 14:00"},
+		{now.Add(3 * 24 * time.Hour), "resets tue"},
+		{now.Add(20 * 24 * time.Hour), "resets 18 Sep"},
+	}
+	for _, test := range cases {
+		if got := formatReset(now, test.resets); got != test.want {
+			t.Fatalf("formatReset(%s) = %q, want %q", test.resets, got, test.want)
 		}
 	}
 }

@@ -20,22 +20,26 @@ func testProfiles() []Profile {
 	}
 }
 
+// wideModel is a cockpit with room for all three columns, which is what most
+// view assertions are about. Tests that care about a specific terminal size set
+// width and height themselves.
+func wideModel(profiles []Profile) tuiModel {
+	return tuiModel{profiles: profiles, width: 140, height: 32}
+}
+
 func TestViewListsProfilesWithHelp(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	profiles := testProfiles()
 	profiles[1].DefaultArgs = []string{"--search"}
 	profiles[1].Notes = "work subscription"
-	m := tuiModel{
-		profiles: profiles,
-		width:    80,
-		cursor:   1,
-		usage: map[string]usageRemaining{"codex-work": {
-			FiveHour: usageWindow{Percent: 56, Known: true},
-			Weekly:   usageWindow{Percent: 73, Known: true},
-		}},
-	}
+	m := wideModel(profiles)
+	m.cursor = 1
+	m.usage = map[string]usageRemaining{"codex-work": {
+		FiveHour: usageWindow{Percent: 56, Known: true},
+		Weekly:   usageWindow{Percent: 73, Known: true},
+	}}
 	view := m.View()
-	for _, want := range []string{"session profiles", "2 profiles", "claude-personal", "codex-work", "5H", "7D", "56%", "73%", "Launch", "codex --search", "work subscription", "run", "login", "quit"} {
+	for _, want := range []string{"PROFILES", "2 profiles", "claude-personal", "codex-work", "5H", "7D", "56%", "73%", "launch", "codex --search", "work subscription", "run", "login", "quit"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view is missing %q:\n%s", want, view)
 		}
@@ -57,7 +61,7 @@ func TestViewShowsAuthenticationColumn(t *testing.T) {
 	}
 	t.Setenv(deepSeekKeyEnv, "sk-test")
 	profiles := append(testProfiles(), Profile{Name: "deepseek", Provider: "deepseek", Command: "opencode"})
-	view := tuiModel{profiles: profiles, width: 80}.View()
+	view := wideModel(profiles).View()
 	if !strings.Contains(view, "AUTH") {
 		t.Fatalf("missing AUTH column header:\n%s", view)
 	}
@@ -73,9 +77,9 @@ func TestViewShowsSelectedModelWhenKnown(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", root)
 	writeProfileFile(t, root, `{"model":"opus"}`, "claude-personal", "claude", "settings.json")
-	view := tuiModel{profiles: testProfiles(), width: 100}.View()
-	if !strings.Contains(view, "MODEL") || !strings.Contains(view, "opus") {
-		t.Fatalf("model column missing:\n%s", view)
+	view := wideModel(testProfiles()).View()
+	if !strings.Contains(view, "model") || !strings.Contains(view, "opus") {
+		t.Fatalf("selected profile does not name its model:\n%s", view)
 	}
 	if !strings.Contains(view, "—") {
 		t.Fatalf("a profile with no discoverable model should show a dash:\n%s", view)
@@ -92,13 +96,13 @@ func TestViewKeepsModelAndUsageWhenNarrow(t *testing.T) {
 		FiveHour: usageWindow{Percent: 56, Known: true},
 		Weekly:   usageWindow{Percent: 97, Known: true},
 	}}
-	narrow := tuiModel{profiles: testProfiles(), width: 46, usage: usage}.View()
-	if !strings.Contains(narrow, "opus") || !strings.Contains(narrow, "5H") || !strings.Contains(narrow, "7D") || !strings.Contains(narrow, "56%") || !strings.Contains(narrow, "97%") {
-		t.Fatalf("narrow view dropped model or usage:\n%s", narrow)
+	narrow := tuiModel{profiles: testProfiles(), width: 46, height: 24, usage: usage}.View()
+	if !strings.Contains(narrow, "5H") || !strings.Contains(narrow, "7D") || !strings.Contains(narrow, "56%") || !strings.Contains(narrow, "97%") {
+		t.Fatalf("narrow view dropped the quota figures:\n%s", narrow)
 	}
 	for _, line := range strings.Split(narrow, "\n") {
-		if lipgloss.Width(line) > 46 {
-			t.Fatalf("line overflows a 46-column terminal (%d):\n%q", lipgloss.Width(line), line)
+		if lipgloss.Width(line) != 46 {
+			t.Fatalf("line is %d columns wide, want 46:\n%q", lipgloss.Width(line), line)
 		}
 	}
 }
@@ -114,13 +118,18 @@ func TestViewMarksRunningProfiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".active.lock"), []byte("1\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	m := tuiModel{profiles: profiles, width: 80}
-	view := m.View()
-	if strings.Count(view, "running") != 1 {
-		t.Fatalf("expected exactly one running marker:\n%s", view)
+	m := wideModel(profiles)
+	m.cursor = 1
+	loaded, _ := m.Update(m.loadCockpitCmd()().(cockpitLoadedMsg))
+	view := loaded.(tuiModel).View()
+	if !strings.Contains(view, "▶ running") {
+		t.Fatalf("the locked profile is not marked as running:\n%s", view)
 	}
-	if !strings.Contains(view, "codex-work") {
-		t.Fatalf("locked profile missing from view:\n%s", view)
+	if !strings.Contains(view, "RUNNING · 1 TOTAL") {
+		t.Fatalf("the live panel does not account for the running instance:\n%s", view)
+	}
+	if !strings.Contains(view, "1 instance") {
+		t.Fatalf("the title bar does not carry the instance count:\n%s", view)
 	}
 }
 
@@ -138,9 +147,14 @@ func TestViewCountsConcurrentProfileInstances(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	view := tuiModel{profiles: []Profile{profile}, width: 80}.View()
-	if !strings.Contains(view, "2 running") {
+	m := wideModel([]Profile{profile})
+	loaded, _ := m.Update(m.loadCockpitCmd()().(cockpitLoadedMsg))
+	view := loaded.(tuiModel).View()
+	if !strings.Contains(view, "▶ 2 running") {
 		t.Fatalf("concurrent instance count missing:\n%s", view)
+	}
+	if !strings.Contains(view, "RUNNING · 2 TOTAL") {
+		t.Fatalf("the live panel lists neither instance:\n%s", view)
 	}
 }
 
@@ -256,7 +270,7 @@ func TestChangeFolderUsesRelativeDirectory(t *testing.T) {
 
 func TestViewEmptyStateInvitesFirstProfile(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	view := tuiModel{width: 80}.View()
+	view := wideModel(nil).View()
 	if !strings.Contains(view, "No profiles yet") || !strings.Contains(view, "add profile") {
 		t.Fatalf("unhelpful empty state:\n%s", view)
 	}
@@ -267,7 +281,8 @@ func TestViewEmptyStateInvitesFirstProfile(t *testing.T) {
 
 func TestViewFormShowsFieldsAndError(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	m := tuiModel{profiles: testProfiles(), width: 80, mode: tuiForm}
+	m := wideModel(testProfiles())
+	m.mode = tuiForm
 	m.form = profileForm{name: "codex-work", provider: "codex", command: "codex", defaultArgs: "--search", notes: "work", field: 1, original: "codex-work"}
 	m.setStatus(statusErr, "already exists")
 	view := m.View()
@@ -329,7 +344,8 @@ func TestFormAcceptsSpacesInDefaultArgsAndNotes(t *testing.T) {
 
 func TestViewConfirmDeleteNamesProfile(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	m := tuiModel{profiles: testProfiles(), width: 80, cursor: 1, mode: tuiConfirmDelete}
+	m := wideModel(testProfiles())
+	m.cursor, m.mode = 1, tuiConfirmDelete
 	view := m.View()
 	if !strings.Contains(view, "Delete codex-work?") || !strings.Contains(view, "cannot be undone") {
 		t.Fatalf("confirmation is unclear:\n%s", view)
@@ -339,52 +355,54 @@ func TestViewConfirmDeleteNamesProfile(t *testing.T) {
 	}
 }
 
-func TestHeaderNamesSelectedProfile(t *testing.T) {
+func TestTitleBarNamesSelectedProfile(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	m := tuiModel{profiles: testProfiles(), width: 80, cursor: 1}
-	header := m.headerView(m.contentWidth())
-	if !strings.Contains(header, "codex-work · 2 profiles") {
-		t.Fatalf("header does not name the selected profile:\n%s", header)
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	frame := frameLayout(m.width, m.height)
+	if bar := m.topBarView(frame); !strings.Contains(bar, "codex-work") || !strings.Contains(bar, "2 profiles") {
+		t.Fatalf("title bar does not name the selected profile:\n%s", bar)
 	}
 	m.cursor = 0
-	if header := m.headerView(m.contentWidth()); !strings.Contains(header, "claude-personal · 2 profiles") {
-		t.Fatalf("header did not follow the cursor:\n%s", header)
+	if bar := m.topBarView(frame); !strings.Contains(bar, "claude-personal") {
+		t.Fatalf("title bar did not follow the cursor:\n%s", bar)
 	}
 }
 
-// The count is the field that must survive a narrow terminal; a name clipped
-// to a few characters identifies nothing.
-func TestHeaderDropsProfileNameBeforeTruncatingIt(t *testing.T) {
+// The count is the field that must survive a narrow terminal. The launch folder
+// and the update notice are dropped first, in that order, rather than being
+// clipped into something unreadable.
+func TestTitleBarDropsDetailBeforeTheCount(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	m := tuiModel{profiles: testProfiles(), width: 34, cursor: 1}
-	header := m.headerView(m.contentWidth())
-	if !strings.Contains(header, "2 profiles") {
-		t.Fatalf("header lost the count:\n%s", header)
+	m := tuiModel{profiles: testProfiles(), width: 46, height: 24, cursor: 1}
+	m.workingDir = "/home/someone/a/very/long/working/directory/name"
+	m.update = updateStatus{Known: true, Behind: 3}
+	bar := m.topBarView(frameLayout(m.width, m.height))
+	if !strings.Contains(bar, "2 profiles") {
+		t.Fatalf("title bar lost the count:\n%s", bar)
 	}
-	if strings.Contains(header, "…") {
-		t.Fatalf("header truncated the profile name instead of dropping it:\n%s", header)
+	if strings.Contains(bar, "working/directory") {
+		t.Fatalf("title bar kept a folder it had no room for:\n%s", bar)
 	}
-	for _, line := range strings.Split(strings.TrimRight(header, "\n"), "\n") {
-		if lipgloss.Width(line) > m.contentWidth() {
-			t.Fatalf("header line overflows the content width: %q", line)
-		}
+	if lipgloss.Width(bar) > 46 {
+		t.Fatalf("title bar overflows the terminal (%d):\n%s", lipgloss.Width(bar), bar)
 	}
 }
 
-func TestHeaderOmitsNameWithoutProfiles(t *testing.T) {
+func TestTitleBarOmitsNameWithoutProfiles(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	m := tuiModel{width: 80}
-	if header := m.headerView(m.contentWidth()); !strings.Contains(header, "no profiles") || strings.Contains(header, "·") {
-		t.Fatalf("empty header should carry only the count:\n%s", header)
+	m := wideModel(nil)
+	if bar := m.topBarView(frameLayout(m.width, m.height)); !strings.Contains(bar, "no profiles") {
+		t.Fatalf("empty title bar should still carry the count:\n%s", bar)
 	}
 }
 
 func TestViewOffersUpdateOnlyWhenOneIsAvailable(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	m := tuiModel{profiles: testProfiles(), width: 80}
+	m := wideModel(testProfiles())
 
 	m.update = updateStatus{Known: true, Behind: 3}
-	if view := m.View(); !strings.Contains(view, "3 commits behind main") || !strings.Contains(view, "go install ./...") {
+	if view := m.View(); !strings.Contains(view, "↑ 3 commits behind main") {
 		t.Fatalf("available update is not offered:\n%s", view)
 	}
 	m.update = updateStatus{Known: true}
@@ -423,13 +441,34 @@ func TestInitChecksForUpdates(t *testing.T) {
 	}
 }
 
-func TestViewSurvivesNarrowAndUnknownWidths(t *testing.T) {
+// The cockpit owns the alt screen, so a frame that is one line short or one
+// column wide leaves the previous frame showing through underneath it.
+func TestViewFillsTheTerminalExactly(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	for _, width := range []int{0, 1, 20, 200} {
-		m := tuiModel{profiles: testProfiles(), width: width}
-		if view := m.View(); !strings.Contains(view, "codex-work") {
-			t.Fatalf("width %d dropped content:\n%s", width, view)
+	for _, size := range [][2]int{{149, 34}, {118, 30}, {100, 26}, {80, 24}, {70, 22}, {40, 12}, {20, 8}, {1, 5}} {
+		width, height := size[0], size[1]
+		m := tuiModel{profiles: testProfiles(), width: width, height: height, cursor: 1}
+		lines := strings.Split(m.View(), "\n")
+		if len(lines) != height {
+			t.Fatalf("%dx%d rendered %d lines", width, height, len(lines))
 		}
+		for index, line := range lines {
+			if lipgloss.Width(line) != width {
+				t.Fatalf("%dx%d line %d is %d columns wide:\n%q", width, height, index, lipgloss.Width(line), line)
+			}
+		}
+	}
+}
+
+// A terminal that has not reported its size yet still has to draw something.
+func TestViewAssumesASizeBeforeTheFirstResize(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	view := tuiModel{profiles: testProfiles(), cursor: 1}.View()
+	if !strings.Contains(view, "codex-work") {
+		t.Fatalf("unsized view dropped content:\n%s", view)
+	}
+	if lines := strings.Split(view, "\n"); len(lines) != assumedHeight {
+		t.Fatalf("unsized view rendered %d lines, want %d", len(lines), assumedHeight)
 	}
 }
 
@@ -449,7 +488,8 @@ func TestHijackPickerNamesSessionAndFolder(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	m := tuiModel{
 		profiles: testProfiles(),
-		width:    90,
+		width:    140,
+		height:   32,
 		cursor:   1,
 		mode:     tuiHijack,
 		instances: []profileInstance{
@@ -469,7 +509,8 @@ func TestKillPickerNamesSessions(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	m := tuiModel{
 		profiles:  testProfiles(),
-		width:     90,
+		width:     140,
+		height:    32,
 		cursor:    1,
 		mode:      tuiConfirmKill,
 		instances: []profileInstance{{pid: 11, folder: "/work/lattice", session: instanceSession{id: "aaa", title: "Edit contacts"}}},
@@ -532,7 +573,8 @@ func TestDescribedInstancesReachTheOpenPicker(t *testing.T) {
 
 func TestParamsPromptCollectsArgumentsAndReportsQuoteErrors(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	m := tuiModel{profiles: testProfiles(), width: 80, cursor: 1}
+	m := wideModel(testProfiles())
+	m.cursor = 1
 	updated, _ := m.updateList(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
 	got := updated.(tuiModel)
 	if got.mode != tuiParams {
