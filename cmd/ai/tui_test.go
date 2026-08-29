@@ -339,6 +339,90 @@ func TestViewConfirmDeleteNamesProfile(t *testing.T) {
 	}
 }
 
+func TestHeaderNamesSelectedProfile(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := tuiModel{profiles: testProfiles(), width: 80, cursor: 1}
+	header := m.headerView(m.contentWidth())
+	if !strings.Contains(header, "codex-work · 2 profiles") {
+		t.Fatalf("header does not name the selected profile:\n%s", header)
+	}
+	m.cursor = 0
+	if header := m.headerView(m.contentWidth()); !strings.Contains(header, "claude-personal · 2 profiles") {
+		t.Fatalf("header did not follow the cursor:\n%s", header)
+	}
+}
+
+// The count is the field that must survive a narrow terminal; a name clipped
+// to a few characters identifies nothing.
+func TestHeaderDropsProfileNameBeforeTruncatingIt(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := tuiModel{profiles: testProfiles(), width: 34, cursor: 1}
+	header := m.headerView(m.contentWidth())
+	if !strings.Contains(header, "2 profiles") {
+		t.Fatalf("header lost the count:\n%s", header)
+	}
+	if strings.Contains(header, "…") {
+		t.Fatalf("header truncated the profile name instead of dropping it:\n%s", header)
+	}
+	for _, line := range strings.Split(strings.TrimRight(header, "\n"), "\n") {
+		if lipgloss.Width(line) > m.contentWidth() {
+			t.Fatalf("header line overflows the content width: %q", line)
+		}
+	}
+}
+
+func TestHeaderOmitsNameWithoutProfiles(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := tuiModel{width: 80}
+	if header := m.headerView(m.contentWidth()); !strings.Contains(header, "no profiles") || strings.Contains(header, "·") {
+		t.Fatalf("empty header should carry only the count:\n%s", header)
+	}
+}
+
+func TestViewOffersUpdateOnlyWhenOneIsAvailable(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := tuiModel{profiles: testProfiles(), width: 80}
+
+	m.update = updateStatus{Known: true, Behind: 3}
+	if view := m.View(); !strings.Contains(view, "3 commits behind main") || !strings.Contains(view, "go install ./...") {
+		t.Fatalf("available update is not offered:\n%s", view)
+	}
+	m.update = updateStatus{Known: true}
+	if view := m.View(); strings.Contains(view, "behind main") {
+		t.Fatalf("an up-to-date build was nagged:\n%s", view)
+	}
+	// A check that could not run answers through the status line when asked,
+	// never by claiming an update on the main screen.
+	m.update = updateStatus{Reason: "github could not be reached"}
+	if view := m.View(); strings.Contains(view, "↑") {
+		t.Fatalf("a failed check was rendered as an update:\n%s", view)
+	}
+}
+
+// The check runs as the main screen appears, so an available update is visible
+// without the user asking for it.
+func TestInitChecksForUpdates(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	m := tuiModel{profiles: testProfiles()}
+	if m.Init() == nil {
+		t.Fatal("Init issued no commands")
+	}
+	updated, _ := m.Update(updateCheckedMsg{status: updateStatus{Known: true, Behind: 2}})
+	if got := updated.(tuiModel).update.Behind; got != 2 {
+		t.Fatalf("update status was not kept: %d", got)
+	}
+	// Only a check the user asked for speaks through the status line.
+	if status := updated.(tuiModel).status; status != "" {
+		t.Fatalf("the startup check wrote to the status line: %q", status)
+	}
+	forced, _ := m.Update(updateCheckedMsg{status: updateStatus{Known: true, Behind: 2}, forced: true})
+	if !strings.Contains(forced.(tuiModel).status, "2 commits behind") {
+		t.Fatalf("a forced check said nothing: %q", forced.(tuiModel).status)
+	}
+}
+
 func TestViewSurvivesNarrowAndUnknownWidths(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	for _, width := range []int{0, 1, 20, 200} {

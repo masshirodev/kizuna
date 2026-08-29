@@ -167,6 +167,39 @@ func TestProfileEnvironmentIsolatedByName(t *testing.T) {
 	}
 }
 
+func TestProfileEnvironmentMarksProfileAndProvider(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	for _, profile := range []Profile{
+		{Name: "codex-work", Provider: "codex"},
+		{Name: "deepseek", Provider: "deepseek"},
+		{Name: "custom", Provider: "something-else"},
+	} {
+		joined := strings.Join(profileEnv(profile), "\n")
+		if !strings.Contains(joined, profileNameEnv+"="+profile.Name) {
+			t.Errorf("%s is missing %s: %q", profile.Name, profileNameEnv, joined)
+		}
+		if !strings.Contains(joined, profileProviderEnv+"="+profile.Provider) {
+			t.Errorf("%s is missing %s: %q", profile.Name, profileProviderEnv, joined)
+		}
+	}
+}
+
+// A session launched from inside another session must report its own profile,
+// not the one it inherited.
+func TestCleanEnvironmentRemovesInheritedProfileMarkers(t *testing.T) {
+	joined := strings.Join(cleanEnvironment([]string{
+		"PATH=/bin",
+		profileNameEnv + "=stale",
+		profileProviderEnv + "=stale",
+	}), "\n")
+	if strings.Contains(joined, "stale") {
+		t.Fatalf("inherited profile markers leaked: %q", joined)
+	}
+	if !strings.Contains(joined, "PATH=/bin") {
+		t.Fatalf("ordinary environment was not preserved: %q", joined)
+	}
+}
+
 func TestProfileAuthStateDetectsCredentialFiles(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", root)

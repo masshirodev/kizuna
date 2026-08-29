@@ -25,9 +25,10 @@ var (
 			Background(lipgloss.Color("#7C3AED")).
 			Padding(0, 1)
 
-	headerTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(colorText)
-	headerCountStyle = lipgloss.NewStyle().Foreground(colorFaint)
-	ruleStyle        = lipgloss.NewStyle().Foreground(colorFaint)
+	headerTitleStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorText)
+	headerCountStyle   = lipgloss.NewStyle().Foreground(colorFaint)
+	headerProfileStyle = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
+	ruleStyle          = lipgloss.NewStyle().Foreground(colorFaint)
 
 	columnHeaderStyle  = lipgloss.NewStyle().Foreground(colorFaint)
 	authPresentStyle   = lipgloss.NewStyle().Foreground(colorSuccess)
@@ -66,6 +67,7 @@ var (
 	statusOKStyle    = lipgloss.NewStyle().Foreground(colorSuccess)
 	statusErrStyle   = lipgloss.NewStyle().Foreground(colorDanger)
 	statusInfoStyle  = lipgloss.NewStyle().Foreground(colorMuted)
+	updateStyle      = lipgloss.NewStyle().Foreground(colorWarn)
 	dangerTextStyle  = lipgloss.NewStyle().Bold(true).Foreground(colorDanger)
 	confirmBodyStyle = lipgloss.NewStyle().Foreground(colorText)
 )

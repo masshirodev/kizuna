@@ -16,8 +16,15 @@ prints, or stores token contents.
 ## Install
 
 ```sh
-go install ./...
+./install.sh
 ```
+
+The binary is `ai`, built from `cmd/ai`. `go install ./...` produces the same
+thing in `$(go env GOPATH)/bin`.
+
+The build must not pass `-buildvcs=false`: the commit stamp the Go toolchain
+embeds is what `ai version` and the TUI's update check compare against the
+repository, and a binary built without it can only report that it does not know.
 
 ## Create profiles
 
@@ -87,11 +94,111 @@ ai codex-work exec -- "review this repository"
 If the bare argument is not an existing profile, `ai` returns an error instead
 of guessing a provider or creating a profile.
 
+## Knowing which profile you are in
+
+Once the provider CLI starts it owns the screen, and nothing in its own
+interface says which account is paying for the session. Two markers cover that:
+
+- **The terminal title.** A launch sets the window or tab title to
+  `ai · <profile> (<provider>)` and restores the previous title on exit, using
+  the xterm title stack. A terminal without that stack simply keeps the title
+  `ai` set, which still names the right profile. Nothing is written when output
+  is redirected, so piped output stays clean.
+- **`AI_PROFILE` and `AI_PROVIDER`.** Every launched process gets both, for
+  every provider, so a shell prompt, a CLI statusline, or a tmux status bar can
+  render the profile however you like:
+
+  ```sh
+  # a Claude Code statusline, in the profile's own settings.json
+  echo "[$AI_PROFILE] $(basename "$PWD")"
+  ```
+
+  They are also listed by `ai env <profile>`. An inherited pair is stripped
+  before a launch, so a session started from inside another session reports its
+  own profile rather than its parent's.
+
 Each profile can also store default arguments. They are prepended to arguments
 provided at launch, but are not used for login or integration commands. Set
 them in the interactive profile editor; shell-style quotes group values with
 spaces without invoking a shell. The same editor accepts a short note for each
 profile.
+
+## Showing the profile inside the CLI
+
+The terminal title and the TUI header both stop being visible the moment the
+provider CLI takes over the screen. `ai integrate statusline <profile>` gives a
+profile the best indicator its provider supports:
+
+```sh
+ai integrate statusline claude-personal
+ai integrate statusline codex-work
+```
+
+**Claude Code renders it itself.** The command merges a `statusLine` into that
+profile's own `settings.json`, keeping every other key, and the line reads
+`AI_PROFILE` out of the launch environment so it names the profile actually in
+use. An existing `statusLine` is refused rather than replaced: it is yours, and
+overwriting it would silently drop whatever it showed.
+
+**Codex and OpenCode have no equivalent**, so those profiles are marked
+`"indicator": "tmux"` in `profiles.json` and launch inside a tmux session whose
+status bar sits above the CLI:
+
+```
+ ai · codex-work (codex)                        ~/projects/ai-session
+──────────────────────────────────────────────────────────────────────
+```
+
+The bar survives whatever the CLI draws, which a terminal escape sequence
+cannot: these CLIs take the alternate screen and manage their own scroll
+regions. tmux's prefix is disabled so the session stays furniture rather than a
+multiplexer to think about.
+
+Two details matter for correctness. Each wrapped launch gets its **own tmux
+socket**, because tmux runs a server and an existing one would hand the CLI that
+server's environment instead of the profile's isolated directories. The socket
+lives under `XDG_RUNTIME_DIR` rather than beside the lock, because a Unix socket
+path is capped near 108 bytes and the per-instance lock directory is long enough
+to exceed that on its own. Stopping a wrapped instance kills its tmux server,
+not just the client.
+
+Codex also configures its own terminal title, so it will overwrite the one `ai`
+sets; the tmux bar is the reliable indicator there.
+
+## Update check
+
+The TUI asks GitHub whether the build is behind the repository as its main
+screen appears, and offers a line under the key help when it is:
+
+```
+↑ 3 commits behind main · go install ./...
+```
+
+Nothing is shown when the build is current, and a check that could not run stays
+quiet rather than nagging. Press `r` to force a fresh check and see its answer,
+whatever it is, in the status line. The same answer is available from the
+command line:
+
+```sh
+ai version
+```
+```
+ai 696fc1c (built 2026-08-28T11:47:41Z)
+1 commit behind main · go install ./...
+```
+
+The comparison is between the commit the Go toolchain stamped into the binary
+and the head of `main`, so there is no release process to keep up with. A binary
+built with `-buildvcs=false` carries no revision and cannot be compared; `ai
+version` says so and names the fix. This is why `install.sh` no longer passes
+that flag.
+
+`masshirodev/ai-session` is private, so the check needs a token. It reads
+`GH_TOKEN`, then `GITHUB_TOKEN`, then falls back to `gh auth token`, and
+disables itself when none of the three answers. The token is only sent to
+api.github.com in an `Authorization` header; it is never logged or written to
+disk. Answers are cached for six hours in `update-check.json` beside
+`profiles.json`, so a launch does not spend a request every time.
 
 ## Move a profile to another computer
 
@@ -117,7 +224,9 @@ them from each plugin's `package.json` and lockfile after importing.
 Do not actively use the same imported profile on multiple computers: provider
 refresh tokens may rotate when used.
 
-Running `ai` without arguments opens an interactive Bubble Tea TUI. Providers
+Running `ai` without arguments opens an interactive Bubble Tea TUI. The header
+names the profile under the cursor next to the profile count, so the screen says
+which account is in play rather than leaving it to the row highlight. Providers
 are colour-coded, a profile with active launches is marked `▶ running` or
 `▶ N running`, and the `AUTH` column shows whether the profile has logged in:
 
@@ -171,7 +280,7 @@ Use the arrow keys or `j`/`k` to select a profile:
 - `c` changes the folder used for subsequent CLI launches.
 - `a` adds a profile.
 - `e` edits its name, provider, command, default arguments, or note.
-- `r` refreshes locally cached usage percentages.
+- `r` refreshes locally cached usage percentages and re-runs the update check.
 - `x` deletes it and its isolated state after confirmation.
 - `K` selects a running instance to stop; Enter stops that instance, while
   `a` or `y` stops every instance for the selected profile.
@@ -184,8 +293,8 @@ Escape cancels and Ctrl-U clears the current field.
 DeepSeek should be configured in the OpenCode profile using OpenCode's normal
 provider setup or an environment variable. The launcher preserves ordinary
 environment variables, including `DEEPSEEK_API_KEY`, but removes shared
-`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and XDG paths before adding the selected
-profile's paths.
+`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, XDG paths, and any inherited `AI_PROFILE` or
+`AI_PROVIDER` before adding the selected profile's values.
 
 ## OpenUsage integration
 

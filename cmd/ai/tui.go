@@ -43,6 +43,14 @@ type processFinishedMsg struct {
 
 type usageLoadedMsg map[string]usageRemaining
 
+// updateCheckedMsg carries the update check's answer. A forced check reports
+// itself in the status line; the one at startup stays quiet unless it has
+// something to offer.
+type updateCheckedMsg struct {
+	status updateStatus
+	forced bool
+}
+
 type statusKind int
 
 const (
@@ -67,6 +75,7 @@ type tuiModel struct {
 	folderPath string
 	instances  []profileInstance
 	instance   int
+	update     updateStatus
 }
 
 func (m *tuiModel) setStatus(kind statusKind, message string) {
@@ -98,7 +107,13 @@ func runTUI() error {
 }
 
 func (m tuiModel) Init() tea.Cmd {
-	return loadUsageCmd(m.profiles)
+	return tea.Batch(loadUsageCmd(m.profiles), checkUpdateCmd(false))
+}
+
+func checkUpdateCmd(force bool) tea.Cmd {
+	return func() tea.Msg {
+		return updateCheckedMsg{status: checkForUpdate(force, time.Now()), forced: force}
+	}
 }
 
 func loadUsageCmd(profiles []Profile) tea.Cmd {
@@ -143,6 +158,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadUsageCmd(m.profiles)
 	case usageLoadedMsg:
 		m.usage = msg
+	case updateCheckedMsg:
+		m.update = msg.status
+		if msg.forced {
+			kind := statusOK
+			if !msg.status.Known {
+				kind = statusErr
+			}
+			m.setStatus(kind, msg.status.message())
+		}
 	}
 	return m, nil
 }
@@ -187,7 +211,7 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "r":
 		m.usage = nil
-		return m, loadUsageCmd(m.profiles)
+		return m, tea.Batch(loadUsageCmd(m.profiles), checkUpdateCmd(true))
 	case "x":
 		if len(m.profiles) > 0 {
 			m.mode = tuiConfirmDelete
@@ -554,9 +578,14 @@ func (m *tuiModel) execProfile(profile Profile, args []string, exclusive bool) t
 	cmd := exec.Command(profile.Command, args...)
 	cmd.Dir = m.workingDir
 	cmd.Env = append(cleanEnvironment(os.Environ()), profileEnv(profile)...)
+	if cmd, err = applyIndicator(cmd, profile, lockDir); err != nil {
+		unlock()
+		m.setStatus(statusErr, err.Error())
+		return nil
+	}
 	m.running = true
 	m.unlock = unlock
-	return tea.Exec(trackedExecCommand{cmd: cmd, workdir: lockDir}, func(err error) tea.Msg {
+	return tea.Exec(trackedExecCommand{cmd: cmd, workdir: lockDir, title: sessionTitle(profile)}, func(err error) tea.Msg {
 		return processFinishedMsg{err: err}
 	})
 }
@@ -578,12 +607,18 @@ func (m *tuiModel) execUpdate(profile Profile) tea.Cmd {
 type trackedExecCommand struct {
 	cmd     *exec.Cmd
 	workdir string
+	title   string
 }
 
 func (c trackedExecCommand) SetStdin(reader io.Reader)  { c.cmd.Stdin = reader }
 func (c trackedExecCommand) SetStdout(writer io.Writer) { c.cmd.Stdout = writer }
 func (c trackedExecCommand) SetStderr(writer io.Writer) { c.cmd.Stderr = writer }
 func (c trackedExecCommand) Run() error {
+	// Bubble Tea has already released the terminal, so the title escape reaches
+	// it directly rather than being swallowed by the alternate screen.
+	restoreTitle := markTerminalTitle(c.cmd.Stdout, c.title)
+	defer restoreTitle()
+	defer stopTmuxServer(c.workdir)
 	if err := c.cmd.Start(); err != nil {
 		return err
 	}
@@ -609,6 +644,9 @@ func (m tuiModel) View() string {
 		sections = append(sections, m.listView(width), m.selectedProfileView(width))
 	}
 	sections = append(sections, rule(width), m.helpView(width))
+	if update := m.updateView(width); update != "" {
+		sections = append(sections, update)
+	}
 	if status := m.statusView(width); status != "" {
 		sections = append(sections, status)
 	}
@@ -627,6 +665,9 @@ func (m tuiModel) contentWidth() int {
 	return min(max(width, 34), 86)
 }
 
+// headerView names the profile under the cursor beside the count. The row
+// highlight alone says which row is selected but not which account is in play,
+// which is the thing worth reading back before pressing enter.
 func (m tuiModel) headerView(width int) string {
 	title := lipgloss.JoinHorizontal(lipgloss.Center, appBadgeStyle.Render("ai"), " ", headerTitleStyle.Render("session profiles"))
 	count := fmt.Sprintf("%d profiles", len(m.profiles))
@@ -636,7 +677,22 @@ func (m tuiModel) headerView(width int) string {
 	case 1:
 		count = "1 profile"
 	}
-	return spread(title, headerCountStyle.Render(count), width) + "\n" + rule(width) + "\n"
+	right := headerCountStyle.Render(count)
+	if name := m.selectedName(); name != "" {
+		// Drop the name rather than the count when the two cannot both fit:
+		// a truncated name is worse than none at identifying an account.
+		if room := width - lipgloss.Width(title) - lipgloss.Width(count) - 4; room >= lipgloss.Width(name) {
+			right = headerProfileStyle.Render(name) + headerCountStyle.Render(" · "+count)
+		}
+	}
+	return spread(title, right, width) + "\n" + rule(width) + "\n"
+}
+
+func (m tuiModel) selectedName() string {
+	if m.cursor < 0 || m.cursor >= len(m.profiles) {
+		return ""
+	}
+	return m.profiles[m.cursor].Name
 }
 
 func (m tuiModel) listView(width int) string {
@@ -921,6 +977,16 @@ func (m tuiModel) helpEntries() string {
 	}
 }
 
+// updateView is shown only when there is something to act on. A check that
+// could not run says so through the status line when the user asks for it with
+// r, rather than nagging on every launch.
+func (m tuiModel) updateView(width int) string {
+	if !m.update.available() {
+		return ""
+	}
+	return "\n" + updateStyle.Width(width).Render("↑ "+m.update.message())
+}
+
 func (m tuiModel) statusView(width int) string {
 	if m.status == "" {
 		return ""
@@ -958,6 +1024,9 @@ func terminateProfile(profile Profile) error {
 }
 
 func terminateProfileLock(lockDir string) error {
+	// A wrapped launch runs the CLI under a tmux server of its own; killing the
+	// client alone would leave it running headless on its socket.
+	stopTmuxServer(lockDir)
 	pid, err := profileLockPID(lockDir)
 	if err != nil {
 		return err
