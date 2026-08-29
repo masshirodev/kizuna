@@ -72,7 +72,8 @@ ai run opencode-go
 
 Codex and Claude profiles can be launched concurrently from multiple terminals.
 Every launch creates a temporary directory beneath the profile's `instances/`
-directory for its PID lock, while all instances continue to use the profile's
+directory for its PID lock and an `instance.json` recording the folder it was
+launched in, while all instances continue to use the profile's
 single `CODEX_HOME` or `CLAUDE_CONFIG_DIR`. This means one login per profile and
 the same settings and session history in every instance. The instance directory
 is removed when the CLI exits and reclaimed automatically after a crash.
@@ -121,7 +122,8 @@ Each profile can also store default arguments. They are prepended to arguments
 provided at launch, but are not used for login or integration commands. Set
 them in the interactive profile editor; shell-style quotes group values with
 spaces without invoking a shell. The same editor accepts a short note for each
-profile.
+profile. Arguments typed for a single launch with `p` in the TUI are appended
+after the stored defaults.
 
 ## Showing the profile inside the CLI
 
@@ -275,6 +277,10 @@ directory.
 Use the arrow keys or `j`/`k` to select a profile:
 
 - Enter runs the selected profile.
+- `p` runs it with extra arguments typed at the prompt.
+- `R` resumes a previous conversation.
+- `h` hijacks a running instance: it opens that instance's conversation in this
+  terminal, leaving the original process running.
 - `l` logs in to the selected profile.
 - `u` updates the selected provider CLI.
 - `c` changes the folder used for subsequent CLI launches.
@@ -285,6 +291,36 @@ Use the arrow keys or `j`/`k` to select a profile:
 - `K` selects a running instance to stop; Enter stops that instance, while
   `a` or `y` stops every instance for the selected profile.
 - `q` or Escape quits.
+
+Both instance pickers — `h` and `K` — list each running instance with the
+conversation it has open and the folder it was launched in, so two instances of
+the same profile can be told apart by what they are doing rather than by PID.
+
+## Resuming and hijacking
+
+`R` starts the provider's own resume flow in the current launch folder:
+
+| Provider | Command |
+| -------- | ------- |
+| Codex | `codex resume` (session picker) |
+| Claude Code | `claude --resume` (session picker) |
+| OpenCode | `opencode --continue` |
+
+OpenCode has no resume picker, so it continues the last session instead.
+
+`h` skips the picker. It reads the running instances the launcher already
+tracks, resolves the session each one has open, and reopens exactly that
+session in the folder the instance was launched from. Session titles come from
+the provider itself and are best effort:
+
+| Provider | Source |
+| -------- | ------ |
+| Codex | the newest session log recorded for that folder |
+| Claude Code | `claude agents --json`, matched on the recorded PID |
+| OpenCode | not available; the instance is listed without a title |
+
+Hijacking an OpenCode profile is refused for the same reason a second launch
+is: its credential store is exclusive while the first process is running.
 
 The selected-profile panel shows its default arguments and note. In the profile
 editor, Enter or Tab advances through all fields; on the final field it saves.

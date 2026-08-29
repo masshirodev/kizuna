@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -9,13 +10,29 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
-const instancesDirectory = "instances"
+const (
+	instancesDirectory = "instances"
+	instanceMetaFile   = "instance.json"
+)
 
 type profileInstance struct {
 	lockDir string
 	pid     int
+	// folder is the directory the instance was launched in, recorded so a
+	// later hijack can reopen the same conversation from the same place.
+	folder  string
+	session instanceSession
+}
+
+// instanceMeta is the launch detail a lock file cannot carry. It is written
+// beside .active.lock so another ai process can describe a running instance
+// without asking the provider CLI anything.
+type instanceMeta struct {
+	Folder  string `json:"folder"`
+	Started string `json:"started"`
 }
 
 func supportsConcurrentRuns(profile Profile) bool {
@@ -107,7 +124,10 @@ func acquireProcessLock(workdir string) (func(), error) {
 				_ = os.Remove(lockPath)
 				return nil, err
 			}
-			return func() { _ = os.Remove(lockPath) }, nil
+			return func() {
+				_ = os.Remove(lockPath)
+				_ = os.Remove(filepath.Join(workdir, instanceMetaFile))
+			}, nil
 		}
 		if !errors.Is(err, os.ErrExist) {
 			return nil, err
@@ -256,7 +276,11 @@ func activeProfileInstances(profile Profile) ([]profileInstance, error) {
 		if err != nil {
 			return nil, err
 		}
-		instances = append(instances, profileInstance{lockDir: lockDir, pid: pid})
+		instances = append(instances, profileInstance{
+			lockDir: lockDir,
+			pid:     pid,
+			folder:  readInstanceMeta(lockDir).Folder,
+		})
 	}
 	return instances, nil
 }
@@ -282,4 +306,26 @@ func profileIsRunning(profile Profile) bool {
 func setProfileChildPID(workdir string, pid int) error {
 	lockPath := filepath.Join(workdir, ".active.lock")
 	return os.WriteFile(lockPath, []byte(fmt.Sprintf("%d\n%d\n", os.Getpid(), pid)), 0600)
+}
+
+// setProfileInstanceMeta records where a launch happened. A failure here is not
+// fatal to the launch itself: the instance simply cannot be described later.
+func setProfileInstanceMeta(workdir, folder string) error {
+	data, err := json.Marshal(instanceMeta{Folder: folder, Started: time.Now().Format(time.RFC3339)})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(workdir, instanceMetaFile), append(data, '\n'), 0600)
+}
+
+func readInstanceMeta(workdir string) instanceMeta {
+	data, err := os.ReadFile(filepath.Join(workdir, instanceMetaFile))
+	if err != nil {
+		return instanceMeta{}
+	}
+	var meta instanceMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return instanceMeta{}
+	}
+	return meta
 }

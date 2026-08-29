@@ -24,6 +24,8 @@ const (
 	tuiFolder
 	tuiConfirmDelete
 	tuiConfirmKill
+	tuiHijack
+	tuiParams
 )
 
 type profileForm struct {
@@ -51,6 +53,14 @@ type updateCheckedMsg struct {
 	forced bool
 }
 
+// instancesDescribedMsg carries the session titles resolved for one profile's
+// running instances. The lookup talks to the provider, so it happens off the
+// keypress that opened the picker.
+type instancesDescribedMsg struct {
+	profile   string
+	instances []profileInstance
+}
+
 type statusKind int
 
 const (
@@ -73,8 +83,10 @@ type tuiModel struct {
 	usage      map[string]usageRemaining
 	workingDir string
 	folderPath string
+	params     string
 	instances  []profileInstance
 	instance   int
+	describing bool
 	update     updateStatus
 }
 
@@ -143,6 +155,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateDelete(msg)
 		case tuiConfirmKill:
 			return m.updateKill(msg)
+		case tuiHijack:
+			return m.updateHijack(msg)
+		case tuiParams:
+			return m.updateParams(msg)
 		}
 	case processFinishedMsg:
 		m.running = false
@@ -166,6 +182,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				kind = statusErr
 			}
 			m.setStatus(kind, msg.status.message())
+		}
+	case instancesDescribedMsg:
+		m.describing = false
+		if m.mode != tuiHijack && m.mode != tuiConfirmKill {
+			return m, nil
+		}
+		if m.cursor < len(m.profiles) && m.profiles[m.cursor].Name == msg.profile && len(msg.instances) == len(m.instances) {
+			m.instances = msg.instances
 		}
 	}
 	return m, nil
@@ -219,18 +243,26 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "K":
 		if len(m.profiles) > 0 {
+			return m, m.openInstances(tuiConfirmKill)
+		}
+	case "h":
+		if len(m.profiles) > 0 {
+			return m, m.openInstances(tuiHijack)
+		}
+	case "R":
+		if len(m.profiles) > 0 {
 			profile := m.profiles[m.cursor]
-			instances, err := activeProfileInstances(profile)
+			args, err := resumeArgs(profile.Provider)
 			if err != nil {
 				m.setStatus(statusErr, err.Error())
 				return m, nil
 			}
-			if len(instances) == 0 {
-				return m, nil
-			}
-			m.instances = instances
-			m.instance = 0
-			m.mode = tuiConfirmKill
+			return m, m.execProfile(profile, profileRunArgs(profile, args), false)
+		}
+	case "p":
+		if len(m.profiles) > 0 {
+			m.mode = tuiParams
+			m.params = ""
 			m.clearStatus()
 		}
 	case "l":
@@ -246,6 +278,104 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.profiles) > 0 {
 			return m, m.execUpdate(m.profiles[m.cursor])
 		}
+	}
+	return m, nil
+}
+
+// openInstances shows the running instances of the selected profile and starts
+// resolving what each one is working on.
+func (m *tuiModel) openInstances(mode tuiMode) tea.Cmd {
+	profile := m.profiles[m.cursor]
+	instances, err := activeProfileInstances(profile)
+	if err != nil {
+		m.setStatus(statusErr, err.Error())
+		return nil
+	}
+	if len(instances) == 0 {
+		m.setStatus(statusErr, profile.Name+" is not running")
+		return nil
+	}
+	m.instances = instances
+	m.instance = 0
+	m.mode = mode
+	m.describing = true
+	m.clearStatus()
+	return describeInstancesCmd(profile, instances)
+}
+
+func describeInstancesCmd(profile Profile, instances []profileInstance) tea.Cmd {
+	instances = append([]profileInstance(nil), instances...)
+	return func() tea.Msg {
+		return instancesDescribedMsg{profile: profile.Name, instances: describeInstances(profile, instances)}
+	}
+}
+
+// updateHijack reopens the conversation a running instance has open, in the
+// folder that instance was launched from. The original process is left alone.
+func (m tuiModel) updateHijack(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if m.instance > 0 {
+			m.instance--
+		}
+	case "down", "j":
+		if m.instance < len(m.instances)-1 {
+			m.instance++
+		}
+	case "enter":
+		if len(m.instances) == 0 || m.instance >= len(m.instances) {
+			m.mode = tuiList
+			return m, nil
+		}
+		instance := m.instances[m.instance]
+		profile := m.profiles[m.cursor]
+		args, err := hijackArgs(profile.Provider, instance.session)
+		if err != nil {
+			m.setStatus(statusErr, err.Error())
+			m.mode = tuiList
+			return m, nil
+		}
+		folder := instance.folder
+		if folder == "" {
+			folder = m.workingDir
+		}
+		m.instances = nil
+		m.mode = tuiList
+		return m, m.execProfileIn(profile, profileRunArgs(profile, args), false, folder)
+	case "esc", "q", "n", "N":
+		m.instances = nil
+		m.mode = tuiList
+		m.clearStatus()
+	}
+	return m, nil
+}
+
+func (m tuiModel) updateParams(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.mode = tuiList
+		m.clearStatus()
+		return m, nil
+	case "enter":
+		args, err := parseArguments(m.params)
+		if err != nil {
+			m.setStatus(statusErr, err.Error())
+			return m, nil
+		}
+		profile := m.profiles[m.cursor]
+		m.mode = tuiList
+		return m, m.execProfile(profile, profileRunArgs(profile, args), false)
+	case "backspace", "ctrl+h":
+		if runes := []rune(m.params); len(runes) > 0 {
+			m.params = string(runes[:len(runes)-1])
+		}
+		return m, nil
+	case "ctrl+u":
+		m.params = ""
+		return m, nil
+	}
+	if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
+		m.params += string(msg.Runes)
 	}
 	return m, nil
 }
@@ -559,6 +689,13 @@ func resolveWorkingDir(value, current string) (string, error) {
 }
 
 func (m *tuiModel) execProfile(profile Profile, args []string, exclusive bool) tea.Cmd {
+	return m.execProfileIn(profile, args, exclusive, m.workingDir)
+}
+
+// execProfileIn runs a profile in an explicit folder. Hijacking needs this:
+// the session being reopened belongs to the folder its instance started in,
+// not to whatever folder the TUI is currently pointed at.
+func (m *tuiModel) execProfileIn(profile Profile, args []string, exclusive bool, folder string) tea.Cmd {
 	workdir, err := ensureProfileState(profile)
 	if err != nil {
 		m.setStatus(statusErr, err.Error())
@@ -576,7 +713,7 @@ func (m *tuiModel) execProfile(profile Profile, args []string, exclusive bool) t
 		return nil
 	}
 	cmd := exec.Command(profile.Command, args...)
-	cmd.Dir = m.workingDir
+	cmd.Dir = folder
 	cmd.Env = append(cleanEnvironment(os.Environ()), profileEnv(profile)...)
 	if cmd, err = applyIndicator(cmd, profile, lockDir); err != nil {
 		unlock()
@@ -627,6 +764,7 @@ func (c trackedExecCommand) Run() error {
 		_ = c.cmd.Wait()
 		return err
 	}
+	_ = setProfileInstanceMeta(c.workdir, c.cmd.Dir)
 	return c.cmd.Wait()
 }
 
@@ -638,7 +776,9 @@ func (m tuiModel) View() string {
 		sections = append(sections, m.formView(width))
 	case tuiFolder:
 		sections = append(sections, m.folderView(width))
-	case tuiConfirmDelete, tuiConfirmKill:
+	case tuiParams:
+		sections = append(sections, m.paramsView(width))
+	case tuiConfirmDelete, tuiConfirmKill, tuiHijack:
 		sections = append(sections, m.listView(width), m.selectedProfileView(width), m.confirmView(width))
 	default:
 		sections = append(sections, m.listView(width), m.selectedProfileView(width))
@@ -913,17 +1053,15 @@ func (m tuiModel) confirmView(width int) string {
 	}
 	profile := m.profiles[m.cursor]
 	var body string
+	if m.mode == tuiHijack {
+		lines := append([]string{sectionTitle.Render("Open a running " + profile.Name + " session here")},
+			m.instanceRows(width, fieldValueStyle)...)
+		lines = append(lines, "", hintStyle.Render("The original instance keeps running; this opens its conversation."))
+		return "\n" + panelStyle.Width(width-2).Render(lipgloss.JoinVertical(lipgloss.Left, lines...)) + "\n"
+	}
 	if m.mode == tuiConfirmKill {
-		lines := []string{dangerTextStyle.Render("Stop a " + profile.Name + " instance?")}
-		for index, instance := range m.instances {
-			label := fmt.Sprintf("Instance %d (PID %d)", index+1, instance.pid)
-			if index == m.instance {
-				label = cursorBarStyle.Render("▌ ") + dangerTextStyle.Render(label)
-			} else {
-				label = "  " + confirmBodyStyle.Render(label)
-			}
-			lines = append(lines, label)
-		}
+		lines := append([]string{dangerTextStyle.Render("Stop a " + profile.Name + " instance?")},
+			m.instanceRows(width, dangerTextStyle)...)
 		lines = append(lines, "", confirmBodyStyle.Render("Enter stops the selected instance. a or y stops them all."))
 		body = dangerPanelStyle.Width(width - 2).Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
 		return "\n" + body + "\n"
@@ -935,6 +1073,72 @@ func (m tuiModel) confirmView(width int) string {
 	)
 	body = dangerPanelStyle.Width(width - 2).Render(content)
 	return "\n" + body + "\n"
+}
+
+// instanceRows renders one running instance per two lines: what it is working
+// on, and where it was launched. selected styles the highlighted row, which
+// differs between the two pickers that share this list.
+func (m tuiModel) instanceRows(width int, selected lipgloss.Style) []string {
+	valueWidth := max(width-8, 8)
+	rows := make([]string, 0, len(m.instances)*2)
+	for index, instance := range m.instances {
+		label := fmt.Sprintf("Instance %d (PID %d)  %s", index+1, instance.pid, m.instanceTitle(instance))
+		label = truncate(label, valueWidth)
+		if index == m.instance {
+			rows = append(rows, cursorBarStyle.Render("▌ ")+selected.Render(label))
+		} else {
+			rows = append(rows, "  "+confirmBodyStyle.Render(label))
+		}
+		rows = append(rows, "    "+hintStyle.Render(truncate(shortenHome(instance.folder), valueWidth)))
+	}
+	return rows
+}
+
+// instanceTitle names the conversation an instance has open, or says why it
+// cannot. A lookup still in flight reads as a placeholder rather than as an
+// answer, so a slow provider is never mistaken for a nameless session.
+func (m tuiModel) instanceTitle(instance profileInstance) string {
+	if instance.session.title != "" {
+		return instance.session.title
+	}
+	if m.describing {
+		return "…"
+	}
+	if instance.session.id != "" {
+		return "untitled session"
+	}
+	return "—"
+}
+
+func shortenHome(path string) string {
+	if path == "" {
+		return "unknown folder"
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if path == home {
+		return "~"
+	}
+	if strings.HasPrefix(path, home+string(os.PathSeparator)) {
+		return "~" + path[len(home):]
+	}
+	return path
+}
+
+func (m tuiModel) paramsView(width int) string {
+	profile := "profile"
+	if m.cursor < len(m.profiles) {
+		profile = m.profiles[m.cursor].Name
+	}
+	value := fieldValueStyle.Render(m.params) + cursorStyle.Render(" ")
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		fieldLabelActive.Render(pad("Arguments", 12))+" "+value,
+		"",
+		hintStyle.Render("Added after the profile default arguments. Shell-style quotes are supported."),
+	)
+	return sectionTitle.Render("Run "+profile+" with arguments") + "\n" + panelStyle.Width(width-2).Render(content) + "\n"
 }
 
 // helpView wraps at the content width so the key list reflows instead of
@@ -958,12 +1162,19 @@ func (m tuiModel) helpEntries() string {
 		return renderHelp([]helpEntry{{"y", "delete"}, {"n/esc", "keep"}})
 	case tuiConfirmKill:
 		return renderHelp([]helpEntry{{"↑↓/jk", "choose instance"}, {"↵", "stop selected"}, {"a/y", "stop all"}, {"n/esc", "keep running"}})
+	case tuiHijack:
+		return renderHelp([]helpEntry{{"↑↓/jk", "choose instance"}, {"↵", "open here"}, {"esc", "cancel"}})
+	case tuiParams:
+		return renderHelp([]helpEntry{{"↵", "run"}, {"ctrl-u", "clear"}, {"esc", "cancel"}})
 	default:
 		if len(m.profiles) == 0 {
 			return renderHelp([]helpEntry{{"a", "add profile"}, {"q", "quit"}})
 		}
 		return renderHelp([]helpEntry{
 			{"↵", "run"},
+			{"p", "run with args"},
+			{"R", "resume"},
+			{"h", "hijack"},
 			{"l", "login"},
 			{"u", "update CLI"},
 			{"c", "change folder"},
@@ -1051,6 +1262,7 @@ func terminateProfileLock(lockDir string) error {
 
 func removeProfileLock(lockDir string) {
 	_ = os.Remove(filepath.Join(lockDir, ".active.lock"))
+	_ = os.Remove(filepath.Join(lockDir, instanceMetaFile))
 	if filepath.Base(filepath.Dir(lockDir)) == instancesDirectory {
 		_ = os.RemoveAll(lockDir)
 	}
