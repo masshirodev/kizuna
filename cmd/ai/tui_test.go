@@ -444,3 +444,114 @@ func TestTruncateKeepsWidthBudget(t *testing.T) {
 		t.Fatalf("pad = %q", got)
 	}
 }
+
+func TestHijackPickerNamesSessionAndFolder(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := tuiModel{
+		profiles: testProfiles(),
+		width:    90,
+		cursor:   1,
+		mode:     tuiHijack,
+		instances: []profileInstance{
+			{pid: 11, folder: "/work/lattice", session: instanceSession{id: "aaa", title: "Edit contacts"}},
+			{pid: 12, folder: "/work/hub", session: instanceSession{id: "bbb", title: "Server status card"}},
+		},
+	}
+	view := m.View()
+	for _, want := range []string{"Open a running codex-work session here", "Instance 1 (PID 11)", "Edit contacts", "/work/lattice", "Instance 2 (PID 12)", "Server status card", "open here"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("hijack picker is missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestKillPickerNamesSessions(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := tuiModel{
+		profiles:  testProfiles(),
+		width:     90,
+		cursor:    1,
+		mode:      tuiConfirmKill,
+		instances: []profileInstance{{pid: 11, folder: "/work/lattice", session: instanceSession{id: "aaa", title: "Edit contacts"}}},
+	}
+	view := m.View()
+	for _, want := range []string{"Stop a codex-work instance?", "Instance 1 (PID 11)", "Edit contacts", "/work/lattice"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("kill picker is missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestInstanceTitleDistinguishesPendingFromUnknown(t *testing.T) {
+	pending := tuiModel{describing: true}
+	if got := pending.instanceTitle(profileInstance{}); got != "…" {
+		t.Fatalf("pending title = %q, want a placeholder while the lookup runs", got)
+	}
+	settled := tuiModel{}
+	if got := settled.instanceTitle(profileInstance{}); got != "—" {
+		t.Fatalf("unknown title = %q", got)
+	}
+	if got := settled.instanceTitle(profileInstance{session: instanceSession{id: "aaa"}}); got != "untitled session" {
+		t.Fatalf("nameless session title = %q", got)
+	}
+}
+
+func TestHijackPickerRefusesWhenNothingIsRunning(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := tuiModel{profiles: testProfiles(), width: 80, cursor: 1}
+	updated, cmd := m.updateList(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	got := updated.(tuiModel)
+	if got.mode != tuiList || cmd != nil {
+		t.Fatalf("hijack opened a picker with no instances: mode %v", got.mode)
+	}
+	if !strings.Contains(got.status, "not running") {
+		t.Fatalf("status = %q, want an explanation", got.status)
+	}
+}
+
+func TestDescribedInstancesReachTheOpenPicker(t *testing.T) {
+	m := tuiModel{
+		profiles:   testProfiles(),
+		cursor:     1,
+		mode:       tuiHijack,
+		describing: true,
+		instances:  []profileInstance{{pid: 11}},
+	}
+	described := []profileInstance{{pid: 11, session: instanceSession{id: "aaa", title: "Edit contacts"}}}
+	updated, _ := m.Update(instancesDescribedMsg{profile: "codex-work", instances: described})
+	got := updated.(tuiModel)
+	if got.describing || got.instances[0].session.title != "Edit contacts" {
+		t.Fatalf("picker did not take the described sessions: %+v", got.instances)
+	}
+
+	stale, _ := m.Update(instancesDescribedMsg{profile: "claude-personal", instances: described})
+	if stale.(tuiModel).instances[0].session.title != "" {
+		t.Fatalf("a lookup for another profile overwrote the picker")
+	}
+}
+
+func TestParamsPromptCollectsArgumentsAndReportsQuoteErrors(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := tuiModel{profiles: testProfiles(), width: 80, cursor: 1}
+	updated, _ := m.updateList(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
+	got := updated.(tuiModel)
+	if got.mode != tuiParams {
+		t.Fatalf("mode = %v, want the argument prompt", got.mode)
+	}
+	updated, _ = got.updateParams(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("--model")})
+	updated, _ = updated.(tuiModel).updateParams(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune(" ")})
+	updated, _ = updated.(tuiModel).updateParams(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(`"gpt 5`)})
+	got = updated.(tuiModel)
+	if got.params != `--model "gpt 5` {
+		t.Fatalf("typed arguments = %q", got.params)
+	}
+	if view := got.View(); !strings.Contains(view, "Run codex-work with arguments") || !strings.Contains(view, "--model") {
+		t.Fatalf("argument prompt does not show what was typed:\n%s", view)
+	}
+
+	updated, cmd := got.updateParams(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(tuiModel)
+	if cmd != nil || got.mode != tuiParams || !strings.Contains(got.status, "unclosed quote") {
+		t.Fatalf("unclosed quote was accepted: mode %v, status %q", got.mode, got.status)
+	}
+}

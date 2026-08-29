@@ -353,7 +353,21 @@ func runCommandWithLock(cmd *exec.Cmd, lockDir string, unlock func(), title stri
 		_ = cmd.Wait()
 		return err
 	}
+	_ = setProfileInstanceMeta(lockDir, commandFolder(cmd))
 	return cmd.Wait()
+}
+
+// commandFolder reports where a command will run. An empty Dir means the
+// current directory is inherited, which is what a plain CLI launch does.
+func commandFolder(cmd *exec.Cmd) string {
+	if cmd.Dir != "" {
+		return cmd.Dir
+	}
+	folder, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return folder
 }
 
 func openUsageIntegration(provider string) string {
@@ -377,6 +391,44 @@ func loginArgs(provider string) []string {
 		return []string{"auth", "login"}
 	default:
 		return nil
+	}
+}
+
+// resumeArgs reopens a provider's previous conversation. Codex spells it as a
+// subcommand and Claude as a flag; OpenCode has neither, so its nearest
+// equivalent — continue the last session — is used instead.
+func resumeArgs(provider string) ([]string, error) {
+	switch provider {
+	case "claude":
+		return []string{"--resume"}, nil
+	case "codex":
+		return []string{"resume"}, nil
+	case "opencode", "deepseek":
+		return []string{"--continue"}, nil
+	default:
+		return nil, fmt.Errorf("provider %q has no resume command", provider)
+	}
+}
+
+// hijackArgs reopens the conversation a running instance already has open.
+// Without a discovered session id it falls back to the most recent session,
+// which for Claude and OpenCode is scoped to the folder the command runs in.
+func hijackArgs(provider string, session instanceSession) ([]string, error) {
+	switch provider {
+	case "claude":
+		if session.id != "" {
+			return []string{"--resume", session.id}, nil
+		}
+		return []string{"--continue"}, nil
+	case "codex":
+		if session.id != "" {
+			return []string{"resume", session.id}, nil
+		}
+		return []string{"resume", "--last"}, nil
+	case "opencode", "deepseek":
+		return []string{"--continue"}, nil
+	default:
+		return nil, fmt.Errorf("provider %q cannot reopen a running session", provider)
 	}
 }
 

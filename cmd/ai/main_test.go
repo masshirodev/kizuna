@@ -491,3 +491,98 @@ func profileLockIsActiveForTestPID(pid int) (bool, error) {
 	}
 	return profileLockIsActive(path)
 }
+
+func TestResumeArgsUseEachProviderSpelling(t *testing.T) {
+	cases := map[string]string{
+		"claude":   "--resume",
+		"codex":    "resume",
+		"opencode": "--continue",
+		"deepseek": "--continue",
+	}
+	for provider, want := range cases {
+		args, err := resumeArgs(provider)
+		if err != nil {
+			t.Fatalf("%s: %v", provider, err)
+		}
+		if strings.Join(args, " ") != want {
+			t.Fatalf("%s resume args = %v, want %q", provider, args, want)
+		}
+	}
+	if _, err := resumeArgs("unknown"); err == nil {
+		t.Fatal("an unknown provider reported a resume command")
+	}
+}
+
+func TestHijackArgsPreferTheDiscoveredSession(t *testing.T) {
+	session := instanceSession{id: "abc123"}
+	cases := map[string]struct{ exact, fallback string }{
+		"claude":   {"--resume abc123", "--continue"},
+		"codex":    {"resume abc123", "resume --last"},
+		"opencode": {"--continue", "--continue"},
+	}
+	for provider, want := range cases {
+		args, err := hijackArgs(provider, session)
+		if err != nil {
+			t.Fatalf("%s: %v", provider, err)
+		}
+		if strings.Join(args, " ") != want.exact {
+			t.Fatalf("%s hijack args = %v, want %q", provider, args, want.exact)
+		}
+		args, err = hijackArgs(provider, instanceSession{})
+		if err != nil {
+			t.Fatalf("%s: %v", provider, err)
+		}
+		if strings.Join(args, " ") != want.fallback {
+			t.Fatalf("%s fallback args = %v, want %q", provider, args, want.fallback)
+		}
+	}
+	if _, err := hijackArgs("unknown", session); err == nil {
+		t.Fatal("an unknown provider reported a hijack command")
+	}
+}
+
+func TestInstanceMetaRecordsTheLaunchFolder(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	profile := Profile{Name: "codex-work", Provider: "codex", Command: "codex"}
+	workdir := filepath.Join(root, appName, "profiles", profile.Name)
+	lockDir := filepath.Join(workdir, instancesDirectory, "run-one")
+	if err := os.MkdirAll(lockDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lockDir, ".active.lock"), []byte(fmt.Sprintf("%d\n", os.Getpid())), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := setProfileInstanceMeta(lockDir, "/work/lattice"); err != nil {
+		t.Fatal(err)
+	}
+
+	instances, err := activeProfileInstances(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(instances) != 1 || instances[0].folder != "/work/lattice" {
+		t.Fatalf("instances = %+v, want the recorded launch folder", instances)
+	}
+}
+
+func TestInstanceMetaIsAbsentUntilWritten(t *testing.T) {
+	if meta := readInstanceMeta(t.TempDir()); meta.Folder != "" {
+		t.Fatalf("meta = %+v, want an empty folder", meta)
+	}
+}
+
+func TestExclusiveUnlockRemovesInstanceMetadata(t *testing.T) {
+	workdir := t.TempDir()
+	_, unlock, err := acquireExclusiveRunLock(workdir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := setProfileInstanceMeta(workdir, "/work/hub"); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	if _, err := os.Stat(filepath.Join(workdir, instanceMetaFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("instance metadata outlived its lock: %v", err)
+	}
+}
