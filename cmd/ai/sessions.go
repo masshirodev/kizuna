@@ -60,7 +60,7 @@ func claudeLiveSessions(profile Profile) []claudeAgent {
 	ctx, cancel := context.WithTimeout(context.Background(), sessionLookupTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, profile.Command, "agents", "--json")
-	cmd.Env = append(cleanEnvironment(os.Environ()), profileEnv(profile)...)
+	cmd.Env = launchEnvironment(profile, os.Environ())
 	output, err := cmd.Output()
 	if err != nil {
 		return nil

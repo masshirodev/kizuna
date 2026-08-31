@@ -196,6 +196,23 @@ func writeProfileBundle(dst io.Writer, profile Profile, workdir string) error {
 		if profile.Provider == "opencode" && info.IsDir() && filepath.Base(relative) == "node_modules" {
 			return filepath.SkipDir
 		}
+		// Antigravity has to run with a profile-local HOME. Its general cache and
+		// generated CLI runtime trees are host-specific and reproducible; keep
+		// the settings, OAuth token, conversations, and other persistent state.
+		if profile.Provider == "antigravity" {
+			if relative == filepath.Join("home", ".cache") && info.IsDir() {
+				return filepath.SkipDir
+			}
+			agyData := filepath.Join("home", ".gemini", "antigravity-cli")
+			for _, runtimeName := range []string{"bin", "builtin", "crashes", "log", "updater"} {
+				if relative == filepath.Join(agyData, runtimeName) && info.IsDir() {
+					return filepath.SkipDir
+				}
+			}
+			if relative == filepath.Join(agyData, "cli.log") && info.Mode()&os.ModeSymlink != 0 {
+				return nil
+			}
+		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("refusing to export symlink %q", relative)
 		}

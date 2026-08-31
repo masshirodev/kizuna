@@ -905,7 +905,7 @@ func (m *tuiModel) execProfileIn(profile Profile, args []string, exclusive bool,
 	}
 	cmd := exec.Command(profile.Command, args...)
 	cmd.Dir = folder
-	cmd.Env = append(cleanEnvironment(os.Environ()), profileEnv(profile)...)
+	cmd.Env = launchEnvironment(profile, os.Environ())
 	if cmd, err = applyIndicator(cmd, profile, lockDir); err != nil {
 		unlock()
 		m.setStatus(statusErr, err.Error())
@@ -1027,7 +1027,7 @@ func (m tuiModel) formContent() []string {
 		lines = append(lines, label+" "+value)
 	}
 	if m.form.field == 1 {
-		lines = append(lines, "", hintStyle.Render("known providers: codex · claude · opencode · deepseek"))
+		lines = append(lines, "", hintStyle.Render("known providers: codex · claude · antigravity · opencode · deepseek"))
 	} else if m.form.field == 3 {
 		lines = append(lines, "", hintStyle.Render("shell-style quotes are supported; arguments apply only when running"))
 	}

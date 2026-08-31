@@ -7,6 +7,7 @@ tokens. Each launched process receives only its profile-specific state directory
 
 - Codex: `CODEX_HOME`
 - Claude Code: `CLAUDE_CONFIG_DIR`
+- Antigravity CLI: a profile-local `HOME` containing its `.gemini` state
 - OpenCode: `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_STATE_HOME`
 
 This prevents separate accounts from racing over one credential file and lets
@@ -32,6 +33,7 @@ repository, and a binary built without it can only report that it does not know.
 ai profile add codex-personal codex
 ai profile add codex-work codex
 ai profile add claude-personal claude
+ai profile add antigravity-personal antigravity
 ai profile add opencode-go opencode
 ai profile add deepseek opencode
 ```
@@ -42,6 +44,7 @@ Log in through the isolated profile:
 ai login codex-personal
 ai login codex-work
 ai login claude-personal
+ai login antigravity-personal
 ai login opencode-go
 ```
 
@@ -50,16 +53,18 @@ Update a profile's CLI with its supported updater:
 ```sh
 ai update codex-personal
 ai update claude-personal
+ai update antigravity-personal
 ai update opencode-go
 ```
 
-This runs `codex update`, `claude update`, or `opencode upgrade` respectively.
+This runs `codex update`, `claude update`, `agy update`, or `opencode upgrade`
+respectively.
 
 `ai run` uses the credentials already stored in that profile. A new profile has
 no credentials until you run `ai login <profile>`; the login flow is performed
 by the official CLI and may open a browser or ask for a device code. The
-launcher intentionally does not copy the account from your normal Codex or
-Claude configuration.
+launcher intentionally does not copy the account from your normal Codex,
+Claude, or Antigravity configuration.
 
 Run a profile:
 
@@ -67,6 +72,7 @@ Run a profile:
 ai run codex-personal
 ai run codex-work exec -- "review this repository"
 ai run claude-personal
+ai run antigravity-personal
 ai run opencode-go
 ```
 
@@ -78,9 +84,21 @@ single `CODEX_HOME` or `CLAUDE_CONFIG_DIR`. This means one login per profile and
 the same settings and session history in every instance. The instance directory
 is removed when the CLI exits and reclaimed automatically after a crash.
 
-OpenCode profiles remain exclusive: a second launch is refused while the first
-is running because OpenCode's OAuth credential store does not coordinate token
-refreshes across processes.
+Antigravity and OpenCode profiles remain exclusive: a second launch is refused
+while the first is running because their file-backed OAuth stores are not known
+to coordinate token refreshes across processes.
+
+Antigravity does not expose a config-home override, so its entire `HOME` is the
+profile's `home/` directory. On Linux, `ai-session` also clears
+`DBUS_SESSION_BUS_ADDRESS` for the child so `agy` uses its profile-local
+`~/.gemini/antigravity-cli/antigravity-oauth-token` instead of silently sharing
+one account through Secret Service. Commands run by Antigravity inherit that
+private home too; project paths are unchanged, but host-home resources such as
+`~/.ssh` should be referenced by absolute path when needed.
+
+The keyring bypass is Linux-specific; until `agy` exposes a portable keyring or
+config-home override, OAuth profiles on macOS and Windows may still resolve to
+the CLI's shared OS-keyring entry.
 
 The `run` command is optional when the first argument is a profile name. These
 are equivalent, and any following arguments are passed to the profile's
@@ -133,14 +151,16 @@ profile the best indicator its provider supports:
 
 ```sh
 ai integrate statusline claude-personal
+ai integrate statusline antigravity-personal
 ai integrate statusline codex-work
 ```
 
-**Claude Code renders it itself.** The command merges a `statusLine` into that
-profile's own `settings.json`, keeping every other key, and the line reads
-`AI_PROFILE` out of the launch environment so it names the profile actually in
-use. An existing `statusLine` is refused rather than replaced: it is yours, and
-overwriting it would silently drop whatever it showed.
+**Claude Code and Antigravity render it themselves.** The command merges a
+`statusLine` into that profile's own `settings.json`, keeping every other key,
+and the line reads `AI_PROFILE` out of the launch environment so it names the
+profile actually in use. An existing `statusLine` is refused rather than
+replaced: it is yours, and overwriting it would silently drop whatever it
+showed.
 
 **Codex and OpenCode have no equivalent**, so those profiles are marked
 `"indicator": "tmux"` in `profiles.json` and launch inside a tmux session whose
@@ -222,6 +242,9 @@ runtime-only `codex/tmp` tree is omitted; Codex recreates its helper symlinks
 there on the destination machine. OpenCode plugin `node_modules` directories
 are also omitted because they are host-specific and reproducible; reinstall
 them from each plugin's `package.json` and lockfile after importing.
+Antigravity's generated caches, built-ins, updater files, logs, and helper
+binaries are omitted for the same reason; its settings, conversations, and
+OAuth token remain in the bundle.
 
 Do not actively use the same imported profile on multiple computers: provider
 refresh tokens may rotate when used.
@@ -257,9 +280,9 @@ or `▶ N running`, and the `AUTH` block shows whether the profile has logged in
 
 - `● yes` — the provider's credential file exists in the isolated state
   directory, so `ai run` can use it.
-- `● key` — a `deepseek` profile with `DEEPSEEK_API_KEY` exported. DeepSeek runs
-  through OpenCode with an API key from the environment rather than a stored
-  credential file, so there is nothing to log in to.
+- `● key` — a `deepseek` profile with `DEEPSEEK_API_KEY` exported, or an
+  Antigravity profile with `modelProvider: "gemini"` and `GEMINI_API_KEY`.
+  These authenticate from the environment rather than a stored OAuth file.
 - `○ no` — no credentials yet; press `l` to log in.
 - `· ?` — the provider has no known credential location, so the launcher does
   not guess.
@@ -283,9 +306,10 @@ remaining five-hour and weekly quotas reported by the selected account's own
 local CLI cache, along with when each window rolls over. Codex is read from the
 newest rate-limit events in that profile's session logs; Claude Code is read
 from its cached usage utilization. Expired or unavailable windows show `—`.
-OpenCode and DeepSeek do not currently expose comparable local quotas. This is
-intentionally profile-local and does not use OpenUsage, so multiple accounts
-for the same provider stay separate. Credential files are never opened.
+Antigravity, OpenCode, and DeepSeek do not currently expose comparable local
+quota caches that this launcher reads. This is intentionally profile-local and
+does not use OpenUsage, so multiple accounts for the same provider stay
+separate. Credential files are never opened.
 
 The check only tests whether the file exists, and reads the API key variable
 only to see whether it is empty; `ai-session` still never opens or prints
@@ -338,9 +362,11 @@ the same profile can be told apart by what they are doing rather than by PID.
 | -------- | ------- |
 | Codex | `codex resume` (session picker) |
 | Claude Code | `claude --resume` (session picker) |
+| Antigravity | `agy --continue` |
 | OpenCode | `opencode --continue` |
 
-OpenCode has no resume picker, so it continues the last session instead.
+Antigravity and OpenCode continue the last session for the current workspace
+instead of opening a picker.
 
 `h` skips the picker. It reads the running instances the launcher already
 tracks, resolves the session each one has open, and reopens exactly that
@@ -351,10 +377,12 @@ the provider itself and are best effort:
 | -------- | ------ |
 | Codex | the newest session log recorded for that folder |
 | Claude Code | `claude agents --json`, matched on the recorded PID |
+| Antigravity | not available; the instance is listed without a title |
 | OpenCode | not available; the instance is listed without a title |
 
-Hijacking an OpenCode profile is refused for the same reason a second launch
-is: its credential store is exclusive while the first process is running.
+Hijacking an Antigravity or OpenCode profile is refused for the same reason a
+second launch is: its credential store is exclusive while the first process is
+running.
 
 The selected-profile panel shows its default arguments and note. In the profile
 editor, Enter or Tab advances through all fields; on the final field it saves.
@@ -383,9 +411,10 @@ The launcher deliberately does not modify OpenUsage's database or copy tokens.
 It runs OpenUsage's supported installer with the selected profile environment,
 so Codex and Claude hooks are installed beside that profile's own state. Login,
 integration, and export remain exclusive operations and are refused while any
-instance is running. OpenCode also retains this exclusive lock for ordinary
-runs. If a launcher is interrupted, its lock is reclaimed automatically after
-all PIDs recorded in it have exited. Different profiles can still run at once.
+instance is running. Antigravity and OpenCode also retain this exclusive lock
+for ordinary runs. If a launcher is interrupted, its lock is reclaimed
+automatically after all PIDs recorded in it have exited. Different profiles can
+still run at once.
 In the TUI, select a running profile and press `K` to choose an individual CLI
 process by PID, or stop all of that profile's instances. Each lock records the
 launcher PID on its first line and the child CLI PID on its second line;

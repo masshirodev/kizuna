@@ -28,7 +28,7 @@ const maxSocketPath = 100
 const statusLineCommand = `printf '[%s] %s' "${AI_PROFILE:-no profile}" "${PWD##*/}"`
 
 func supportsNativeStatusLine(provider string) bool {
-	return provider == "claude"
+	return provider == "claude" || provider == "antigravity"
 }
 
 // installIndicator gives a profile the best indicator its provider supports and
@@ -63,11 +63,10 @@ func installIndicator(profile Profile, cfg *Config, configPath string, stdout io
 // keeping every other key. An existing statusLine is left alone: it is the
 // user's, and replacing it would silently drop whatever it showed.
 func installStatusLine(profile Profile) (string, error) {
-	root, err := profileRoot()
+	path, err := statusLineSettingsPath(profile)
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(root, profile.Name, "claude", "settings.json")
 	settings := map[string]json.RawMessage{}
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -94,6 +93,22 @@ func installStatusLine(profile Profile) (string, error) {
 		return "", err
 	}
 	return path, os.WriteFile(path, append(merged, '\n'), 0600)
+}
+
+func statusLineSettingsPath(profile Profile) (string, error) {
+	root, err := profileRoot()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(root, profile.Name)
+	switch profile.Provider {
+	case "claude":
+		return filepath.Join(dir, "claude", "settings.json"), nil
+	case "antigravity":
+		return filepath.Join(dir, "home", ".gemini", "antigravity-cli", "settings.json"), nil
+	default:
+		return "", fmt.Errorf("provider %q has no native status line", profile.Provider)
+	}
 }
 
 // applyIndicator rewrites a launch for the profile's indicator. A profile with

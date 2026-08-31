@@ -74,6 +74,12 @@ func TestUpdateCommandRunsProviderUpdater(t *testing.T) {
 	}
 }
 
+func TestAntigravityUsesAgyByDefault(t *testing.T) {
+	if got := defaultCommand("antigravity"); got != "agy" {
+		t.Fatalf("default Antigravity command = %q, want agy", got)
+	}
+}
+
 func TestProfileRunArgsPrependsDefaultsWithoutMutatingInputs(t *testing.T) {
 	profile := Profile{DefaultArgs: []string{"--model", "opus"}}
 	provided := []string{"--print", "hello"}
@@ -89,10 +95,11 @@ func TestProfileRunArgsPrependsDefaultsWithoutMutatingInputs(t *testing.T) {
 
 func TestUpdateArgsUsesProviderUpdaters(t *testing.T) {
 	cases := map[string]string{
-		"claude":   "update",
-		"codex":    "update",
-		"opencode": "upgrade",
-		"deepseek": "upgrade",
+		"claude":      "update",
+		"codex":       "update",
+		"antigravity": "update",
+		"opencode":    "upgrade",
+		"deepseek":    "upgrade",
 	}
 	for provider, want := range cases {
 		args, err := updateArgs(provider)
@@ -167,6 +174,30 @@ func TestProfileEnvironmentIsolatedByName(t *testing.T) {
 	}
 }
 
+func TestAntigravityEnvironmentUsesAPrivateHomeAndFileCredentials(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/shared/config")
+	profile := Profile{Name: "agy-work", Provider: "antigravity"}
+	got := launchEnvironment(profile, []string{
+		"PATH=/bin",
+		antigravityHomeEnv + "=/host/home",
+		antigravityDBusEnv + "=unix:path=/run/user/1000/bus",
+		antigravityCacheEnv + "=/host/cache",
+	})
+	joined := strings.Join(got, "\n")
+	wantHome := antigravityHomeEnv + "=/shared/config/ai/profiles/agy-work/home"
+	if !strings.Contains(joined, wantHome) {
+		t.Fatalf("Antigravity HOME is not profile-local: %v", got)
+	}
+	if strings.Contains(joined, "/host/home") || strings.Contains(joined, "/host/cache") || strings.Contains(joined, "unix:path=") {
+		t.Fatalf("shared Antigravity state selectors leaked: %v", got)
+	}
+	if !strings.Contains(joined, antigravityDBusEnv+"=") ||
+		!strings.Contains(joined, antigravityCacheEnv+"=/shared/config/ai/profiles/agy-work/home/.cache") ||
+		!strings.Contains(joined, "PATH=/bin") {
+		t.Fatalf("file-token selector or ordinary environment missing: %v", got)
+	}
+}
+
 func TestProfileEnvironmentMarksProfileAndProvider(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	for _, profile := range []Profile{
@@ -213,6 +244,8 @@ func TestProfileAuthStateDetectsCredentialFiles(t *testing.T) {
 		{Profile{Name: "codex-out", Provider: "codex"}, nil, authMissing},
 		{Profile{Name: "claude-in", Provider: "claude"}, []string{"claude", ".credentials.json"}, authPresent},
 		{Profile{Name: "claude-out", Provider: "claude"}, nil, authMissing},
+		{Profile{Name: "agy-in", Provider: "antigravity"}, []string{"home", ".gemini", "antigravity-cli", "antigravity-oauth-token"}, authPresent},
+		{Profile{Name: "agy-out", Provider: "antigravity"}, nil, authMissing},
 		{Profile{Name: "opencode-in", Provider: "opencode"}, []string{"data", "opencode", "auth.json"}, authPresent},
 		{Profile{Name: "opencode-out", Provider: "opencode"}, nil, authMissing},
 		{Profile{Name: "deepseek", Provider: "deepseek"}, nil, authMissing},
@@ -252,6 +285,24 @@ func TestProfileAuthStateReadsDeepSeekAPIKey(t *testing.T) {
 		if strings.Contains(value, "sk-test") {
 			t.Fatalf("profile environment rewrote the API key: %q", value)
 		}
+	}
+}
+
+func TestProfileAuthStateReadsConfiguredAntigravityAPIKey(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	profile := Profile{Name: "agy-api", Provider: "antigravity", Command: "agy"}
+	writeProfileFile(t, root, `{"modelProvider":"gemini"}`, "agy-api", "home", ".gemini", "antigravity-cli", "settings.json")
+	// An old OAuth token does not help while settings explicitly select API-key
+	// authentication; the key itself is required.
+	writeProfileFile(t, root, `{"token":"opaque"}`, "agy-api", "home", ".gemini", "antigravity-cli", "antigravity-oauth-token")
+	t.Setenv(geminiKeyEnv, "test-key")
+	if got := profileAuthState(profile); got != authAPIKey {
+		t.Fatalf("configured Antigravity API key reads as %v, want authAPIKey", got)
+	}
+	t.Setenv(geminiKeyEnv, "")
+	if got := profileAuthState(profile); got != authMissing {
+		t.Fatalf("Antigravity profile without API key reads as %v, want authMissing", got)
 	}
 }
 
@@ -295,6 +346,7 @@ func TestProfileModelReadsEachProviderSettings(t *testing.T) {
 		{Profile{Name: "cl", Provider: "claude"}, "opus"},
 		{Profile{Name: "oc", Provider: "opencode"}, "deepseek/deepseek-v4-pro"},
 		{Profile{Name: "missing", Provider: "codex"}, ""},
+		{Profile{Name: "agy", Provider: "antigravity"}, ""},
 		{Profile{Name: "ds", Provider: "deepseek"}, ""},
 	}
 	for _, testCase := range cases {
@@ -494,10 +546,11 @@ func profileLockIsActiveForTestPID(pid int) (bool, error) {
 
 func TestResumeArgsUseEachProviderSpelling(t *testing.T) {
 	cases := map[string]string{
-		"claude":   "--resume",
-		"codex":    "resume",
-		"opencode": "--continue",
-		"deepseek": "--continue",
+		"claude":      "--resume",
+		"codex":       "resume",
+		"antigravity": "--continue",
+		"opencode":    "--continue",
+		"deepseek":    "--continue",
 	}
 	for provider, want := range cases {
 		args, err := resumeArgs(provider)
@@ -516,9 +569,10 @@ func TestResumeArgsUseEachProviderSpelling(t *testing.T) {
 func TestHijackArgsPreferTheDiscoveredSession(t *testing.T) {
 	session := instanceSession{id: "abc123"}
 	cases := map[string]struct{ exact, fallback string }{
-		"claude":   {"--resume abc123", "--continue"},
-		"codex":    {"resume abc123", "resume --last"},
-		"opencode": {"--continue", "--continue"},
+		"claude":      {"--resume abc123", "--continue"},
+		"codex":       {"resume abc123", "resume --last"},
+		"antigravity": {"--conversation abc123", "--continue"},
+		"opencode":    {"--continue", "--continue"},
 	}
 	for provider, want := range cases {
 		args, err := hijackArgs(provider, session)
