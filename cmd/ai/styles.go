@@ -96,6 +96,8 @@ func providerColor(provider string) lipgloss.TerminalColor {
 		return lipgloss.AdaptiveColor{Light: "#0E7490", Dark: "#67E8F9"}
 	case "claude":
 		return lipgloss.AdaptiveColor{Light: "#C2410C", Dark: "#FDBA74"}
+	case "antigravity":
+		return lipgloss.AdaptiveColor{Light: "#1A73E8", Dark: "#8AB4F8"}
 	case "opencode":
 		return lipgloss.AdaptiveColor{Light: "#6D28D9", Dark: "#D8B4FE"}
 	case "deepseek":

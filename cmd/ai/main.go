@@ -17,6 +17,15 @@ const (
 	appName = "ai"
 	// deepSeekKeyEnv is the API key OpenCode reads for the DeepSeek provider.
 	deepSeekKeyEnv = "DEEPSEEK_API_KEY"
+	// geminiKeyEnv is the optional API key Antigravity reads when its profile
+	// settings select the Gemini API provider.
+	geminiKeyEnv = "GEMINI_API_KEY"
+	// Antigravity has no config-home override and otherwise prefers the shared
+	// desktop keyring on Linux. Its profile gets a private HOME and no D-Bus
+	// session so agy uses the token file beneath that home instead.
+	antigravityHomeEnv  = "HOME"
+	antigravityDBusEnv  = "DBUS_SESSION_BUS_ADDRESS"
+	antigravityCacheEnv = "XDG_CACHE_HOME"
 	// profileNameEnv and profileProviderEnv identify the profile to whatever
 	// runs inside the launched session.
 	profileNameEnv     = "AI_PROFILE"
@@ -304,7 +313,7 @@ func launchExternal(command string, args []string, profile Profile, stdout, stde
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.Env = append(cleanEnvironment(os.Environ()), profileEnv(profile)...)
+	cmd.Env = launchEnvironment(profile, os.Environ())
 	return runLockedCommand(cmd, workdir, sessionTitle(profile))
 }
 
@@ -325,7 +334,7 @@ func launchProfileCommand(command string, args []string, profile Profile, stdout
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.Env = append(cleanEnvironment(os.Environ()), profileEnv(profile)...)
+	cmd.Env = launchEnvironment(profile, os.Environ())
 	lockDir, unlock, err := acquireProfileRunLock(profile, workdir)
 	if err != nil {
 		return err
@@ -385,7 +394,7 @@ func loginArgs(provider string) []string {
 	switch provider {
 	case "codex":
 		return []string{"login"}
-	case "claude":
+	case "claude", "antigravity":
 		return nil
 	case "opencode":
 		return []string{"auth", "login"}
@@ -395,15 +404,15 @@ func loginArgs(provider string) []string {
 }
 
 // resumeArgs reopens a provider's previous conversation. Codex spells it as a
-// subcommand and Claude as a flag; OpenCode has neither, so its nearest
-// equivalent — continue the last session — is used instead.
+// subcommand and Claude as a flag; Antigravity and OpenCode continue the most
+// recent conversation in the current workspace instead.
 func resumeArgs(provider string) ([]string, error) {
 	switch provider {
 	case "claude":
 		return []string{"--resume"}, nil
 	case "codex":
 		return []string{"resume"}, nil
-	case "opencode", "deepseek":
+	case "antigravity", "opencode", "deepseek":
 		return []string{"--continue"}, nil
 	default:
 		return nil, fmt.Errorf("provider %q has no resume command", provider)
@@ -412,7 +421,8 @@ func resumeArgs(provider string) ([]string, error) {
 
 // hijackArgs reopens the conversation a running instance already has open.
 // Without a discovered session id it falls back to the most recent session,
-// which for Claude and OpenCode is scoped to the folder the command runs in.
+// which for Claude, Antigravity, and OpenCode is scoped to the folder the
+// command runs in.
 func hijackArgs(provider string, session instanceSession) ([]string, error) {
 	switch provider {
 	case "claude":
@@ -425,6 +435,11 @@ func hijackArgs(provider string, session instanceSession) ([]string, error) {
 			return []string{"resume", session.id}, nil
 		}
 		return []string{"resume", "--last"}, nil
+	case "antigravity":
+		if session.id != "" {
+			return []string{"--conversation", session.id}, nil
+		}
+		return []string{"--continue"}, nil
 	case "opencode", "deepseek":
 		return []string{"--continue"}, nil
 	default:
@@ -434,7 +449,7 @@ func hijackArgs(provider string, session instanceSession) ([]string, error) {
 
 func updateArgs(provider string) ([]string, error) {
 	switch provider {
-	case "claude", "codex":
+	case "claude", "codex", "antigravity":
 		return []string{"update"}, nil
 	case "opencode", "deepseek":
 		return []string{"upgrade"}, nil
@@ -457,6 +472,13 @@ func profileEnv(profile Profile) []string {
 			env = append(env, "CODEX_HOME="+filepath.Join(dir, "codex"))
 		case "claude":
 			env = append(env, "CLAUDE_CONFIG_DIR="+filepath.Join(dir, "claude"))
+		case "antigravity":
+			home := filepath.Join(dir, "home")
+			env = append(env,
+				antigravityHomeEnv+"="+home,
+				antigravityDBusEnv+"=",
+				antigravityCacheEnv+"="+filepath.Join(home, ".cache"),
+			)
 		case "opencode":
 			env = append(env,
 				"XDG_CONFIG_HOME="+filepath.Join(dir, "config"),
@@ -477,11 +499,11 @@ const (
 	authAPIKey
 )
 
-// profileAuthState reports whether a profile has credentials by testing only
-// for the presence of the credential file each CLI writes inside the isolated
-// state directory set up by profileEnv. Contents are never opened, so this
-// answers "has this profile logged in at least once", not "is the token still
-// valid" — an expired token still reads as present.
+// profileAuthState reports whether a profile has credentials by testing for
+// the credential file each CLI writes or an explicitly configured API key.
+// Credential contents are never opened, so this answers "has this profile
+// logged in at least once", not "is the token still valid" — an expired token
+// still reads as present.
 func profileAuthState(profile Profile) authState {
 	root, err := profileRoot()
 	if err != nil {
@@ -494,6 +516,15 @@ func profileAuthState(profile Profile) authState {
 		candidates = []string{filepath.Join(dir, "codex", "auth.json")}
 	case "claude":
 		candidates = []string{filepath.Join(dir, "claude", ".credentials.json")}
+	case "antigravity":
+		settings := filepath.Join(dir, "home", ".gemini", "antigravity-cli", "settings.json")
+		if jsonStringField(settings, "modelProvider") == "gemini" {
+			if os.Getenv(geminiKeyEnv) != "" {
+				return authAPIKey
+			}
+			return authMissing
+		}
+		candidates = []string{filepath.Join(dir, "home", ".gemini", "antigravity-cli", "antigravity-oauth-token")}
 	case "opencode":
 		candidates = []string{filepath.Join(dir, "data", "opencode", "auth.json")}
 	case "deepseek":
@@ -571,17 +602,23 @@ func tomlTopLevelString(path, key string) string {
 }
 
 func jsonModelField(path string) string {
+	return jsonStringField(path, "model")
+}
+
+func jsonStringField(path, key string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
-	var settings struct {
-		Model string `json:"model"`
-	}
+	var settings map[string]json.RawMessage
 	if err := json.Unmarshal(sanitizeJSONC(data), &settings); err != nil {
 		return ""
 	}
-	return settings.Model
+	var value string
+	if err := json.Unmarshal(settings[key], &value); err != nil {
+		return ""
+	}
+	return value
 }
 
 func openCodeRecentModel(path string) string {
@@ -669,6 +706,8 @@ func ensureProfileState(profile Profile) (string, error) {
 		err = os.MkdirAll(filepath.Join(workdir, "codex"), 0700)
 	case "claude":
 		err = os.MkdirAll(filepath.Join(workdir, "claude"), 0700)
+	case "antigravity":
+		err = os.MkdirAll(filepath.Join(workdir, "home"), 0700)
 	case "opencode":
 		for _, directory := range []string{"config", "data", "state"} {
 			if err = os.MkdirAll(filepath.Join(workdir, directory), 0700); err != nil {
@@ -698,12 +737,28 @@ func cleanEnvironment(values []string) []string {
 	return result
 }
 
+// launchEnvironment removes state selectors inherited from an outer AI CLI
+// and then applies this profile's selectors. Antigravity needs three additional
+// removals before its private HOME and empty D-Bus address are appended; doing
+// that here avoids changing HOME for every other provider.
+func launchEnvironment(profile Profile, values []string) []string {
+	cleaned := cleanEnvironment(values)
+	if profile.Provider == "antigravity" {
+		cleaned = withoutEnv(cleaned, antigravityHomeEnv)
+		cleaned = withoutEnv(cleaned, antigravityDBusEnv)
+		cleaned = withoutEnv(cleaned, antigravityCacheEnv)
+	}
+	return append(cleaned, profileEnv(profile)...)
+}
+
 func defaultCommand(provider string) string {
 	switch provider {
 	case "codex":
 		return "codex"
 	case "claude":
 		return "claude"
+	case "antigravity":
+		return "agy"
 	case "opencode":
 		return "opencode"
 	case "deepseek":
@@ -812,6 +867,6 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  ai path")
 	fmt.Fprintln(w, "  ai version                              build revision and update check")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Providers with isolated state: codex, claude, opencode, deepseek")
-	fmt.Fprintln(w, "Concurrent runs: codex and claude (OpenCode remains exclusive)")
+	fmt.Fprintln(w, "Providers with isolated state: codex, claude, antigravity, opencode, deepseek")
+	fmt.Fprintln(w, "Concurrent runs: codex and claude (Antigravity and OpenCode remain exclusive)")
 }

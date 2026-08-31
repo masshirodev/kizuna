@@ -156,6 +156,61 @@ func TestWriteProfileBundleSkipsOpenCodeNodeModules(t *testing.T) {
 	}
 }
 
+func TestWriteProfileBundleKeepsAntigravityStateAndSkipsRuntime(t *testing.T) {
+	workdir := t.TempDir()
+	agyData := filepath.Join(workdir, "home", ".gemini", "antigravity-cli")
+	tokenPath := filepath.Join(agyData, "antigravity-oauth-token")
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenPath, []byte(`{"token":"opaque"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	logDir := filepath.Join(agyData, "log")
+	if err := os.MkdirAll(logDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "cli.log"), []byte("runtime"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("log", "cli.log"), filepath.Join(agyData, "cli.log")); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(workdir, "home", ".cache", "generated")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, []byte("runtime"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var archive bytes.Buffer
+	profile := Profile{Name: "agy", Provider: "antigravity", Command: "agy"}
+	if err := writeProfileBundle(&archive, profile, workdir); err != nil {
+		t.Fatal(err)
+	}
+
+	reader := tar.NewReader(&archive)
+	var names []string
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, header.Name)
+	}
+	joined := strings.Join(names, "\n")
+	if !strings.Contains(joined, "state/home/.gemini/antigravity-cli/antigravity-oauth-token") {
+		t.Fatalf("archive omitted Antigravity auth state:\n%s", joined)
+	}
+	if strings.Contains(joined, "state/home/.cache") || strings.Contains(joined, "/log/") || strings.Contains(joined, "cli.log") {
+		t.Fatalf("archive included Antigravity runtime state:\n%s", joined)
+	}
+}
+
 func TestWriteProfileBundleSkipsRuntimeInstances(t *testing.T) {
 	workdir := t.TempDir()
 	authPath := filepath.Join(workdir, "claude", ".credentials.json")

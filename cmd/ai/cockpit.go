@@ -188,7 +188,7 @@ func listColumns(width int, profiles []Profile) (int, int) {
 	for _, profile := range profiles {
 		provider = max(provider, lipgloss.Width(profile.Provider))
 	}
-	provider = min(provider, 8)
+	provider = min(provider, 11)
 	// Past a point a longer name column is only whitespace: profile names are
 	// short, and the quota cells read better against the column's right edge
 	// than pushed out by a name box nobody fills.

@@ -40,6 +40,28 @@ func TestInstallStatusLineMergesWithoutLosingSettings(t *testing.T) {
 	}
 }
 
+func TestInstallStatusLineUsesAntigravityProfileHome(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	profile := Profile{Name: "agy-personal", Provider: "antigravity", Command: "agy"}
+
+	path, err := installStatusLine(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, appName, "profiles", profile.Name, "home", ".gemini", "antigravity-cli", "settings.json")
+	if path != want {
+		t.Fatalf("settings path = %q, want %q", path, want)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"statusLine"`) || !strings.Contains(string(data), "AI_PROFILE") {
+		t.Fatalf("Antigravity status line was not installed: %s", data)
+	}
+}
+
 // The statusLine is the user's; replacing one would silently drop whatever it
 // showed, so an existing setting is an error rather than an overwrite.
 func TestInstallStatusLineRefusesToReplaceAnExistingOne(t *testing.T) {
