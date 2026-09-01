@@ -27,6 +27,10 @@ The build must not pass `-buildvcs=false`: the commit stamp the Go toolchain
 embeds is what `ai version` and the TUI's update check compare against the
 repository, and a binary built without it can only report that it does not know.
 
+`install.sh` also records this checkout's path in `source` beside
+`profiles.json`, because a Go binary carries the commit it was built from but
+not the directory. That is what `ai self-update` rebuilds from.
+
 ## Create profiles
 
 ```sh
@@ -37,6 +41,42 @@ ai profile add antigravity-personal antigravity
 ai profile add opencode-go opencode
 ai profile add deepseek opencode
 ```
+
+## Install the provider CLIs
+
+`ai-session` isolates state; it does not ship the CLIs themselves. A profile
+can be fully configured and still fail at launch because its command was never
+installed, and `exec`'s own message for that names neither the profile nor the
+way out. The selected-profile panel therefore shows a `cli` line — where the
+command resolves, or `not installed — press i` — and `ai install` runs the
+provider's own installer:
+
+```sh
+ai install claude-personal   # a profile: installs its provider's CLI
+ai install codex             # or a bare provider, before any profile exists
+```
+
+| Provider | Installer |
+| -------- | --------- |
+| Codex | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh` |
+| Claude Code | `curl -fsSL https://claude.ai/install.sh \| bash` |
+| Antigravity | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` |
+| OpenCode, DeepSeek | `curl -fsSL https://opencode.ai/install \| bash` |
+
+These are each vendor's own documented script. The launcher deliberately keeps
+no package list of its own: it would be one more thing to keep correct, and
+wrong here means installing the wrong software.
+
+Two details differ from typing the one-liner yourself. The script is
+**downloaded before it is run** rather than piped straight into a shell — the
+same thing ends up executing, but a truncated response cannot half-execute and
+the script is on disk to read when an install goes wrong. And it runs in your
+**ordinary environment, not a profile's**: the CLI binary is shared by every
+profile, and Antigravity's private `HOME` would otherwise bury the install
+inside one profile's state directory. In the TUI, `i` shows the exact command
+and asks before running it.
+
+A provider with no known installer is refused rather than guessed at.
 
 Log in through the isolated profile:
 
@@ -187,13 +227,13 @@ not just the client.
 Codex also configures its own terminal title, so it will overwrite the one `ai`
 sets; the tmux bar is the reliable indicator there.
 
-## Update check
+## Update check and self-update
 
 The TUI asks GitHub whether the build is behind the repository as its main
-screen appears, and offers a line under the key help when it is:
+screen appears, and says so in the title bar when it is:
 
 ```
-↑ 3 commits behind main · go install ./...
+↑ 3 commits behind main · U
 ```
 
 Nothing is shown when the build is current, and a check that could not run stays
@@ -221,6 +261,36 @@ disables itself when none of the three answers. The token is only sent to
 api.github.com in an `Authorization` header; it is never logged or written to
 disk. Answers are cached for six hours in `update-check.json` beside
 `profiles.json`, so a launch does not spend a request every time.
+
+Press `U`, or run `ai self-update`, to apply it. Both run the two steps a person
+would, in the checkout the binary came from:
+
+```
+› git pull --ff-only
+› sh ./install.sh
+```
+
+`install.sh` is preferred over a bare `go install` so there is one definition of
+how `ai` is built, including the VCS stamp the update check itself depends on.
+The pull is fast-forward-only, and a refused pull stops there: rebuilding after
+it would reinstall the build that is already running and report it as an update.
+The rebuilt binary applies to the next `ai` you start, not to the running one.
+
+The update is a keypress rather than something that happens on its own. The
+check is automatic; replacing your own binary without asking is not the sort of
+thing this launcher does.
+
+Finding the checkout is the one part that needs help. A Go binary carries the
+commit it was built from but not the directory, so `install.sh` records the path
+in `source` beside `profiles.json`. `AI_SOURCE_DIR` overrides it, and a binary
+installed some other way can record it once:
+
+```sh
+ai self-update --source ~/personal/ai-session
+```
+
+That both records the checkout and updates from it. A directory without a
+`go.mod` and a `.git` is refused rather than pulled and built in.
 
 ## Move a profile to another computer
 
@@ -287,6 +357,10 @@ or `▶ N running`, and the `AUTH` block shows whether the profile has logged in
 - `· ?` — the provider has no known credential location, so the launcher does
   not guess.
 
+The `cli` field shows where the profile's command resolves on `PATH`, or
+`not installed — press i`. See
+[Install the provider CLIs](#install-the-provider-clis).
+
 The `model` field shows the model the profile will start with, read from that
 CLI's own settings inside the isolated directory. `—` means the provider has no
 discoverable answer yet:
@@ -337,7 +411,9 @@ Use the arrow keys or `j`/`k` to select a profile:
 - `h` hijacks a running instance: it opens that instance's conversation in this
   terminal, leaving the original process running.
 - `l` logs in to the selected profile.
+- `i` installs the selected provider's CLI, after showing the command.
 - `u` updates the selected provider CLI.
+- `U` updates `ai-session` itself, after showing the checkout and the steps.
 - `c` changes the folder used for subsequent CLI launches.
 - `a` adds a profile.
 - `e` edits its name, provider, command, default arguments, or note.
@@ -348,7 +424,15 @@ Use the arrow keys or `j`/`k` to select a profile:
 - `/` filters the profile list by name or provider. Enter keeps the filter and
   hands the keys back, so a search is a way to reach one account among many
   rather than a mode to dismiss before acting; Escape clears it.
+- `?` opens the key pane, and any key closes it.
 - `q` or Escape quits.
+
+The key bar along the bottom drops entries from the end until it fits, so on a
+narrow terminal it is not the whole list — and the entries it drops are exactly
+the ones nobody has learned yet. `?` is the whole list, grouped by what each key
+acts on: a conversation, a profile, a provider's CLI, or `ai-session` itself. It
+folds to one column rather than clipping when the terminal is too narrow for
+two.
 
 Both instance pickers — `h` and `K` — list each running instance with the
 conversation it has open and the folder it was launched in, so two instances of

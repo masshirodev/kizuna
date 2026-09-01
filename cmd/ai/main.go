@@ -102,6 +102,17 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		return launchUpdate(profile, stdout, stderr)
+	case "install":
+		if len(args) != 2 {
+			return errors.New("usage: ai install <profile|provider>")
+		}
+		install, err := installTarget(cfg, args[1])
+		if err != nil {
+			return err
+		}
+		return installProviderCLI(install, stdout, stderr)
+	case "self-update":
+		return selfUpdateCommand(args[1:], stdout, stderr)
 	case "env":
 		if len(args) != 2 {
 			return errors.New("usage: ai env <profile>")
@@ -858,7 +869,9 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  ai profile export <profile> <bundle.age>")
 	fmt.Fprintln(w, "  ai profile import <bundle.age>")
 	fmt.Fprintln(w, "  ai login <profile>")
+	fmt.Fprintln(w, "  ai install <profile|provider>           install the provider's own CLI")
 	fmt.Fprintln(w, "  ai update <profile>")
+	fmt.Fprintln(w, "  ai self-update [--source <checkout>]    rebuild ai from its checkout")
 	fmt.Fprintln(w, "  ai run <profile> [arguments...]")
 	fmt.Fprintln(w, "  ai <profile> [arguments...]             shorthand for ai run")
 	fmt.Fprintln(w, "  ai env <profile>")

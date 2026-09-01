@@ -26,6 +26,9 @@ const (
 	tuiConfirmKill
 	tuiHijack
 	tuiParams
+	tuiConfirmInstall
+	tuiConfirmSelfUpdate
+	tuiHelp
 )
 
 type profileForm struct {
@@ -90,6 +93,12 @@ type tuiModel struct {
 	instance   int
 	describing bool
 	update     updateStatus
+	// install and source are what a pending confirmation is about: the vendor
+	// installer that would run, and the checkout ai would rebuild itself from.
+	// Both are resolved on the keypress so the box can name them before the
+	// answer, rather than after.
+	install providerInstall
+	source  string
 	// filter narrows the accounts column; searching is whether the query is
 	// still being typed. The cursor indexes the filtered list, not profiles.
 	filter    string
@@ -277,6 +286,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateHijack(msg)
 		case tuiParams:
 			return m.updateParams(msg)
+		case tuiConfirmInstall:
+			return m.updateInstall(msg)
+		case tuiConfirmSelfUpdate:
+			return m.updateSelfUpdate(msg)
+		case tuiHelp:
+			return m.updateHelp(msg)
 		}
 	case processFinishedMsg:
 		m.running = false
@@ -341,6 +356,9 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "/":
 		m.searching = true
+		m.clearStatus()
+	case "?":
+		m.mode = tuiHelp
 		m.clearStatus()
 	case "a":
 		m.mode = tuiForm
@@ -410,7 +428,62 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if hasSelection {
 			return m, m.execUpdate(profile)
 		}
+	case "i":
+		if hasSelection {
+			install, err := providerInstaller(profile.Provider)
+			if err != nil {
+				m.setStatus(statusErr, err.Error())
+				return m, nil
+			}
+			m.install = install
+			m.mode = tuiConfirmInstall
+			m.clearStatus()
+		}
+	case "U":
+		source, err := sourceDir()
+		if err != nil {
+			m.setStatus(statusErr, err.Error())
+			return m, nil
+		}
+		m.source = source
+		m.mode = tuiConfirmSelfUpdate
+		m.clearStatus()
 	}
+	return m, nil
+}
+
+// updateInstall confirms running a vendor's install script. It is a confirmation
+// rather than a plain keypress because the thing being agreed to is fetching and
+// executing code from a URL, and the box is where that URL is shown.
+func (m tuiModel) updateInstall(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y", "enter":
+		m.mode = tuiList
+		return m, m.execInstall()
+	case "n", "N", "esc", "q":
+		m.mode = tuiList
+		m.clearStatus()
+	}
+	return m, nil
+}
+
+func (m tuiModel) updateSelfUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y", "enter":
+		m.mode = tuiList
+		return m, m.execSelfUpdate()
+	case "n", "N", "esc", "q":
+		m.mode = tuiList
+		m.clearStatus()
+	}
+	return m, nil
+}
+
+// updateHelp closes on anything. A pane that only lists keys has nothing to do
+// with one, and needing to remember which key dismisses the key list would be
+// its own small joke.
+func (m tuiModel) updateHelp(tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.mode = tuiList
 	return m, nil
 }
 
@@ -932,6 +1005,53 @@ func (m *tuiModel) execUpdate(profile Profile) tea.Cmd {
 	})
 }
 
+func (m *tuiModel) execInstall() tea.Cmd {
+	install := m.install
+	m.running = true
+	return tea.Exec(&installExecCommand{install: install}, func(err error) tea.Msg {
+		return processFinishedMsg{err: err}
+	})
+}
+
+func (m *tuiModel) execSelfUpdate() tea.Cmd {
+	source := m.source
+	m.running = true
+	return tea.Exec(&selfUpdateExecCommand{source: source}, func(err error) tea.Msg {
+		return processFinishedMsg{err: err}
+	})
+}
+
+// installExecCommand and selfUpdateExecCommand both run several steps rather
+// than one process, which tea.ExecProcess cannot express. They take the terminal
+// the same way a launch does, so an installer that asks a question can.
+type installExecCommand struct {
+	install providerInstall
+	stdin   io.Reader
+	stdout  io.Writer
+	stderr  io.Writer
+}
+
+func (c *installExecCommand) SetStdin(reader io.Reader)  { c.stdin = reader }
+func (c *installExecCommand) SetStdout(writer io.Writer) { c.stdout = writer }
+func (c *installExecCommand) SetStderr(writer io.Writer) { c.stderr = writer }
+func (c *installExecCommand) Run() error {
+	return runInstall(c.install, c.stdin, c.stdout, c.stderr)
+}
+
+type selfUpdateExecCommand struct {
+	source string
+	stdin  io.Reader
+	stdout io.Writer
+	stderr io.Writer
+}
+
+func (c *selfUpdateExecCommand) SetStdin(reader io.Reader)  { c.stdin = reader }
+func (c *selfUpdateExecCommand) SetStdout(writer io.Writer) { c.stdout = writer }
+func (c *selfUpdateExecCommand) SetStderr(writer io.Writer) { c.stderr = writer }
+func (c *selfUpdateExecCommand) Run() error {
+	return runSelfUpdate(c.source, c.stdin, c.stdout, c.stderr)
+}
+
 type trackedExecCommand struct {
 	cmd     *exec.Cmd
 	workdir string
@@ -1058,6 +1178,100 @@ func (m tuiModel) paramsContent() []string {
 	}
 }
 
+func (m tuiModel) installContent(width int) []string {
+	value := max(width-detailLabelWidth, 8)
+	return []string{
+		headerTitleStyle.Render("Install the " + m.install.provider + " CLI"),
+		"",
+		fieldLabelStyle.Render(pad("runs", detailLabelWidth)) + fieldValueStyle.Render(truncate(m.install.command(), value)),
+		fieldLabelStyle.Render(pad("provides", detailLabelWidth)) + fieldValueStyle.Render(truncate(defaultCommand(m.install.provider)+" on PATH", value)),
+		"",
+		confirmBodyStyle.Render("The script is downloaded before it is run, and runs in your"),
+		confirmBodyStyle.Render("own environment rather than a profile's isolated one."),
+		"",
+		hintStyle.Render("y installs · n cancels"),
+	}
+}
+
+func (m tuiModel) selfUpdateContent(width int) []string {
+	value := max(width-detailLabelWidth, 8)
+	lines := []string{
+		headerTitleStyle.Render("Update ai-session"),
+		"",
+		fieldLabelStyle.Render(pad("checkout", detailLabelWidth)) + fieldValueStyle.Render(truncate(shortenHome(m.source), value)),
+		fieldLabelStyle.Render(pad("status", detailLabelWidth)) + fieldValueStyle.Render(truncate(m.update.message(), value)),
+		"",
+	}
+	for _, step := range selfUpdateSteps(m.source) {
+		lines = append(lines, hintStyle.Render("› "+strings.Join(step, " ")))
+	}
+	return append(lines,
+		"",
+		confirmBodyStyle.Render("The rebuilt binary applies to the next ai you start."),
+		"",
+		hintStyle.Render("y updates · n cancels"))
+}
+
+// helpPane lists every key at once. The bottom bar drops entries from the end
+// to fit, so on a narrow terminal it is not the full answer, and the keys it
+// drops are exactly the ones a new user has not learned yet.
+func (m tuiModel) helpPane(width int) []string {
+	// The modal pads two cells on either side of what it is handed, and a line
+	// past that budget is wrapped rather than clipped — which for a key list
+	// puts a description on a row of its own under the wrong key.
+	content := max(width-4, 24)
+	columns := helpSections()
+	rendered := make([][]string, len(columns))
+	// Each column is only as wide as its own content, because an even split
+	// would cut the longer side to match a shorter one that did not need it.
+	widths := make([]int, len(columns))
+	rows := 0
+	for index, sections := range columns {
+		var lines []string
+		for position, section := range sections {
+			if position > 0 {
+				lines = append(lines, "")
+			}
+			lines = append(lines, sectionLabelStyle.Render(section.title))
+			for _, entry := range section.entries {
+				lines = append(lines, helpKeyStyle.Render(pad(entry.key, helpKeyColumn))+helpDescStyle.Render(entry.desc))
+			}
+		}
+		for _, line := range lines {
+			widths[index] = max(widths[index], lipgloss.Width(line))
+		}
+		rendered[index] = lines
+		rows = max(rows, len(lines))
+	}
+
+	pane := []string{headerTitleStyle.Render("Keys"), ""}
+	if widths[0]+helpColumnGap+widths[1] > content {
+		// Too narrow for two columns, so they stack. The cockpit behind this box
+		// folds rather than squeezes for the same reason: a key list cut to fit
+		// is missing the keys nobody has learned yet.
+		for index, lines := range rendered {
+			if index > 0 {
+				pane = append(pane, "")
+			}
+			for _, line := range lines {
+				pane = append(pane, padLine(line, content))
+			}
+		}
+		return append(pane, "", hintStyle.Render("any key closes"))
+	}
+	for row := range rows {
+		left, right := "", ""
+		if row < len(rendered[0]) {
+			left = rendered[0][row]
+		}
+		if row < len(rendered[1]) {
+			right = rendered[1][row]
+		}
+		pane = append(pane, padLine(pad(left, widths[0])+strings.Repeat(" ", helpColumnGap)+right, content))
+	}
+	return append(pane, "", hintStyle.Render("any key closes"))
+}
+
 func (m tuiModel) confirmContent(width int) []string {
 	profile, ok := m.selectedProfile()
 	if !ok {
@@ -1147,6 +1361,61 @@ func shortenHome(path string) string {
 	return path
 }
 
+const (
+	// helpKeyColumn fits the widest key label in the help pane, plus a space.
+	helpKeyColumn = 8
+	// helpColumnGap separates the two columns of keys.
+	helpColumnGap = 2
+	// helpModalWidth is wider than the prompts share, because the key list is
+	// two columns of text rather than one question. A terminal too narrow for
+	// that gets one column instead of a clipped two.
+	helpModalWidth = 84
+)
+
+// helpSection is one titled group of keys in the help pane. The grouping is by
+// what the key acts on — a conversation, a profile, a provider's CLI, ai itself
+// — because that is how someone looking for a key already thinks about it.
+type helpSection struct {
+	title   string
+	entries []helpEntry
+}
+
+// helpSections is two columns of sections, laid out side by side.
+func helpSections() [][]helpSection {
+	return [][]helpSection{
+		{
+			{"LAUNCH", []helpEntry{
+				{"↵", "run the selected profile"},
+				{"p", "run with extra arguments"},
+				{"R", "resume a conversation"},
+				{"h", "open a running session"},
+				{"c", "change the launch folder"},
+			}},
+			{"PROFILES", []helpEntry{
+				{"↑↓ jk", "select"},
+				{"/", "filter by name or provider"},
+				{"a", "add"},
+				{"e", "edit"},
+				{"x", "delete"},
+			}},
+		},
+		{
+			{"PROVIDER CLI", []helpEntry{
+				{"l", "log in"},
+				{"i", "install the CLI"},
+				{"u", "update the CLI"},
+				{"K", "stop a running instance"},
+			}},
+			{"AI-SESSION", []helpEntry{
+				{"U", "update ai-session itself"},
+				{"r", "refresh quotas and updates"},
+				{"?", "these keys"},
+				{"q", "quit"},
+			}},
+		},
+	}
+}
+
 func (m tuiModel) helpEntries() []helpEntry {
 	switch {
 	case m.searching:
@@ -1168,6 +1437,12 @@ func (m tuiModel) helpEntries() []helpEntry {
 		return []helpEntry{{"↑↓/jk", "choose instance"}, {"↵", "open here"}, {"esc", "cancel"}}
 	case m.mode == tuiParams:
 		return []helpEntry{{"↵", "run"}, {"ctrl-u", "clear"}, {"esc", "cancel"}}
+	case m.mode == tuiConfirmInstall:
+		return []helpEntry{{"y", "install"}, {"n/esc", "cancel"}}
+	case m.mode == tuiConfirmSelfUpdate:
+		return []helpEntry{{"y", "update"}, {"n/esc", "cancel"}}
+	case m.mode == tuiHelp:
+		return []helpEntry{{"any key", "close"}}
 	case len(m.profiles) == 0:
 		return []helpEntry{{"a", "add profile"}, {"q", "quit"}}
 	default:
@@ -1177,7 +1452,9 @@ func (m tuiModel) helpEntries() []helpEntry {
 			{"R", "resume"},
 			{"h", "hijack"},
 			{"l", "login"},
+			{"i", "install"},
 			{"u", "update"},
+			{"U", "update ai"},
 			{"c", "folder"},
 			{"r", "refresh"},
 			{"a e x", "add edit delete"},
