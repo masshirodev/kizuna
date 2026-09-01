@@ -100,7 +100,7 @@ func (m tuiModel) topBarView(frame layout) string {
 		}
 	}
 	if m.update.available() {
-		notice := updateStyle.Render("↑ " + plural(m.update.Behind, "commit") + " behind " + updateBranch)
+		notice := updateStyle.Render("↑ " + plural(m.update.Behind, "commit") + " behind " + updateBranch + " · U")
 		if candidate := right + separatorStyle.Render(" · ") + notice; fitsBeside(left, candidate, frame.width) {
 			right = candidate
 		}
@@ -254,6 +254,7 @@ func (m tuiModel) headlineLines(profile Profile, width int) []string {
 	}
 	fields := [][2]string{
 		{"launch", formatArguments(append([]string{profile.Command}, profile.DefaultArgs...))},
+		{"cli", cliField(profile)},
 		{"model", profileModel(profile)},
 		{"indicator", indicator},
 		{"note", profile.Notes},
@@ -271,6 +272,20 @@ func (m tuiModel) headlineLines(profile Profile, width int) []string {
 }
 
 const detailLabelWidth = 12
+
+// cliField says where the command a launch would run actually is. A profile can
+// be fully configured and logged in and still fail at launch because the
+// provider's CLI was never installed, and exec's own message for that names
+// neither the profile nor the way out.
+func cliField(profile Profile) string {
+	if path := commandPath(profile.Command); path != "" {
+		return shortenHome(path)
+	}
+	if _, err := providerInstaller(profile.Provider); err == nil {
+		return "not installed — press i"
+	}
+	return "not installed"
+}
 
 func (m tuiModel) quotaLines(profile Profile, width int) []string {
 	usage, known := m.usage[profile.Name]
@@ -459,7 +474,7 @@ func (m tuiModel) logLines(width int) []string {
 func (m tuiModel) bottomBarView(frame layout) string {
 	right := renderHelp([]helpEntry{{"q", "quit"}})
 	if m.mode == tuiList && !m.searching {
-		right = renderHelp([]helpEntry{{"/", "search"}, {"q", "quit"}})
+		right = renderHelp([]helpEntry{{"/", "search"}, {"?", "keys"}, {"q", "quit"}})
 	}
 	left := renderHelpFit(m.helpEntries(), max(frame.width-lipgloss.Width(right)-2, 8))
 	return spread(left, right, frame.width)
@@ -475,6 +490,9 @@ func (m tuiModel) bottomBarView(frame layout) string {
 // place to answer from.
 func (m tuiModel) modalView(frame layout) string {
 	width := min(max(frame.width-16, 32), 72)
+	if m.mode == tuiHelp {
+		width = min(max(frame.width-16, 32), helpModalWidth)
+	}
 	content, style := []string(nil), modalStyle
 	switch m.mode {
 	case tuiForm:
@@ -485,6 +503,12 @@ func (m tuiModel) modalView(frame layout) string {
 		content = m.paramsContent()
 	case tuiHijack:
 		content = m.confirmContent(width)
+	case tuiConfirmInstall:
+		content = m.installContent(width)
+	case tuiConfirmSelfUpdate:
+		content = m.selfUpdateContent(width)
+	case tuiHelp:
+		content = m.helpPane(width)
 	case tuiConfirmDelete, tuiConfirmKill:
 		content, style = m.confirmContent(width), dangerPanelStyle
 	}

@@ -597,3 +597,165 @@ func TestParamsPromptCollectsArgumentsAndReportsQuoteErrors(t *testing.T) {
 		t.Fatalf("unclosed quote was accepted: mode %v, status %q", got.mode, got.status)
 	}
 }
+
+// press sends one key to the list and returns the model it produced.
+func press(t *testing.T, m tuiModel, key string) tuiModel {
+	t.Helper()
+	updated, _ := m.updateList(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+	return updated.(tuiModel)
+}
+
+// The bottom bar drops entries from the end to fit, and the keys it drops are
+// exactly the ones a new user has not learned yet. The pane is where they are.
+func TestHelpPaneListsTheKeysTheBottomBarCannotFit(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := press(t, wideModel(testProfiles()), "?")
+	if m.mode != tuiHelp {
+		t.Fatalf("mode = %v, want the help pane", m.mode)
+	}
+	view := m.View()
+	for _, want := range []string{"Keys", "LAUNCH", "PROFILES", "PROVIDER CLI", "AI-SESSION",
+		"install the CLI", "update ai-session itself", "filter by name or provider", "any key closes"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("help pane is missing %q:\n%s", want, view)
+		}
+	}
+}
+
+// Every key the pane advertises has to be one updateList actually answers,
+// otherwise the pane is documentation that drifts from the program.
+func TestHelpPaneOnlyAdvertisesKeysTheListHandles(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	handled := map[string]bool{"↵": true, "↑↓ jk": true}
+	for _, column := range helpSections() {
+		for _, section := range column {
+			for _, entry := range section.entries {
+				if handled[entry.key] {
+					continue
+				}
+				if len([]rune(entry.key)) != 1 {
+					t.Fatalf("help pane lists an unexplained key %q", entry.key)
+				}
+				base := wideModel(testProfiles())
+				updated, cmd := base.updateList(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(entry.key)})
+				got := updated.(tuiModel)
+				// Answering means one of: opening something, saying why not, or
+				// handing back work to run.
+				if cmd == nil && got.mode == base.mode && got.status == "" && got.searching == base.searching {
+					t.Errorf("key %q (%s) does nothing in the list", entry.key, entry.desc)
+				}
+			}
+		}
+	}
+}
+
+func TestHelpPaneClosesOnAnyKey(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := press(t, wideModel(testProfiles()), "?")
+	updated, _ := m.updateHelp(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")})
+	if updated.(tuiModel).mode != tuiList {
+		t.Fatal("the help pane survived a keypress")
+	}
+}
+
+// Agreeing to install a CLI is not agreement to run whatever a URL serves, so
+// the box has to show the command before it asks.
+func TestInstallPromptNamesTheCommandItWillRun(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m = press(t, m, "i")
+	if m.mode != tuiConfirmInstall {
+		t.Fatalf("mode = %v, want the install confirmation", m.mode)
+	}
+	view := m.View()
+	for _, want := range []string{"Install the codex CLI", "curl -fsSL https://chatgpt.com/codex/install.sh | sh", "codex on PATH"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("install prompt is missing %q:\n%s", want, view)
+		}
+	}
+	updated, cmd := m.updateInstall(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	if got := updated.(tuiModel); got.mode != tuiList || cmd != nil {
+		t.Fatalf("declining the install did not return to the list: mode %v", got.mode)
+	}
+}
+
+func TestInstallPromptRefusesAProviderWithNoInstaller(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel([]Profile{{Name: "local", Provider: "homegrown", Command: "llm"}})
+	m = press(t, m, "i")
+	if m.mode != tuiList || !strings.Contains(m.status, "no known installer") {
+		t.Fatalf("mode = %v, status = %q; want a refusal that stays on the list", m.mode, m.status)
+	}
+}
+
+func TestSelfUpdatePromptNamesTheCheckoutAndItsSteps(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	checkout := fakeCheckout(t)
+	t.Setenv(sourceDirEnv, checkout)
+
+	m := wideModel(testProfiles())
+	m.update = updateStatus{Known: true, Behind: 2}
+	m = press(t, m, "U")
+	if m.mode != tuiConfirmSelfUpdate || m.source != checkout {
+		t.Fatalf("mode = %v, source = %q", m.mode, m.source)
+	}
+	view := m.View()
+	for _, want := range []string{"Update ai-session", "git pull --ff-only", "2 commits behind main", "next ai you start"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("self-update prompt is missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestSelfUpdateKeyExplainsAnUnknownCheckout(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := press(t, wideModel(testProfiles()), "U")
+	if m.mode != tuiList || !strings.Contains(m.status, "self-update --source") {
+		t.Fatalf("mode = %v, status = %q; want the one-time fix named", m.mode, m.status)
+	}
+}
+
+// A profile can be configured and logged in and still fail at launch because
+// the CLI was never installed, and exec's own message names neither the
+// profile nor the way out.
+func TestDetailPanelSaysWhetherTheProviderCLIIsInstalled(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// A short directory, because the detail column truncates the path it shows
+	// and t.TempDir names itself after the test.
+	binDir, err := os.MkdirTemp("", "aibin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(binDir) })
+	installed := filepath.Join(binDir, "claude")
+	if err := os.WriteFile(installed, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	scopePATH(t, binDir)
+
+	m := wideModel(testProfiles())
+	if view := m.View(); !strings.Contains(view, installed) {
+		t.Fatalf("detail panel does not say where the CLI is:\n%s", view)
+	}
+	m.cursor = 1
+	if view := m.View(); !strings.Contains(view, "not installed — press i") {
+		t.Fatalf("detail panel does not offer to install a missing CLI:\n%s", view)
+	}
+}
+
+// A key list clipped to fit is missing exactly the keys nobody has learned yet,
+// so a terminal too narrow for two columns gets one.
+func TestHelpPaneFoldsToOneColumnRatherThanClipping(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := tuiModel{profiles: testProfiles(), width: 70, height: 40}
+	view := press(t, m, "?").View()
+	for _, want := range []string{"filter by name or provider", "refresh quotas and updates", "stop a running instance"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("narrow help pane lost %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "select    l") {
+		t.Fatalf("narrow help pane kept two columns:\n%s", view)
+	}
+}
