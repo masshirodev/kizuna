@@ -351,20 +351,27 @@ func (m tuiModel) recentLines(width int) []string {
 	if len(m.recent) == 0 {
 		return append(lines, unknownStyle.Render(m.pending("no recorded sessions")))
 	}
+	for _, record := range m.recent {
+		lines = append(lines, m.recentRow(pen{}, record, width))
+	}
+	return append(lines, dimStyle.Render("press ")+helpKeyStyle.Render("R")+dimStyle.Render(" to resume one"))
+}
+
+// recentRow lays one recorded conversation out as when, what, and where. The
+// panel and the resume picker share it, so the row a key is pressed on is
+// exactly the row that was read.
+func (m tuiModel) recentRow(ink pen, record recordedSession, width int) string {
 	folderWidth := min(max(width/3, 10), 24)
 	titleWidth := max(width-recentTimeWidth-folderWidth-2, 8)
-	for _, record := range m.recent {
-		title := record.session.title
-		style := fieldValueStyle
-		if title == "" {
-			title, style = "untitled session", unknownStyle
-		}
-		lines = append(lines,
-			dimStyle.Render(pad(formatWhen(m.clock(), record.when), recentTimeWidth))+" "+
-				style.Render(pad(truncate(title, titleWidth), titleWidth))+" "+
-				dimStyle.Render(truncate(shortenHome(record.folder), folderWidth)))
+	title, style := record.session.title, fieldValueStyle
+	if title == "" {
+		title, style = "untitled session", unknownStyle
 	}
-	return lines
+	return ink.render(dimStyle, pad(formatWhen(m.clock(), record.when), recentTimeWidth)) +
+		ink.render(dimStyle, " ") +
+		ink.render(style, pad(truncate(title, titleWidth), titleWidth)) +
+		ink.render(dimStyle, " ") +
+		ink.render(dimStyle, pad(truncate(shortenHome(record.folder), folderWidth), folderWidth))
 }
 
 const recentTimeWidth = 6
@@ -480,6 +487,11 @@ func (m tuiModel) bottomBarView(frame layout) string {
 	return spread(left, right, frame.width)
 }
 
+// modalPadding is what modalStyle's own padding takes off the width handed to a
+// content builder: lipgloss counts padding inside the width it is given, so a
+// line built to the full width is a line that wraps.
+const modalPadding = 4
+
 // modalView is what the cockpit is covered with. Every mode but the list is a
 // box: the frame behind it stays put, so answering a prompt never costs the
 // context that prompted it.
@@ -503,6 +515,8 @@ func (m tuiModel) modalView(frame layout) string {
 		content = m.paramsContent()
 	case tuiHijack:
 		content = m.confirmContent(width)
+	case tuiRecent:
+		content = m.recentPicker(width)
 	case tuiConfirmInstall:
 		content = m.installContent(width)
 	case tuiConfirmSelfUpdate:

@@ -566,7 +566,7 @@ func TestResumeArgsUseEachProviderSpelling(t *testing.T) {
 	}
 }
 
-func TestHijackArgsPreferTheDiscoveredSession(t *testing.T) {
+func TestReopenArgsPreferTheDiscoveredSession(t *testing.T) {
 	session := instanceSession{id: "abc123"}
 	cases := map[string]struct{ exact, fallback string }{
 		"claude":      {"--resume abc123", "--continue"},
@@ -575,14 +575,14 @@ func TestHijackArgsPreferTheDiscoveredSession(t *testing.T) {
 		"opencode":    {"--continue", "--continue"},
 	}
 	for provider, want := range cases {
-		args, err := hijackArgs(provider, session)
+		args, err := reopenArgs(provider, session)
 		if err != nil {
 			t.Fatalf("%s: %v", provider, err)
 		}
 		if strings.Join(args, " ") != want.exact {
-			t.Fatalf("%s hijack args = %v, want %q", provider, args, want.exact)
+			t.Fatalf("%s reopen args = %v, want %q", provider, args, want.exact)
 		}
-		args, err = hijackArgs(provider, instanceSession{})
+		args, err = reopenArgs(provider, instanceSession{})
 		if err != nil {
 			t.Fatalf("%s: %v", provider, err)
 		}
@@ -590,8 +590,8 @@ func TestHijackArgsPreferTheDiscoveredSession(t *testing.T) {
 			t.Fatalf("%s fallback args = %v, want %q", provider, args, want.fallback)
 		}
 	}
-	if _, err := hijackArgs("unknown", session); err == nil {
-		t.Fatal("an unknown provider reported a hijack command")
+	if _, err := reopenArgs("unknown", session); err == nil {
+		t.Fatal("an unknown provider reported a way to reopen a session")
 	}
 }
 
