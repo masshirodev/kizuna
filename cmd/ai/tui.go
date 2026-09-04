@@ -1230,8 +1230,8 @@ func (m *tuiModel) saveForm() error {
 		return err
 	}
 	if m.form.isNew {
-		if _, err := findProfile(cfg, m.form.name); err == nil {
-			return fmt.Errorf("profile %q already exists", m.form.name)
+		if err := checkNameAvailable(cfg, m.form.name); err != nil {
+			return err
 		}
 		root, err := profileRoot()
 		if err != nil {
@@ -1256,8 +1256,11 @@ func (m *tuiModel) saveForm() error {
 			return errors.New("cannot edit a running profile")
 		}
 		if m.form.name != m.form.original {
-			if _, err := findProfile(cfg, m.form.name); err == nil {
-				return fmt.Errorf("profile %q already exists", m.form.name)
+			if err := checkNameAvailable(cfg, m.form.name); err != nil {
+				return err
+			}
+			if apps := appsReferencing(cfg, m.form.original); len(apps) > 0 {
+				return fmt.Errorf("cannot rename profile %q: used by app(s) %v", m.form.original, apps)
 			}
 			root, err := profileRoot()
 			if err != nil {

@@ -45,7 +45,18 @@ type Profile struct {
 
 type Config struct {
 	Profiles []Profile `json:"profiles"`
+	Apps     []App     `json:"apps"`
 	Settings Settings  `json:"settings"`
+}
+
+// App groups several profiles under one name so something outside ai-session
+// that holds a static path to a profile's state directory (rather than going
+// through `ai run`) can be repointed at a different member without editing
+// its own config. See app.go.
+type App struct {
+	Name    string   `json:"name"`
+	Members []string `json:"members"`
+	Active  string   `json:"active"`
 }
 
 // Settings are the preferences that belong to the launcher rather than to any
@@ -87,11 +98,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "profile":
 		return profileCommand(args[1:], &cfg, configPath, stdout)
+	case "app":
+		return appCommand(args[1:], &cfg, configPath, stdout)
 	case "run":
 		if len(args) < 2 {
 			return errors.New("usage: ai run <profile> [command arguments...]")
 		}
-		profile, err := findProfile(cfg, args[1])
+		profile, err := resolveProfile(cfg, args[1])
 		if err != nil {
 			return err
 		}
@@ -100,7 +113,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if len(args) != 2 {
 			return errors.New("usage: ai login <profile>")
 		}
-		profile, err := findProfile(cfg, args[1])
+		profile, err := resolveProfile(cfg, args[1])
 		if err != nil {
 			return err
 		}
@@ -109,7 +122,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if len(args) != 2 {
 			return errors.New("usage: ai update <profile>")
 		}
-		profile, err := findProfile(cfg, args[1])
+		profile, err := resolveProfile(cfg, args[1])
 		if err != nil {
 			return err
 		}
@@ -129,7 +142,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if len(args) != 2 {
 			return errors.New("usage: ai env <profile>")
 		}
-		profile, err := findProfile(cfg, args[1])
+		profile, err := resolveProfile(cfg, args[1])
 		if err != nil {
 			return err
 		}
@@ -141,7 +154,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if len(args) != 3 || (args[1] != "openusage" && args[1] != "statusline") {
 			return errors.New("usage: ai integrate <openusage|statusline> <profile>")
 		}
-		profile, err := findProfile(cfg, args[2])
+		profile, err := resolveProfile(cfg, args[2])
 		if err != nil {
 			return err
 		}
@@ -162,12 +175,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 		usage(stdout)
 		return nil
 	default:
-		// A profile name is the most useful thing to do with a bare argument.
-		// Keep all named commands above reserved, so this shorthand cannot make
-		// an existing command ambiguous.
-		profile, err := findProfile(cfg, args[0])
+		// A profile or app name is the most useful thing to do with a bare
+		// argument. Keep all named commands above reserved, so this shorthand
+		// cannot make an existing command ambiguous.
+		profile, err := resolveProfile(cfg, args[0])
 		if err != nil {
-			return fmt.Errorf("unknown command or profile %q; try 'ai help'", args[0])
+			return fmt.Errorf("unknown command, profile, or app %q; try 'ai help'", args[0])
 		}
 		return launch(profile, args[1:], stdout, stderr)
 	}
@@ -205,8 +218,8 @@ func profileCommand(args []string, cfg *Config, path string, stdout io.Writer) e
 	if !validName(name) {
 		return fmt.Errorf("invalid profile name %q; use letters, numbers, dots, dashes, or underscores", name)
 	}
-	if _, err := findProfile(*cfg, name); err == nil {
-		return fmt.Errorf("profile %q already exists", name)
+	if err := checkNameAvailable(*cfg, name); err != nil {
+		return err
 	}
 	command := defaultCommand(provider)
 	if len(args) == 4 {
@@ -881,6 +894,10 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  ai profile list")
 	fmt.Fprintln(w, "  ai profile export <profile> <bundle.age>")
 	fmt.Fprintln(w, "  ai profile import <bundle.age>")
+	fmt.Fprintln(w, "  ai app add <name> <member> [member...]  group profiles under one app name")
+	fmt.Fprintln(w, "  ai app use <app> <member>               switch which member an app resolves to")
+	fmt.Fprintln(w, "  ai app list")
+	fmt.Fprintln(w, "  ai app path <app>                       stable path to paste into another app's config")
 	fmt.Fprintln(w, "  ai login <profile>")
 	fmt.Fprintln(w, "  ai install <profile|provider>           install the provider's own CLI")
 	fmt.Fprintln(w, "  ai update <profile>")
