@@ -26,6 +26,9 @@ const (
 	tuiConfirmKill
 	tuiHijack
 	tuiRecent
+	tuiHandoff
+	tuiHandoffTo
+	tuiHandoffBrief
 	tuiParams
 	tuiConfirmInstall
 	tuiConfirmSelfUpdate
@@ -97,7 +100,14 @@ type tuiModel struct {
 	// processes, the other lists transcripts.
 	record     int
 	describing bool
-	update     updateStatus
+	// handoff is the pass being set up: the session leaving, where it is going,
+	// and the brief written for it. It is one struct rather than four fields
+	// because the three modals are one decision, and a half-built pass must not
+	// survive an escape out of the middle of it.
+	handoff  handoffDraft
+	autoSwap bool
+	lineage  map[string]lineageLink
+	update   updateStatus
 	// install and source are what a pending confirmation is about: the vendor
 	// installer that would run, and the checkout ai would rebuild itself from.
 	// Both are resolved on the keypress so the box can name them before the
@@ -203,7 +213,13 @@ func runTUI() error {
 	if err != nil {
 		return err
 	}
-	m := tuiModel{configPath: configPath, profiles: sortedProfiles(cfg.Profiles), workingDir: workingDir}
+	m := tuiModel{
+		configPath: configPath,
+		profiles:   sortedProfiles(cfg.Profiles),
+		workingDir: workingDir,
+		autoSwap:   cfg.Settings.AutoSwap,
+		lineage:    handedOff(readLineage()),
+	}
 	_, err = tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }
@@ -291,6 +307,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateHijack(msg)
 		case tuiRecent:
 			return m.updateRecent(msg)
+		case tuiHandoff:
+			return m.updateHandoff(msg)
+		case tuiHandoffTo:
+			return m.updateHandoffTo(msg)
+		case tuiHandoffBrief:
+			return m.updateHandoffBrief(msg)
 		case tuiParams:
 			return m.updateParams(msg)
 		case tuiConfirmInstall:
@@ -317,12 +339,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case cockpitLoadedMsg:
 		// What is running is true of the whole machine, so it lands either way.
 		m.live, m.now, m.loaded = msg.live, msg.now, true
-		// The resume picker chooses from this list by index, so a refresh
-		// landing under it would move the row the cursor is on. The next tick
-		// takes the panel once the picker is closed.
-		if m.mode == tuiRecent {
+		// Both pickers choose from this list by index, so a refresh landing
+		// under one would move the row the cursor is on. The next tick takes
+		// the panel once the picker is closed.
+		if m.mode == tuiRecent || m.mode == tuiHandoff {
 			return m, nil
 		}
+		m.lineage = handedOff(readLineage())
 		if profile, ok := m.selectedProfile(); ok && profile.Name == msg.profile {
 			m.recent, m.activity = msg.recent, msg.activity
 		}
@@ -418,6 +441,12 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if hasSelection {
 			return m, m.openRecent()
 		}
+	case "H":
+		if hasSelection {
+			return m, m.openHandoff()
+		}
+	case "A":
+		m.toggleAutoSwap()
 	case "p":
 		if hasSelection {
 			m.mode = tuiParams
@@ -706,6 +735,248 @@ func recordedFolder(record recordedSession, fallback string) (string, error) {
 		return "", fmt.Errorf("%s is not a directory", shortenHome(folder))
 	}
 	return folder, nil
+}
+
+// handoffDraft is one pass being set up. It exists across three modals, so it
+// is built in one place and thrown away in one place.
+type handoffDraft struct {
+	source       recordedSession
+	destinations []Profile
+	target       int
+	path         string
+	preview      []string
+}
+
+// openHandoff starts a pass by asking which session is leaving. That question
+// is never skipped, not even with auto-swap on: which account to spend is a
+// preference, but which piece of work is moving is a fact only the user has.
+func (m *tuiModel) openHandoff() tea.Cmd {
+	profile, ok := m.selectedProfile()
+	if !ok {
+		return nil
+	}
+	if len(m.recent) == 0 {
+		m.setStatus(statusErr, "nothing recorded for "+profile.Name+" to hand over")
+		return nil
+	}
+	m.handoff = handoffDraft{}
+	m.record = 0
+	m.mode = tuiHandoff
+	m.clearStatus()
+	return nil
+}
+
+// updateHandoff picks the session that is leaving, then either asks where it
+// should go or, with auto-swap on, sends it to whichever account has the most
+// quota left.
+func (m tuiModel) updateHandoff(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if m.record > 0 {
+			m.record--
+		}
+	case "down", "j":
+		if m.record < len(m.recent)-1 {
+			m.record++
+		}
+	case "enter":
+		profile, ok := m.selectedProfile()
+		if !ok || m.record < 0 || m.record >= len(m.recent) {
+			m.mode = tuiList
+			return m, nil
+		}
+		destinations := handoffDestinations(m.profiles, profile, m.usage)
+		if len(destinations) == 0 {
+			m.setStatus(statusErr, "no other profile can be opened with a brief")
+			m.mode = tuiList
+			return m, nil
+		}
+		m.handoff = handoffDraft{source: m.recent[m.record], destinations: destinations}
+		if m.autoSwap {
+			return m.startHandoff()
+		}
+		m.mode = tuiHandoffTo
+		m.clearStatus()
+	case "esc", "q":
+		m.mode = tuiList
+		m.clearStatus()
+	}
+	return m, nil
+}
+
+func (m tuiModel) updateHandoffTo(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if m.handoff.target > 0 {
+			m.handoff.target--
+		}
+	case "down", "j":
+		if m.handoff.target < len(m.handoff.destinations)-1 {
+			m.handoff.target++
+		}
+	case "a", "A":
+		m.toggleAutoSwap()
+	case "enter":
+		return m.startHandoff()
+	case "esc", "q":
+		m.handoff = handoffDraft{}
+		m.mode = tuiList
+		m.clearStatus()
+	}
+	return m, nil
+}
+
+// startHandoff writes the brief. It stops before launching even when auto-swap
+// skipped the destination question, because writing a file and starting a
+// process are different promises: the first can be undone by ignoring it, and
+// with auto-swap on this is the frame where the user sees where the work went.
+func (m tuiModel) startHandoff() (tea.Model, tea.Cmd) {
+	profile, ok := m.selectedProfile()
+	if !ok {
+		m.mode = tuiList
+		return m, nil
+	}
+	brief, err := buildBrief(profile, m.handoff.source)
+	if err != nil {
+		m.setStatus(statusErr, err.Error())
+		m.mode = tuiList
+		return m, nil
+	}
+	folder, err := recordedFolder(m.handoff.source, m.workingDir)
+	if err != nil {
+		m.setStatus(statusErr, err.Error())
+		m.mode = tuiList
+		return m, nil
+	}
+	body := renderBrief(brief, collectGitState(folder), m.clock())
+	path, err := writeBriefFile(brief, body)
+	if err != nil {
+		m.setStatus(statusErr, "could not write the brief: "+err.Error())
+		m.mode = tuiList
+		return m, nil
+	}
+	m.handoff.path = path
+	m.handoff.preview = briefPreview(body)
+	m.mode = tuiHandoffBrief
+	m.clearStatus()
+	return m, nil
+}
+
+// briefPreviewLines is how much of the brief the confirmation shows. It is
+// enough to recognise the work and not enough to read it: the file is right
+// there, and e opens it.
+const briefPreviewLines = 8
+
+func briefPreview(body string) []string {
+	var kept []string
+	for _, line := range strings.Split(body, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		kept = append(kept, line)
+		if len(kept) >= briefPreviewLines {
+			break
+		}
+	}
+	return kept
+}
+
+func (m tuiModel) updateHandoffBrief(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "e":
+		return m, m.execEditor(m.handoff.path)
+	case "enter":
+		return m.launchHandoff()
+	case "esc", "q", "n", "N":
+		// The brief stays on disk. It cost a full read to produce, and the most
+		// likely reason for backing out here is to open it somewhere else.
+		m.setStatus(statusOK, "brief kept at "+shortenHome(m.handoff.path))
+		m.handoff = handoffDraft{}
+		m.mode = tuiList
+	}
+	return m, nil
+}
+
+func (m tuiModel) launchHandoff() (tea.Model, tea.Cmd) {
+	source, ok := m.selectedProfile()
+	if !ok || m.handoff.target >= len(m.handoff.destinations) {
+		m.mode = tuiList
+		return m, nil
+	}
+	target := m.handoff.destinations[m.handoff.target]
+	args, err := promptArgs(target.Provider, handoffPrompt(m.handoff.path))
+	if err != nil {
+		m.setStatus(statusErr, err.Error())
+		m.mode = tuiList
+		return m, nil
+	}
+	folder, err := recordedFolder(m.handoff.source, m.workingDir)
+	if err != nil {
+		m.setStatus(statusErr, err.Error())
+		m.mode = tuiList
+		return m, nil
+	}
+	link := lineageLink{
+		When:            m.clock(),
+		SourceProfile:   source.Name,
+		SourceProvider:  source.Provider,
+		SourceSessionID: m.handoff.source.session.id,
+		SourceTitle:     m.handoff.source.session.title,
+		TargetProfile:   target.Name,
+		TargetProvider:  target.Provider,
+		Folder:          folder,
+		Brief:           m.handoff.path,
+	}
+	if err := appendLineage(link); err != nil {
+		// Say so, but hand the work over anyway: the pass is the point and the
+		// record is the note about it.
+		m.log = append(m.log, logEntry{kind: statusErr, text: "lineage not recorded: " + err.Error()})
+	}
+	m.lineage = handedOff(readLineage())
+	m.handoff = handoffDraft{}
+	m.mode = tuiList
+	return m, m.execProfileIn(target, profileRunArgs(target, args), false, folder)
+}
+
+// execEditor opens the brief in the user's editor. The handoff is the one place
+// the tool writes prose on the user's behalf, so it is also the one place that
+// has to let them disagree with it before it goes out.
+func (m *tuiModel) execEditor(path string) tea.Cmd {
+	editor := os.Getenv("VISUAL")
+	if editor == "" {
+		editor = os.Getenv("EDITOR")
+	}
+	if editor == "" {
+		m.setStatus(statusErr, "set $EDITOR to edit the brief; it is at "+shortenHome(path))
+		return nil
+	}
+	cmd := exec.Command(editor, path)
+	cmd.Dir = filepath.Dir(path)
+	m.running = true
+	return tea.ExecProcess(cmd, func(err error) tea.Msg { return processFinishedMsg{err: err} })
+}
+
+// toggleAutoSwap flips the setting and writes it back. It is persisted rather
+// than kept for the session because it is a statement about how the user wants
+// to be treated, and having to re-assert it every launch would make the safe
+// default feel like nagging.
+func (m *tuiModel) toggleAutoSwap() {
+	cfg, err := loadConfig(m.configPath)
+	if err != nil {
+		m.setStatus(statusErr, err.Error())
+		return
+	}
+	cfg.Settings.AutoSwap = !m.autoSwap
+	if err := saveConfig(m.configPath, cfg); err != nil {
+		m.setStatus(statusErr, err.Error())
+		return
+	}
+	m.autoSwap = cfg.Settings.AutoSwap
+	if m.autoSwap {
+		m.setStatus(statusOK, "auto-swap on — H sends to the account with the most quota left, unasked")
+		return
+	}
+	m.setStatus(statusOK, "auto-swap off — H asks where the work should go")
 }
 
 func (m tuiModel) updateParams(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1439,6 +1710,94 @@ func (m tuiModel) recentRows(width int) []string {
 	return rows
 }
 
+// handoffPicker asks which session is leaving. It is the resume picker's list
+// with a different verb on it, deliberately: the row you would have resumed is
+// the row you are handing over.
+func (m tuiModel) handoffPicker(width int) []string {
+	profile, ok := m.selectedProfile()
+	if !ok {
+		return nil
+	}
+	lines := append([]string{headerTitleStyle.Render("Hand over a " + profile.Name + " session"), ""},
+		m.recentRows(width)...)
+	hint := "The conversation is read, reduced to a brief, and left where it is."
+	if m.autoSwap {
+		hint = "Auto-swap is on: this goes to whichever account has the most quota left."
+	}
+	return append(lines, "", hintStyle.Render(hint))
+}
+
+// handoffToPicker asks where the work should go, most quota first. The figure
+// beside each account is the window that runs out soonest, because a weekly
+// allowance with room is no help at the moment the five-hour one is spent.
+func (m tuiModel) handoffToPicker(width int) []string {
+	lines := []string{headerTitleStyle.Render("Hand it to which account?"), ""}
+	valueWidth := max(width-modalPadding-2, 8)
+	for index, profile := range m.handoff.destinations {
+		selected := index == m.handoff.target
+		ink := selectedPen(selected)
+		bar := ink.render(lipgloss.NewStyle(), "  ")
+		if selected {
+			bar = ink.render(cursorBarStyle, "▌ ")
+		}
+		name := min(max(valueWidth-16, 8), 26)
+		lines = append(lines, bar+
+			ink.render(fieldValueStyle, pad(truncate(profile.Name, name), name))+
+			ink.render(providerStyle(profile.Provider), pad(truncate(profile.Provider, 12), 12))+
+			ink.render(quotaStyle(headroom(m.usage[profile.Name])), quotaLabel(headroom(m.usage[profile.Name]))))
+	}
+	return append(lines, "",
+		hintStyle.Render("Sorted by the quota window that runs out soonest."),
+		hintStyle.Render("a turns auto-swap on and stops asking this."))
+}
+
+// quotaLabel says what is left in the tightest window, or that nothing is
+// known. An unknown remainder reads as "—" rather than as a number, because a
+// missing quota cache is not the same answer as an empty quota.
+func quotaLabel(percent int) string {
+	if percent < 0 {
+		return "  —"
+	}
+	return fmt.Sprintf("%3d%%", percent)
+}
+
+func quotaStyle(percent int) lipgloss.Style {
+	switch {
+	case percent < 0:
+		return unknownStyle
+	case percent <= 10:
+		return usageCriticalStyle
+	case percent <= 25:
+		return usageWarningStyle
+	default:
+		return usageGoodStyle
+	}
+}
+
+// handoffBriefContent is the last frame before the work moves. With auto-swap
+// on it is the only frame, which is why it names the destination rather than
+// assuming the previous screen already did.
+func (m tuiModel) handoffBriefContent(width int) []string {
+	target := "somewhere"
+	if m.handoff.target < len(m.handoff.destinations) {
+		target = m.handoff.destinations[m.handoff.target].Name
+	}
+	value := max(width-modalPadding, 8)
+	lines := []string{
+		headerTitleStyle.Render("Hand this to " + target),
+		"",
+		fieldLabelStyle.Render(pad("brief", detailLabelWidth)) +
+			fieldValueStyle.Render(truncate(shortenHome(m.handoff.path), max(value-detailLabelWidth, 8))),
+		"",
+	}
+	for _, line := range m.handoff.preview {
+		lines = append(lines, hintStyle.Render(truncate(line, value)))
+	}
+	return append(lines, "",
+		confirmBodyStyle.Render("Nothing is written into either CLI's own state."),
+		hintStyle.Render("↵ opens "+target+" on it · e edits it first · esc keeps the file"))
+}
+
 // statusIcon marks how a message landed. The log panel and the modal footer
 // share it so one glance means the same thing in both places.
 func statusIcon(kind statusKind) (string, lipgloss.Style) {
@@ -1532,6 +1891,7 @@ func helpSections() [][]helpSection {
 				{"p", "run with extra arguments"},
 				{"R", "resume a recent conversation"},
 				{"h", "open a running session"},
+				{"H", "hand a session to another account"},
 				{"c", "change the launch folder"},
 			}},
 			{"PROFILES", []helpEntry{
@@ -1550,6 +1910,7 @@ func helpSections() [][]helpSection {
 				{"K", "stop a running instance"},
 			}},
 			{"AI-SESSION", []helpEntry{
+				{"A", "auto-swap on handoff"},
 				{"U", "update ai-session itself"},
 				{"r", "refresh quotas and updates"},
 				{"?", "these keys"},
@@ -1580,6 +1941,12 @@ func (m tuiModel) helpEntries() []helpEntry {
 		return []helpEntry{{"↑↓/jk", "choose instance"}, {"↵", "open here"}, {"esc", "cancel"}}
 	case m.mode == tuiRecent:
 		return []helpEntry{{"↑↓/jk", "choose session"}, {"↵", "resume it there"}, {"esc", "cancel"}}
+	case m.mode == tuiHandoff:
+		return []helpEntry{{"↑↓/jk", "choose session"}, {"↵", "hand it over"}, {"esc", "cancel"}}
+	case m.mode == tuiHandoffTo:
+		return []helpEntry{{"↑↓/jk", "choose account"}, {"↵", "write the brief"}, {"a", "auto-swap"}, {"esc", "cancel"}}
+	case m.mode == tuiHandoffBrief:
+		return []helpEntry{{"↵", "open it there"}, {"e", "edit the brief"}, {"esc", "keep the brief"}}
 	case m.mode == tuiParams:
 		return []helpEntry{{"↵", "run"}, {"ctrl-u", "clear"}, {"esc", "cancel"}}
 	case m.mode == tuiConfirmInstall:
@@ -1596,6 +1963,7 @@ func (m tuiModel) helpEntries() []helpEntry {
 			{"p", "args"},
 			{"R", "resume"},
 			{"h", "hijack"},
+			{"H", "handoff"},
 			{"l", "login"},
 			{"i", "install"},
 			{"u", "update"},
