@@ -749,18 +749,36 @@ func TestSelfUpdatePromptNamesTheCheckoutAndItsSteps(t *testing.T) {
 		t.Fatalf("mode = %v, source = %q", m.mode, m.source)
 	}
 	view := m.View()
-	for _, want := range []string{"Update ai-session", "git pull --ff-only", "2 commits behind main", "next ai you start"} {
+	for _, want := range []string{"Update ai-session", "git pull --ff-only", "2 commits behind main", "reopens itself"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("self-update prompt is missing %q:\n%s", want, view)
 		}
 	}
 }
 
-func TestSelfUpdateKeyExplainsAnUnknownCheckout(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+// With nothing overridden, U previews the managed clone's path without
+// requiring it to exist yet — ensureRepo's clone-if-missing runs only once
+// the update is actually confirmed, not while just showing the checkout.
+func TestSelfUpdateKeyPreviewsTheManagedCloneWithoutRequiringItToExist(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
 	m := press(t, wideModel(testProfiles()), "U")
-	if m.mode != tuiList || !strings.Contains(m.status, "self-update --source") {
-		t.Fatalf("mode = %v, status = %q; want the one-time fix named", m.mode, m.status)
+	if m.mode != tuiConfirmSelfUpdate {
+		t.Fatalf("mode = %v, status = %q; want the confirmation to open", m.mode, m.status)
+	}
+	if want := filepath.Join(root, "ai", "repo"); m.source != want {
+		t.Fatalf("m.source = %q, want the managed clone path %q", m.source, want)
+	}
+}
+
+// AI_SOURCE_DIR is the one case previewing the checkout can still fail: an
+// override pointed at something that is not actually an ai-session checkout.
+func TestSelfUpdateKeyExplainsAnInvalidSourceOverride(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv(sourceDirEnv, t.TempDir())
+	m := press(t, wideModel(testProfiles()), "U")
+	if m.mode != tuiList || !strings.Contains(m.status, "not an ai-session checkout") {
+		t.Fatalf("mode = %v, status = %q; want the bad override named", m.mode, m.status)
 	}
 }
 
