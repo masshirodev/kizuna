@@ -47,11 +47,12 @@ func providerInstaller(provider string) (providerInstall, error) {
 	}
 }
 
-// installTarget accepts a profile name or a bare provider. Installing a CLI is
-// the one thing that is useful before a profile exists, so it is the single
-// command that does not insist on one.
+// installTarget accepts a profile name, an app name (resolved to its active
+// member), or a bare provider. Installing a CLI is the one thing that is
+// useful before a profile exists, so it is the single command that does not
+// insist on one.
 func installTarget(cfg Config, name string) (providerInstall, error) {
-	if profile, err := findProfile(cfg, name); err == nil {
+	if profile, err := resolveProfile(cfg, name); err == nil {
 		return providerInstaller(profile.Provider)
 	}
 	install, err := providerInstaller(name)

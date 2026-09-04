@@ -329,6 +329,53 @@ func TestSaveFormPersistsDefaultArgsAndNotes(t *testing.T) {
 	}
 }
 
+func TestSaveFormRejectsNameCollidingWithApp(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	path, err := configPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveConfig(path, Config{
+		Profiles: []Profile{{Name: "gemini", Provider: "antigravity", Command: "gemini"}},
+		Apps:     []App{{Name: "shiori", Members: []string{"gemini"}, Active: "gemini"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := tuiModel{configPath: path}
+	m.form = profileForm{name: "shiori", provider: "codex", command: "codex", isNew: true}
+	if err := m.saveForm(); err == nil {
+		t.Fatal("expected saveForm to reject a profile name that collides with an existing app")
+	}
+	m.form = profileForm{name: "apps", provider: "codex", command: "codex", isNew: true}
+	if err := m.saveForm(); err == nil {
+		t.Fatal("expected saveForm to reject the reserved name \"apps\"")
+	}
+}
+
+func TestSaveFormRefusesToRenameAnAppMember(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	path, err := configPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "ai", "profiles", "gemini"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveConfig(path, Config{
+		Profiles: []Profile{{Name: "gemini", Provider: "antigravity", Command: "gemini"}},
+		Apps:     []App{{Name: "shiori", Members: []string{"gemini"}, Active: "gemini"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := tuiModel{configPath: path}
+	m.form = profileForm{name: "gemini-renamed", original: "gemini", provider: "antigravity", command: "gemini"}
+	if err := m.saveForm(); err == nil {
+		t.Fatal("expected saveForm to refuse renaming a profile used by an app")
+	}
+}
+
 func TestFormAcceptsSpacesInDefaultArgsAndNotes(t *testing.T) {
 	for _, field := range []int{3, 4} {
 		m := tuiModel{mode: tuiForm, form: profileForm{field: field}}

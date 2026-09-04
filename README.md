@@ -42,6 +42,70 @@ ai profile add opencode-go opencode
 ai profile add deepseek opencode
 ```
 
+## Application profiles
+
+A regular profile is for you, launched interactively. An **app profile**
+is for something else — a program of your own that spawns an agent CLI as a
+subprocess and points it at a state directory through its *own* static
+config, never asking `ai` what that path currently means. `ai run` can
+re-resolve a profile name on every launch; a program that isn't `ai` can't,
+so app profiles exist to give it a path that never changes while what it
+actually points at does.
+
+```sh
+ai profile add gemini-work antigravity
+ai profile add gemini-personal antigravity
+ai app add shiori gemini-work gemini-personal
+ai app path shiori
+# /home/you/.config/ai/profiles/apps/shiori
+```
+
+Paste that path into shiori's own config wherever it expects an agent's home
+directory (`HOME` for Antigravity, `CLAUDE_CONFIG_DIR` for Claude Code,
+`CODEX_HOME` for Codex — whatever shiori's backend reads). The first member
+listed becomes active. To switch which one shiori actually uses:
+
+```sh
+ai app use shiori gemini-personal
+```
+
+`ai app path shiori` never changes; what it resolves to does. Nothing is
+copied and no new credential store is created — the app profile is a symlink
+at `ai app path shiori`, and switching just repoints it at a different
+member's real profile directory (`ai app list` shows the current mapping).
+Members don't have to share a provider: each provider's env vars address a
+subpath of its own profile directory (`.../gemini-work/home`,
+`.../codex-work/codex`, and so on), and the symlink stands for the whole
+directory, so whichever provider-shaped path shiori's config already points
+into resolves correctly as long as the active member is that provider.
+Switching to a member of a *different* provider than shiori was last
+configured for means updating shiori's own backend selection too — that part
+is shiori's integration, not something `ai` can do on its behalf.
+
+There's no live switching: `ai app use` only has to be right for shiori's
+*next* launch, not for one already running with the old target open.
+
+Ordinary `ai` commands also accept an app name in place of a profile name,
+resolving to whichever member is currently active — useful for testing an
+app profile interactively without touching shiori at all:
+
+```sh
+ai run shiori          # launches gemini-personal, same as ai run gemini-personal
+ai login shiori
+ai install shiori
+```
+
+The terminal title, `AI_PROFILE`, and any status line still name the real
+member (`gemini-personal`), not the app (`shiori`) — that's the identity
+actually paying for the session, and showing it as-is means every existing
+indicator works unchanged.
+
+App names and profile names share one namespace: you can't name an app the
+same as an existing profile (or vice versa), and `apps` itself is reserved.
+There's no `ai app rm` yet, matching plain profiles, which have no delete
+command either — and a profile currently used by an app can't be renamed
+from the TUI, since that would leave the app's symlink pointing nowhere.
+
 ## Install the provider CLIs
 
 `ai-session` isolates state; it does not ship the CLIs themselves. A profile

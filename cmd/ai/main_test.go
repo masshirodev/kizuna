@@ -138,7 +138,7 @@ func TestMissingBareProfileReturnsUsefulError(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	var stdout, stderr strings.Builder
 	err := run([]string{"ka"}, &stdout, &stderr)
-	if err == nil || err.Error() != `unknown command or profile "ka"; try 'ai help'` {
+	if err == nil || err.Error() != `unknown command, profile, or app "ka"; try 'ai help'` {
 		t.Fatalf("bare missing profile error = %v", err)
 	}
 }
