@@ -477,7 +477,15 @@ func reopenArgs(provider string, session instanceSession) ([]string, error) {
 			return []string{"--conversation", session.id}, nil
 		}
 		return []string{"--continue"}, nil
-	case "opencode", "deepseek":
+	case "opencode":
+		if session.id != "" {
+			return []string{"--session", session.id}, nil
+		}
+		return []string{"--continue"}, nil
+	case "deepseek":
+		// deepseek runs through the opencode binary but not its isolated
+		// XDG_DATA_HOME (profileEnv only sets that for case "opencode"), so
+		// there is no per-profile session store to look an id up in.
 		return []string{"--continue"}, nil
 	default:
 		return nil, fmt.Errorf("provider %q cannot reopen a session by id", provider)
