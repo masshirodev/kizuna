@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -757,5 +758,103 @@ func TestHelpPaneFoldsToOneColumnRatherThanClipping(t *testing.T) {
 	}
 	if strings.Contains(view, "select    l") {
 		t.Fatalf("narrow help pane kept two columns:\n%s", view)
+	}
+}
+
+// recentTestSessions is a profile's history as the panel would have read it.
+func recentTestSessions(folder string) []recordedSession {
+	when := time.Date(2026, 9, 4, 11, 30, 0, 0, time.Local)
+	return []recordedSession{
+		{session: instanceSession{id: "aaa", title: "Edit contacts"}, folder: folder, when: when},
+		{session: instanceSession{id: "bbb", title: "Server status card"}, folder: "/gone/hub", when: when.Add(-time.Hour)},
+	}
+}
+
+func TestResumePickerOffersTheRecordedSessions(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m.recent = recentTestSessions(t.TempDir())
+	m = press(t, m, "R")
+	if m.mode != tuiRecent {
+		t.Fatalf("mode = %v, want the resume picker", m.mode)
+	}
+	view := m.View()
+	for _, want := range []string{"Resume a codex-work session", "Edit contacts", "Server status card", "/gone/hub", "resume it there"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("resume picker is missing %q:\n%s", want, view)
+		}
+	}
+}
+
+// With nothing recorded — an account that has not run yet, or a provider whose
+// transcripts are not read — R has to stay the key that resumes rather than
+// opening an empty box.
+func TestResumeFallsBackToTheProviderFlowWithNothingRecorded(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	updated, cmd := m.updateList(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("R")})
+	got := updated.(tuiModel)
+	if cmd == nil || got.mode != tuiList {
+		t.Fatalf("R with no recorded sessions did not fall back: mode %v, cmd %v", got.mode, cmd != nil)
+	}
+}
+
+func TestResumePickerLaunchesTheSelectedSessionInItsFolder(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	folder := t.TempDir()
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m.workingDir = t.TempDir()
+	m.recent = recentTestSessions(folder)
+	m.mode = tuiRecent
+
+	// The second row's folder is gone, so choosing it has to say so and leave
+	// the picker up rather than resume somewhere else.
+	updated, _ := m.updateRecent(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	updated, cmd := updated.(tuiModel).updateRecent(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(tuiModel)
+	if cmd != nil || got.mode != tuiRecent || !strings.Contains(got.status, "gone") {
+		t.Fatalf("a missing folder was resumed anyway: mode %v, status %q", got.mode, got.status)
+	}
+
+	updated, _ = got.updateRecent(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	updated, cmd = updated.(tuiModel).updateRecent(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(tuiModel)
+	if cmd == nil || got.mode != tuiList {
+		t.Fatalf("the recorded session did not launch: mode %v, cmd %v", got.mode, cmd != nil)
+	}
+}
+
+// A refresh landing while the picker is open would move the row under the
+// cursor, which is the one way a picker of transcripts can resume the wrong one.
+func TestOpenResumePickerKeepsItsListThroughARefresh(t *testing.T) {
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m.recent = recentTestSessions("/work/lattice")
+	m.mode = tuiRecent
+	updated, _ := m.Update(cockpitLoadedMsg{profile: "codex-work", now: time.Now()})
+	got := updated.(tuiModel)
+	if len(got.recent) != 2 {
+		t.Fatalf("a refresh emptied the open picker: %d rows", len(got.recent))
+	}
+	if !got.loaded {
+		t.Fatal("the refresh was dropped entirely; the live panel still needs it")
+	}
+}
+
+func TestRecordedFolderPrefersTheRecordedDirectory(t *testing.T) {
+	folder, fallback := t.TempDir(), t.TempDir()
+	got, err := recordedFolder(recordedSession{folder: folder}, fallback)
+	if err != nil || got != folder {
+		t.Fatalf("recordedFolder = %q, %v, want the recorded folder", got, err)
+	}
+	got, err = recordedFolder(recordedSession{}, fallback)
+	if err != nil || got != fallback {
+		t.Fatalf("a session with no folder = %q, %v, want the launch folder", got, err)
+	}
+	if _, err := recordedFolder(recordedSession{folder: filepath.Join(folder, "moved")}, fallback); err == nil {
+		t.Fatal("a folder that no longer exists was accepted")
 	}
 }

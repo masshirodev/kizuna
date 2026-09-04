@@ -430,11 +430,12 @@ func resumeArgs(provider string) ([]string, error) {
 	}
 }
 
-// hijackArgs reopens the conversation a running instance already has open.
-// Without a discovered session id it falls back to the most recent session,
-// which for Claude, Antigravity, and OpenCode is scoped to the folder the
-// command runs in.
-func hijackArgs(provider string, session instanceSession) ([]string, error) {
+// reopenArgs reopens one exact conversation, whether it was found on a running
+// instance or read back out of a transcript. Without a session id it falls back
+// to the most recent session, which for Claude, Antigravity, and OpenCode is
+// scoped to the folder the command runs in — which is why every caller runs it
+// in the folder the session belongs to, not in the launcher's own.
+func reopenArgs(provider string, session instanceSession) ([]string, error) {
 	switch provider {
 	case "claude":
 		if session.id != "" {
@@ -454,7 +455,7 @@ func hijackArgs(provider string, session instanceSession) ([]string, error) {
 	case "opencode", "deepseek":
 		return []string{"--continue"}, nil
 	default:
-		return nil, fmt.Errorf("provider %q cannot reopen a running session", provider)
+		return nil, fmt.Errorf("provider %q cannot reopen a session by id", provider)
 	}
 }
 

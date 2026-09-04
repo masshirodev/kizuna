@@ -401,13 +401,14 @@ timestamps on the profile's own transcripts. It is deliberately not labelled as
 quota: no provider records what a limit cost at a given hour, so the histogram
 measures the one thing that is actually on disk. `RECENT SESSIONS` reads the
 same transcripts for what each conversation was about, skipping the preamble
-both CLIs write before the first thing you actually typed.
+both CLIs write before the first thing you actually typed. `R` turns that panel
+into a picker and resumes the row you choose.
 
 Use the arrow keys or `j`/`k` to select a profile:
 
 - Enter runs the selected profile.
 - `p` runs it with extra arguments typed at the prompt.
-- `R` resumes a previous conversation.
+- `R` resumes one of the recent sessions, in the folder it ran in.
 - `h` hijacks a running instance: it opens that instance's conversation in this
   terminal, leaving the original process running.
 - `l` logs in to the selected profile.
@@ -437,10 +438,31 @@ two.
 Both instance pickers — `h` and `K` — list each running instance with the
 conversation it has open and the folder it was launched in, so two instances of
 the same profile can be told apart by what they are doing rather than by PID.
+The resume picker — `R` — lists transcripts rather than processes, so its rows
+are dated instead of numbered.
 
 ## Resuming and hijacking
 
-`R` starts the provider's own resume flow in the current launch folder:
+`R` offers the conversations `RECENT SESSIONS` has already read off disk, and
+reopens the chosen one by id in the folder it ran in. Both halves matter: the id
+names the conversation, and every provider looks for that id under the folder it
+belongs to, so resuming from anywhere else reaches a different conversation or
+none at all. A recorded folder that has since been moved or deleted is reported
+rather than quietly swapped for the current launch folder.
+
+This is a wider offer than the provider's own resume flow, which only ever sees
+the folder it was started in. The panel has read every folder the account has
+worked in, so a conversation from another project is one keypress away instead
+of a `cd` away.
+
+The list is always the selected profile's own, and it is reopened under that
+profile's environment. One account cannot resume another's conversation: a
+session id only exists inside the isolated state directory that recorded it, so
+the same id under a different profile finds nothing.
+
+With nothing recorded — an account that has not run yet, or a provider whose
+transcripts this launcher does not read — `R` falls back to the provider's own
+resume flow in the current launch folder:
 
 | Provider | Command |
 | -------- | ------- |
@@ -452,10 +474,12 @@ the same profile can be told apart by what they are doing rather than by PID.
 Antigravity and OpenCode continue the last session for the current workspace
 instead of opening a picker.
 
-`h` skips the picker. It reads the running instances the launcher already
-tracks, resolves the session each one has open, and reopens exactly that
-session in the folder the instance was launched from. Session titles come from
-the provider itself and are best effort:
+`h` chooses from processes rather than from transcripts. It reads the running
+instances the launcher already tracks, resolves the session each one has open,
+and reopens exactly that session in the folder the instance was launched from —
+which is what makes it the key for a conversation that is still going, where `R`
+is the key for one that has stopped. Session titles come from the provider
+itself and are best effort:
 
 | Provider | Source |
 | -------- | ------ |

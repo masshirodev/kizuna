@@ -25,6 +25,7 @@ const (
 	tuiConfirmDelete
 	tuiConfirmKill
 	tuiHijack
+	tuiRecent
 	tuiParams
 	tuiConfirmInstall
 	tuiConfirmSelfUpdate
@@ -91,6 +92,10 @@ type tuiModel struct {
 	params     string
 	instances  []profileInstance
 	instance   int
+	// record indexes recent while the resume picker is open. It is separate
+	// from instance because the two pickers offer different things: one lists
+	// processes, the other lists transcripts.
+	record     int
 	describing bool
 	update     updateStatus
 	// install and source are what a pending confirmation is about: the vendor
@@ -284,6 +289,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateKill(msg)
 		case tuiHijack:
 			return m.updateHijack(msg)
+		case tuiRecent:
+			return m.updateRecent(msg)
 		case tuiParams:
 			return m.updateParams(msg)
 		case tuiConfirmInstall:
@@ -310,6 +317,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case cockpitLoadedMsg:
 		// What is running is true of the whole machine, so it lands either way.
 		m.live, m.now, m.loaded = msg.live, msg.now, true
+		// The resume picker chooses from this list by index, so a refresh
+		// landing under it would move the row the cursor is on. The next tick
+		// takes the panel once the picker is closed.
+		if m.mode == tuiRecent {
+			return m, nil
+		}
 		if profile, ok := m.selectedProfile(); ok && profile.Name == msg.profile {
 			m.recent, m.activity = msg.recent, msg.activity
 		}
@@ -403,12 +416,7 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "R":
 		if hasSelection {
-			args, err := resumeArgs(profile.Provider)
-			if err != nil {
-				m.setStatus(statusErr, err.Error())
-				return m, nil
-			}
-			return m, m.execProfile(profile, profileRunArgs(profile, args), false)
+			return m, m.openRecent()
 		}
 	case "p":
 		if hasSelection {
@@ -579,7 +587,7 @@ func (m tuiModel) updateHijack(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = tuiList
 			return m, nil
 		}
-		args, err := hijackArgs(profile.Provider, instance.session)
+		args, err := reopenArgs(profile.Provider, instance.session)
 		if err != nil {
 			m.setStatus(statusErr, err.Error())
 			m.mode = tuiList
@@ -598,6 +606,106 @@ func (m tuiModel) updateHijack(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearStatus()
 	}
 	return m, nil
+}
+
+// openRecent offers the conversations the RECENT SESSIONS panel is already
+// showing. It is not the same offer as the provider's own resume flow: that one
+// only ever sees the folder it was started in, while the panel has read every
+// folder this account has worked in. A provider whose transcripts are not read,
+// and an account with nothing recorded yet, fall back to the provider's flow
+// rather than to an empty picker.
+//
+// The list is the selected profile's own and is reopened under that profile's
+// environment, which is the only way it can work: a session id lives inside the
+// profile that recorded it, so no account can resume another's conversation.
+func (m *tuiModel) openRecent() tea.Cmd {
+	profile, ok := m.selectedProfile()
+	if !ok {
+		return nil
+	}
+	if len(m.recent) > 0 {
+		m.record = 0
+		m.mode = tuiRecent
+		m.clearStatus()
+		return nil
+	}
+	args, err := resumeArgs(profile.Provider)
+	if err != nil {
+		m.setStatus(statusErr, err.Error())
+		return nil
+	}
+	return m.execProfile(profile, profileRunArgs(profile, args), false)
+}
+
+// updateRecent resumes a conversation read back off disk. The id and the folder
+// are both needed: the id names the conversation, and the folder is where the
+// provider looks for it, so the launch moves to the folder the session ran in
+// rather than to whatever folder the launcher is pointed at.
+func (m tuiModel) updateRecent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if m.record > 0 {
+			m.record--
+		}
+	case "down", "j":
+		if m.record < len(m.recent)-1 {
+			m.record++
+		}
+	case "enter":
+		profile, ok := m.selectedProfile()
+		if !ok || m.record < 0 || m.record >= len(m.recent) {
+			m.mode = tuiList
+			return m, nil
+		}
+		record := m.recent[m.record]
+		folder, err := recordedFolder(record, m.workingDir)
+		if err != nil {
+			// The picker stays open: the other rows are still resumable, and
+			// this one is only unreachable because its folder moved.
+			m.setStatus(statusErr, err.Error())
+			return m, nil
+		}
+		args, err := reopenArgs(profile.Provider, record.session)
+		if err != nil {
+			m.setStatus(statusErr, err.Error())
+			return m, nil
+		}
+		m.mode = tuiList
+		return m, m.execProfileIn(profile, profileRunArgs(profile, args), false, folder)
+	case "esc", "q":
+		m.mode = tuiList
+		m.clearStatus()
+	}
+	return m, nil
+}
+
+// recordedFolder is where a recorded conversation has to be reopened. A
+// transcript outlives the directory it was written in, and resuming by id from
+// anywhere else does not reach the same conversation — the provider looks for
+// the id under the current folder and finds nothing — so a folder that has
+// since moved is reported rather than quietly swapped for the launch folder.
+func recordedFolder(record recordedSession, fallback string) (string, error) {
+	folder := record.folder
+	if folder == "" {
+		folder = fallback
+	}
+	if folder == "" {
+		return "", errors.New("this session records no folder to resume in")
+	}
+	info, err := os.Stat(folder)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("%s is gone; that session cannot be resumed", shortenHome(folder))
+	}
+	if err != nil {
+		// Anything else — a permission wall, a dead mount — is reported as
+		// itself. Calling it gone would send someone looking for a directory
+		// that is still there.
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", shortenHome(folder))
+	}
+	return folder, nil
 }
 
 func (m tuiModel) updateParams(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1296,6 +1404,41 @@ func (m tuiModel) confirmContent(width int) []string {
 	}
 }
 
+// recentPicker offers the conversations the panel behind it is showing. It
+// names the profile because the answer is only ever that profile's own history:
+// a session id lives inside the profile that recorded it, so the picker cannot
+// hand one account another's conversation even when both worked in the folder.
+func (m tuiModel) recentPicker(width int) []string {
+	profile, ok := m.selectedProfile()
+	if !ok {
+		return nil
+	}
+	lines := append([]string{headerTitleStyle.Render("Resume a " + profile.Name + " session"), ""},
+		m.recentRows(width)...)
+	return append(lines, "", hintStyle.Render("Reopens the conversation by id, in the folder it ran in."))
+}
+
+// recentRows renders the recent list with a cursor on it. Unlike the instance
+// pickers a row fits on one line, because a transcript has no PID to name it by
+// and the time already tells two of them apart.
+func (m tuiModel) recentRows(width int) []string {
+	// The modal's width covers its own padding, and the cursor bar takes two
+	// more columns before the row starts. A row sized to the full width wraps,
+	// which turns one session into two lines and the list into nonsense.
+	rowWidth := max(width-modalPadding-2, 8)
+	rows := make([]string, 0, len(m.recent))
+	for index, record := range m.recent {
+		selected := index == m.record
+		ink := selectedPen(selected)
+		bar := ink.render(lipgloss.NewStyle(), "  ")
+		if selected {
+			bar = ink.render(cursorBarStyle, "▌ ")
+		}
+		rows = append(rows, bar+m.recentRow(ink, record, rowWidth))
+	}
+	return rows
+}
+
 // statusIcon marks how a message landed. The log panel and the modal footer
 // share it so one glance means the same thing in both places.
 func statusIcon(kind statusKind) (string, lipgloss.Style) {
@@ -1387,7 +1530,7 @@ func helpSections() [][]helpSection {
 			{"LAUNCH", []helpEntry{
 				{"↵", "run the selected profile"},
 				{"p", "run with extra arguments"},
-				{"R", "resume a conversation"},
+				{"R", "resume a recent conversation"},
 				{"h", "open a running session"},
 				{"c", "change the launch folder"},
 			}},
@@ -1435,6 +1578,8 @@ func (m tuiModel) helpEntries() []helpEntry {
 		return []helpEntry{{"↑↓/jk", "choose instance"}, {"↵", "stop selected"}, {"a/y", "stop all"}, {"n/esc", "keep running"}}
 	case m.mode == tuiHijack:
 		return []helpEntry{{"↑↓/jk", "choose instance"}, {"↵", "open here"}, {"esc", "cancel"}}
+	case m.mode == tuiRecent:
+		return []helpEntry{{"↑↓/jk", "choose session"}, {"↵", "resume it there"}, {"esc", "cancel"}}
 	case m.mode == tuiParams:
 		return []helpEntry{{"↵", "run"}, {"ctrl-u", "clear"}, {"esc", "cancel"}}
 	case m.mode == tuiConfirmInstall:
