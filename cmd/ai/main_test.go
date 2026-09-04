@@ -572,7 +572,8 @@ func TestReopenArgsPreferTheDiscoveredSession(t *testing.T) {
 		"claude":      {"--resume abc123", "--continue"},
 		"codex":       {"resume abc123", "resume --last"},
 		"antigravity": {"--conversation abc123", "--continue"},
-		"opencode":    {"--continue", "--continue"},
+		"opencode":    {"--session abc123", "--continue"},
+		"deepseek":    {"--continue", "--continue"},
 	}
 	for provider, want := range cases {
 		args, err := reopenArgs(provider, session)

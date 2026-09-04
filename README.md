@@ -601,7 +601,18 @@ profile's environment. One account cannot resume another's conversation: a
 session id only exists inside the isolated state directory that recorded it, so
 the same id under a different profile finds nothing.
 
-With nothing recorded — an account that has not run yet, or a provider whose
+**What `RECENT SESSIONS` reads is per provider.** Codex and Claude Code keep a
+transcript file per conversation, which is what gets parsed for a title.
+OpenCode keeps its own SQLite database (`opencode.db`) with title, folder, and
+timestamp as plain columns — no parsing needed, and resuming picks the exact
+conversation by id (`opencode --session <id>`), the same as Codex and Claude.
+Antigravity is not read yet: its conversation store is a per-conversation
+SQLite database whose readable metadata carries ids but not a title, and the
+title lives in a protobuf blob with no published schema — resuming a specific
+Antigravity conversation already works from a *running* instance (see `h`
+below), but there is no picker for a stopped one.
+
+With nothing recorded — an account that has not run yet, or Antigravity, whose
 transcripts this launcher does not read — `R` falls back to the provider's own
 resume flow in the current launch folder:
 

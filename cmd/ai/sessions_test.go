@@ -1,11 +1,80 @@
 package main
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+// seedOpenCodeSession writes one row into a profile's OpenCode session store,
+// creating the database and table on first use. time_created is unix
+// milliseconds, matching the real schema (confirmed by inspecting an actual
+// opencode.db directly) rather than the RFC3339 strings every other reader
+// in this file parses.
+func seedOpenCodeSession(t *testing.T, root, profile, id, title, directory string, createdMillis int64) {
+	t.Helper()
+	dir := filepath.Join(root, appName, "profiles", profile, "data", "opencode")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "opencode.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS session (
+		id text PRIMARY KEY,
+		title text NOT NULL,
+		directory text NOT NULL,
+		time_created integer NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO session (id, title, directory, time_created) VALUES (?, ?, ?, ?)`,
+		id, title, directory, createdMillis); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOpenCodeSessionsOrdersNewestFirstAndParsesMillisecondTimestamps(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	older := time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 8, 10, 11, 0, 0, 0, time.UTC)
+	seedOpenCodeSession(t, root, "opencode-go", "ses_old", "edit contacts", "/work/lattice", older.UnixMilli())
+	seedOpenCodeSession(t, root, "opencode-go", "ses_new", "fix build", "/work/wayfarer", newer.UnixMilli())
+
+	got := recentSessions(Profile{Name: "opencode-go", Provider: "opencode"}, 0)
+	if len(got) != 2 {
+		t.Fatalf("recent = %+v, want 2 records", got)
+	}
+	if got[0].session.id != "ses_new" || got[0].session.title != "fix build" || got[0].folder != "/work/wayfarer" {
+		t.Fatalf("newest record = %+v", got[0])
+	}
+	if !got[0].when.Equal(newer) {
+		t.Fatalf("newest when = %v, want %v (millisecond epoch parsed correctly)", got[0].when, newer)
+	}
+	if got[1].session.id != "ses_old" {
+		t.Fatalf("second record = %+v, want the older session", got[1])
+	}
+}
+
+func TestOpenCodeSessionsRespectsLimit(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	base := time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC)
+	for i := 0; i < 5; i++ {
+		seedOpenCodeSession(t, root, "opencode-go", "ses"+string(rune('a'+i)), "session", "/work",
+			base.Add(time.Duration(i)*time.Hour).UnixMilli())
+	}
+	got := recentSessions(Profile{Name: "opencode-go", Provider: "opencode"}, 2)
+	if len(got) != 2 {
+		t.Fatalf("recent = %+v, want exactly 2 records for a limit of 2", got)
+	}
+}
 
 func writeRollout(t *testing.T, root, name, cwd string, lines ...string) {
 	t.Helper()

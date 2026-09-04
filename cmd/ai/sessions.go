@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 // instanceSession names the conversation a running instance has open. Both
@@ -191,6 +194,8 @@ func recentSessions(profile Profile, limit int) []recordedSession {
 		paths = codexRollouts(filepath.Join(root, profile.Name, "codex", "sessions"))
 	case "claude":
 		paths = claudeTranscripts(profile)
+	case "opencode":
+		return opencodeSessions(profile, limit)
 	default:
 		return nil
 	}
@@ -212,6 +217,52 @@ func recentSessions(profile Profile, limit int) []recordedSession {
 		}
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].when.After(records[j].when) })
+	return records
+}
+
+// opencodeSessions reads a profile's OpenCode session store directly: unlike
+// Claude and Codex, OpenCode keeps a SQLite database with title, folder, and
+// timestamp as plain columns, so a single sorted, limited query stands in for
+// the list-then-read-each-file shape the other two providers need. A missing
+// database (no session run yet) or any query error is treated the same as
+// "nothing to show" rather than surfaced, matching every other reader here.
+func opencodeSessions(profile Profile, limit int) []recordedSession {
+	root, err := profileRoot()
+	if err != nil {
+		return nil
+	}
+	dbPath := filepath.Join(root, profile.Name, "data", "opencode", "opencode.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		return nil
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil
+	}
+	defer db.Close()
+
+	rows, err := db.Query(
+		"SELECT id, title, directory, time_created FROM session ORDER BY time_created DESC LIMIT ?",
+		limit,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	records := make([]recordedSession, 0, limit)
+	for rows.Next() {
+		var id, title, directory string
+		var createdMillis int64
+		if err := rows.Scan(&id, &title, &directory, &createdMillis); err != nil {
+			continue
+		}
+		records = append(records, recordedSession{
+			session: instanceSession{id: id, title: title},
+			folder:  directory,
+			when:    time.UnixMilli(createdMillis),
+		})
+	}
 	return records
 }
 
