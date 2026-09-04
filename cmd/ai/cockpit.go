@@ -13,12 +13,29 @@ import (
 // bar. Everything else the TUI does is drawn as a modal over that frame, so
 // changing mode never moves what is behind it.
 func (m tuiModel) View() string {
-	frame := frameLayout(m.width, m.height)
+	width, height := m.width, m.height
+	if width <= 0 {
+		width = assumedWidth
+	}
+	if height <= 0 {
+		height = assumedHeight
+	}
+	// The cockpit has its own floor it will not shrink below — chromeRows
+	// plus at least one body row, and at least one column of list — so a
+	// terminal at or near that floor has no room left for a margin without
+	// breaking the "the view exactly fills the terminal" contract every size
+	// has to satisfy (TestViewFillsTheTerminalExactly covers sizes down to
+	// 1x5). The margin shrinks toward zero there rather than being reserved
+	// unconditionally.
+	marginX := min(screenMarginX, max((width-1)/2, 0))
+	marginY := min(screenMarginY, max((height-chromeRows-1)/2, 0))
+
+	frame := frameLayout(width-2*marginX, height-2*marginY)
 	screen := m.cockpitView(frame)
 	if box := m.modalView(frame); box != "" {
 		screen = centerBox(screen, box, frame)
 	}
-	return screen
+	return withMargin(screen, width, marginX, marginY)
 }
 
 func (m tuiModel) cockpitView(frame layout) string {

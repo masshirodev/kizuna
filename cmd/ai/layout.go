@@ -28,6 +28,14 @@ const (
 	// dividerWidth is the gutter between columns: a hairline with a space on
 	// each side, so a full-width cell never touches the rule beside it.
 	dividerWidth = 3
+
+	// screenMarginX and screenMarginY hold the whole cockpit — frame, rules,
+	// and any modal centred over it — off the edge of the terminal. Uneven on
+	// purpose: a terminal cell is taller than it is wide, so a symmetric
+	// column/row count would look narrower on top and bottom than on the
+	// sides.
+	screenMarginX = 2
+	screenMarginY = 1
 )
 
 // layout is the cockpit's geometry for one terminal size. A zero right or
@@ -210,6 +218,31 @@ func padLine(line string, width int) string {
 		return ansi.Truncate(line, width, "")
 	}
 	return line + strings.Repeat(" ", width-current)
+}
+
+// withMargin insets screen — already sized to width-2*marginX columns wide —
+// inside the full terminal width, and adds marginY blank rows above and
+// below. It is the outermost step in View(), applied after the modal (if
+// any) is already centred over the cockpit, so the margin frames the whole
+// composed screen rather than the cockpit alone. marginX and marginY are
+// View()'s own already-clamped values, not the screenMarginX/Y constants
+// directly, so this never has to reason about whether they fit.
+func withMargin(screen string, width, marginX, marginY int) string {
+	inner := max(width-2*marginX, 0)
+	pad := strings.Repeat(" ", marginX)
+	blank := strings.Repeat(" ", width)
+	lines := strings.Split(screen, "\n")
+	rows := make([]string, 0, len(lines)+2*marginY)
+	for i := 0; i < marginY; i++ {
+		rows = append(rows, blank)
+	}
+	for _, line := range lines {
+		rows = append(rows, pad+padLine(line, inner)+pad)
+	}
+	for i := 0; i < marginY; i++ {
+		rows = append(rows, blank)
+	}
+	return strings.Join(rows, "\n")
 }
 
 // overlay draws box over background, its top-left corner at the given row and
