@@ -200,7 +200,7 @@ func TestKillPickerListsEachRunningInstance(t *testing.T) {
 		t.Fatalf("kill picker = mode %v with %d instances", got.mode, len(got.instances))
 	}
 	view := got.View()
-	for _, want := range []string{"Instance 1 (PID 1)", "Instance 2 (PID 1)", "stops them all"} {
+	for _, want := range []string{"Instance 1 (PID 1)", "Instance 2 (PID 1)", "stops them"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("kill picker is missing %q:\n%s", want, view)
 		}
@@ -504,6 +504,42 @@ func TestViewFillsTheTerminalExactly(t *testing.T) {
 			if lipgloss.Width(line) != width {
 				t.Fatalf("%dx%d line %d is %d columns wide:\n%q", width, height, index, lipgloss.Width(line), line)
 			}
+		}
+	}
+}
+
+func TestViewAddsAMarginAroundTheCockpit(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	lines := strings.Split(wideModel(testProfiles()).View(), "\n")
+	if strings.TrimSpace(lines[0]) != "" {
+		t.Fatalf("top margin row is not blank: %q", lines[0])
+	}
+	if strings.TrimSpace(lines[len(lines)-1]) != "" {
+		t.Fatalf("bottom margin row is not blank: %q", lines[len(lines)-1])
+	}
+	content := lines[screenMarginY]
+	if strings.TrimSpace(content[:screenMarginX]) != "" {
+		t.Fatalf("left margin is not blank: %q", content)
+	}
+	if strings.TrimSpace(content[len(content)-screenMarginX:]) != "" {
+		t.Fatalf("right margin is not blank: %q", content)
+	}
+}
+
+// A margin reserved unconditionally would break the "exactly fills the
+// terminal" contract the moment the terminal is too small to afford one —
+// TestViewFillsTheTerminalExactly already covers sizes down to 1x5, so this
+// just names why that keeps passing: the margin shrinks toward zero instead.
+func TestViewDropsTheMarginWhenThereIsNoRoomForIt(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := tuiModel{profiles: testProfiles(), width: 1, height: 5}
+	lines := strings.Split(m.View(), "\n")
+	if len(lines) != 5 {
+		t.Fatalf("1x5 rendered %d lines, want exactly 5", len(lines))
+	}
+	for index, line := range lines {
+		if lipgloss.Width(line) != 1 {
+			t.Fatalf("line %d is %d columns wide, want exactly 1", index, lipgloss.Width(line))
 		}
 	}
 }
