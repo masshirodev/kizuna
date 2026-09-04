@@ -211,9 +211,15 @@ func (m tuiModel) folderLines(width int) []string {
 	if folder == "" {
 		folder = "—"
 	}
+	swap, swapStyle := "off", unknownStyle
+	if m.autoSwap {
+		swap, swapStyle = "on", liveStyle
+	}
 	return []string{
 		sectionLabelStyle.Render("FOLDER") + " " + fieldValueStyle.Render(truncate(folder, max(width-7, 1))),
 		strings.Repeat(" ", 7) + dimStyle.Render("press ") + helpKeyStyle.Render("c") + dimStyle.Render(" to change"),
+		sectionLabelStyle.Render("SWAP") + "   " + swapStyle.Render(swap) +
+			dimStyle.Render("  press ") + helpKeyStyle.Render("A"),
 	}
 }
 
@@ -354,7 +360,8 @@ func (m tuiModel) recentLines(width int) []string {
 	for _, record := range m.recent {
 		lines = append(lines, m.recentRow(pen{}, record, width))
 	}
-	return append(lines, dimStyle.Render("press ")+helpKeyStyle.Render("R")+dimStyle.Render(" to resume one"))
+	return append(lines, dimStyle.Render("press ")+helpKeyStyle.Render("R")+dimStyle.Render(" to resume, ")+
+		helpKeyStyle.Render("H")+dimStyle.Render(" to hand over"))
 }
 
 // recentRow lays one recorded conversation out as when, what, and where. The
@@ -362,14 +369,24 @@ func (m tuiModel) recentLines(width int) []string {
 // exactly the row that was read.
 func (m tuiModel) recentRow(ink pen, record recordedSession, width int) string {
 	folderWidth := min(max(width/3, 10), 24)
-	titleWidth := max(width-recentTimeWidth-folderWidth-2, 8)
+	cell := max(width-recentTimeWidth-folderWidth-2, 8)
 	title, style := record.session.title, fieldValueStyle
 	if title == "" {
 		title, style = "untitled session", unknownStyle
 	}
+	// A session that was handed over carries where it went. The chain reads
+	// forwards because that is the only direction a baton pass has: the row is
+	// where the work started, not where it is now.
+	marker := ""
+	if link, passed := m.lineage[record.session.id]; passed && record.session.id != "" {
+		marker = " → " + link.TargetProfile
+	}
+	titleWidth := max(cell-lipgloss.Width(marker), 6)
 	return ink.render(dimStyle, pad(formatWhen(m.clock(), record.when), recentTimeWidth)) +
 		ink.render(dimStyle, " ") +
-		ink.render(style, pad(truncate(title, titleWidth), titleWidth)) +
+		ink.render(style, truncate(title, titleWidth)) +
+		ink.render(liveStyle, marker) +
+		ink.render(dimStyle, strings.Repeat(" ", max(cell-lipgloss.Width(truncate(title, titleWidth))-lipgloss.Width(marker), 0))) +
 		ink.render(dimStyle, " ") +
 		ink.render(dimStyle, pad(truncate(shortenHome(record.folder), folderWidth), folderWidth))
 }
@@ -517,6 +534,12 @@ func (m tuiModel) modalView(frame layout) string {
 		content = m.confirmContent(width)
 	case tuiRecent:
 		content = m.recentPicker(width)
+	case tuiHandoff:
+		content = m.handoffPicker(width)
+	case tuiHandoffTo:
+		content = m.handoffToPicker(width)
+	case tuiHandoffBrief:
+		content = m.handoffBriefContent(width)
 	case tuiConfirmInstall:
 		content = m.installContent(width)
 	case tuiConfirmSelfUpdate:

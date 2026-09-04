@@ -416,6 +416,8 @@ Use the arrow keys or `j`/`k` to select a profile:
 - `R` resumes one of the recent sessions, in the folder it ran in.
 - `h` hijacks a running instance: it opens that instance's conversation in this
   terminal, leaving the original process running.
+- `H` hands a session to another account, for when one has run out of quota.
+- `A` turns auto-swap on or off. Off by default.
 - `l` logs in to the selected profile.
 - `i` installs the selected provider's CLI, after showing the command.
 - `u` updates the selected provider CLI.
@@ -445,6 +447,76 @@ conversation it has open and the folder it was launched in, so two instances of
 the same profile can be told apart by what they are doing rather than by PID.
 The resume picker — `R` — lists transcripts rather than processes, so its rows
 are dated instead of numbered.
+
+## Handing a session to another account
+
+`H` is for the case where one CLI's limit is spent and the work is not finished.
+It reads the outgoing conversation, reduces it to a brief, and starts another
+account on that brief in the same folder.
+
+Nothing is copied into either CLI's state directory. The conversation stays
+where it was recorded; what moves is a markdown file under
+`~/.config/ai/handoffs/`.
+
+The brief has three parts:
+
+1. **What was asked** — every request you typed, in order, with the CLIs' own
+   injected blocks stripped and the half-written copy of an interrupted message
+   dropped.
+2. **Where the previous agent left off** — its last few *substantial* messages.
+   Substance is measured by length, which is crude but free: a model's final
+   messages are usually its shortest, so taking the tail by position picks the
+   line between two tool calls rather than a conclusion.
+3. **The repository, as of the handoff** — branch, uncommitted changes, diff
+   against `HEAD`, recent commits. This is read from git at handoff time rather
+   than reconstructed from the transcript, because what a transcript records
+   depends on how the previous agent happened to hold its tools. On one session
+   here, recovering the touched files from tool arguments found two of the six
+   that were actually edited, because the work went through shell heredocs and
+   no tool argument ever named a path. Git does not have that problem.
+
+The full transcript is named at the end as a path, not pasted in. That is the
+difference from handing over the profile folder and saying "continue": the next
+agent *can* read it, but does not have to. On this machine a 1140 KB transcript
+(~292k tokens) reduced to a 5 KB brief (~1.3k tokens).
+
+There is no model anywhere in that path, and that is forced rather than chosen:
+the premise is that you are out of quota, so the outgoing CLI cannot summarise
+itself, and asking the incoming one to summarise means reading the transcript —
+the cost being avoided. Extraction is mechanical. Press `e` at the confirmation
+to edit the brief before it goes; you know what mattered.
+
+Destinations are ranked by the quota window that runs out soonest, since a
+weekly allowance with room is no help at the moment the five-hour one is spent.
+An account whose quota is unknown sorts below a measured one.
+
+A handoff is recorded in `~/.config/ai/lineage.json`, and `RECENT SESSIONS`
+marks the source row with `→ <account>`. The chain reads forwards only: a
+handoff is a baton pass, not a fork, so there is never a newer branch on the
+other side to reconcile.
+
+### Auto-swap
+
+`A` toggles auto-swap, which is **off by default** and persisted in
+`profiles.json` as `settings.auto_swap`.
+
+With it on, `H` skips the destination question and sends the work to whichever
+account has the most quota left. It does **not** skip two other things:
+
+- **Which session is leaving is always asked.** That is the one thing the tool
+  cannot infer safely.
+- **The brief is still shown before anything launches.** Writing a file and
+  starting a process are different promises, and with auto-swap on this is the
+  frame where you find out where the work went.
+
+Auto-swap does not watch a running session and switch mid-flight. While a CLI
+owns the terminal the launcher is not running, so it has nothing to watch with.
+
+`H` can hand off *from* Claude Code and Codex, which are the providers whose
+transcripts are read. It can hand off *to* Claude Code and Codex, which are the
+providers whose opening-prompt syntax is known. Another provider chosen as a
+destination is refused with the brief's path, rather than launched with the
+brief silently dropped.
 
 ## Resuming and hijacking
 

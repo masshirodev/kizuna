@@ -45,6 +45,18 @@ type Profile struct {
 
 type Config struct {
 	Profiles []Profile `json:"profiles"`
+	Settings Settings  `json:"settings"`
+}
+
+// Settings are the preferences that belong to the launcher rather than to any
+// one profile.
+type Settings struct {
+	// AutoSwap hands a session over without asking where to or checking what
+	// the brief says: the account with the most quota left wins and the brief
+	// goes out as generated. Off by default, and deliberately so — the wrong
+	// destination spends the wrong subscription under the wrong identity, and
+	// that is not a mistake the tool can notice on the user's behalf.
+	AutoSwap bool `json:"auto_swap"`
 }
 
 func main() {
