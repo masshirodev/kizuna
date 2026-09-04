@@ -477,7 +477,7 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.clearStatus()
 		}
 	case "U":
-		source, err := sourceDir()
+		source, err := previewUpdateDir()
 		if err != nil {
 			m.setStatus(statusErr, err.Error())
 			return m, nil
@@ -1396,9 +1396,8 @@ func (m *tuiModel) execInstall() tea.Cmd {
 }
 
 func (m *tuiModel) execSelfUpdate() tea.Cmd {
-	source := m.source
 	m.running = true
-	return tea.Exec(&selfUpdateExecCommand{source: source}, func(err error) tea.Msg {
+	return tea.Exec(&selfUpdateExecCommand{}, func(err error) tea.Msg {
 		return processFinishedMsg{err: err}
 	})
 }
@@ -1421,7 +1420,6 @@ func (c *installExecCommand) Run() error {
 }
 
 type selfUpdateExecCommand struct {
-	source string
 	stdin  io.Reader
 	stdout io.Writer
 	stderr io.Writer
@@ -1430,8 +1428,26 @@ type selfUpdateExecCommand struct {
 func (c *selfUpdateExecCommand) SetStdin(reader io.Reader)  { c.stdin = reader }
 func (c *selfUpdateExecCommand) SetStdout(writer io.Writer) { c.stdout = writer }
 func (c *selfUpdateExecCommand) SetStderr(writer io.Writer) { c.stderr = writer }
+
+// Run resolves the checkout for real (cloning/switching branches as needed,
+// unlike the preview shown before confirmation) and, on success, reopens ai —
+// which is why this never returns on the success path.
 func (c *selfUpdateExecCommand) Run() error {
-	return runSelfUpdate(c.source, c.stdin, c.stdout, c.stderr)
+	var dir string
+	if override := strings.TrimSpace(os.Getenv(sourceDirEnv)); override != "" {
+		resolved, err := validateSourceDir(override)
+		if err != nil {
+			return err
+		}
+		dir = resolved
+	} else {
+		resolved, err := ensureRepo(c.stdout, c.stderr)
+		if err != nil {
+			return err
+		}
+		dir = resolved
+	}
+	return performSelfUpdate(dir, c.stdin, c.stdout, c.stderr)
 }
 
 type trackedExecCommand struct {
@@ -1589,7 +1605,7 @@ func (m tuiModel) selfUpdateContent(width int) []string {
 	}
 	return append(lines,
 		"",
-		confirmBodyStyle.Render("The rebuilt binary applies to the next ai you start."),
+		confirmBodyStyle.Render("ai reopens itself on the rebuilt binary when this finishes."),
 		"",
 		hintStyle.Render("y updates · n cancels"))
 }

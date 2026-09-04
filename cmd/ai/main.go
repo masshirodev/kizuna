@@ -901,7 +901,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  ai login <profile>")
 	fmt.Fprintln(w, "  ai install <profile|provider>           install the provider's own CLI")
 	fmt.Fprintln(w, "  ai update <profile>")
-	fmt.Fprintln(w, "  ai self-update [--source <checkout>]    rebuild ai from its checkout")
+	fmt.Fprintln(w, "  ai self-update                          rebuild from ~/.config/ai/repo, reopen")
 	fmt.Fprintln(w, "  ai run <profile> [arguments...]")
 	fmt.Fprintln(w, "  ai <profile> [arguments...]             shorthand for ai run")
 	fmt.Fprintln(w, "  ai env <profile>")
