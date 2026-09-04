@@ -302,10 +302,7 @@ func readClaudeTranscript(path string) (recordedSession, bool) {
 func claudeMessageText(content json.RawMessage) string {
 	var text string
 	if json.Unmarshal(content, &text) == nil {
-		if trimmed := strings.TrimSpace(text); !isInjectedPreamble(trimmed) {
-			return trimmed
-		}
-		return ""
+		return userText(text)
 	}
 	var parts []struct {
 		Type string `json:"type"`
@@ -315,21 +312,35 @@ func claudeMessageText(content json.RawMessage) string {
 		return ""
 	}
 	for _, part := range parts {
-		if trimmed := strings.TrimSpace(part.Text); trimmed != "" && !isInjectedPreamble(trimmed) {
-			return trimmed
+		if typed := userText(part.Text); typed != "" {
+			return typed
 		}
 	}
 	return ""
 }
 
-// injectedPreambles are the blocks both CLIs put in front of a conversation:
-// environment dumps, slash-command echoes, harness reminders, and caveats about
-// who actually typed what. None of them names a session, and every one of them
-// arrives as a user message — so a reader that takes the first user message
-// titles half the list "Caveat: The messages below…".
-// The two command families are matched by prefix rather than by tag: each has
+// userText reduces one message body to what the user actually typed: nothing
+// for a block the CLI injected, and the prompt alone for one the CLI wrapped
+// around it. Both providers go through it, because both wrap and both inject.
+func userText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" || isInjectedPreamble(text) {
+		return ""
+	}
+	return unwrapInjected(text)
+}
+
+// injectedPreambles are the blocks the CLIs put in front of a conversation:
+// environment dumps, slash-command echoes, harness reminders, project
+// instructions, and caveats about who actually typed what. None of them names a
+// session, and every one of them arrives as a user message — so a reader that
+// takes the first user message titles half the list "Caveat: The messages
+// below…".
+// The command families are matched by prefix rather than by tag: each has
 // several members (caveat, stdout, stderr; name, message, args) and enumerating
-// them means a new one silently becomes a session title.
+// them means a new one silently becomes a session title. The instruction dump is
+// matched short of its path for the same reason — it names whichever directory
+// the CLI was started in.
 var injectedPreambles = []string{
 	"<environment_context>",
 	"<local-command-",
@@ -337,6 +348,35 @@ var injectedPreambles = []string{
 	"<system-reminder>",
 	"<user-prompt-submit-hook>",
 	"Caveat: The messages below",
+	"# AGENTS.md instructions",
+	"<turn_aborted>",
+}
+
+// injectedWrappers are the blocks a CLI wraps around what the user typed rather
+// than sending ahead of it. They cannot be skipped the way a preamble can: the
+// prompt is inside, under a heading. Dropping the whole message loses the
+// prompt, and keeping it titles the session with the wrapper.
+var injectedWrappers = []struct{ prefix, seam string }{
+	// Codex's IDE integration leads with the open tabs and then labels the part
+	// the user actually typed.
+	{"# Context from my IDE setup:", "## My request for Codex:"},
+}
+
+// unwrapInjected returns what the user typed inside a wrapper, the text
+// unchanged when it is not one, and nothing for a wrapper with no prompt in it —
+// that block is all context, which makes it a preamble by another name.
+func unwrapInjected(text string) string {
+	for _, wrapper := range injectedWrappers {
+		if !strings.HasPrefix(text, wrapper.prefix) {
+			continue
+		}
+		_, typed, found := strings.Cut(text, wrapper.seam)
+		if !found {
+			return ""
+		}
+		return strings.TrimSpace(typed)
+	}
+	return text
 }
 
 func isInjectedPreamble(text string) bool {
@@ -452,11 +492,9 @@ func codexUserText(payload json.RawMessage) string {
 		return ""
 	}
 	for _, part := range message.Content {
-		text := strings.TrimSpace(part.Text)
-		if text == "" || isInjectedPreamble(text) {
-			continue
+		if typed := userText(part.Text); typed != "" {
+			return summariseTitle(typed)
 		}
-		return summariseTitle(text)
 	}
 	return ""
 }

@@ -252,3 +252,69 @@ func TestRecentSessionsKeepsAConversationWithNoUsableTitle(t *testing.T) {
 		t.Fatalf("recent = %+v, want an untitled but placed session", got)
 	}
 }
+
+// Codex opens practically every rollout with its project-instruction dump, so a
+// filter that only knows Claude's shapes titles the whole Codex list
+// "# AGENTS.md instructions for …" — the same string for every row, in the one
+// panel whose job is telling sessions apart.
+func TestCodexPreamblesAreSkipped(t *testing.T) {
+	for _, preamble := range []string{
+		"# AGENTS.md instructions for /home/masshiro/projects/lattice",
+		"# AGENTS.md instructions",
+		"<turn_aborted>",
+		"<environment_context>\n  <cwd>/work/hub</cwd>\n</environment_context>",
+	} {
+		if got := userText(preamble); got != "" {
+			t.Errorf("userText(%.40q) = %q, want it skipped", preamble, got)
+		}
+	}
+}
+
+// The IDE integration is the shape a prefix filter gets wrong in the other
+// direction: the prompt is inside the block, so skipping the message loses it
+// and keeping the message titles the session with the wrapper.
+func TestIDEContextIsUnwrappedRatherThanSkipped(t *testing.T) {
+	wrapped := "# Context from my IDE setup:\n\n## Open tabs:\n- main.go: cmd/ai/main.go\n\n" +
+		"## My request for Codex:\nCan we cache the rotation queue?"
+	if got := userText(wrapped); got != "Can we cache the rotation queue?" {
+		t.Fatalf("userText = %q, want only what the user typed", got)
+	}
+	// All context and no request is a preamble by another name.
+	if got := userText("# Context from my IDE setup:\n\n## Open tabs:\n- main.go: cmd/ai/main.go"); got != "" {
+		t.Fatalf("a wrapper with no request = %q, want it skipped", got)
+	}
+	// A message that merely mentions the seam is not a wrapper.
+	if got := userText("why does codex print ## My request for Codex: in the log?"); got == "" {
+		t.Fatal("a normal message containing the seam was skipped")
+	}
+}
+
+// The end-to-end version: a Codex rollout shaped like the real ones, whose
+// title has to come from inside the IDE wrapper rather than from either block
+// the CLI wrote.
+func TestCodexRolloutTitleSurvivesTheInjectedBlocks(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	dir := filepath.Join(root, appName, "profiles", "codex-work", "codex", "sessions", "2026", "09", "04")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		`{"type":"session_meta","payload":{"session_id":"abc","cwd":"/work/hub","timestamp":"2026-09-04T10:00:00.000Z"}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"# AGENTS.md instructions for /work/hub\n\n<INSTRUCTIONS>\nbe good\n</INSTRUCTIONS>"}]}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"<environment_context>\n  <cwd>/work/hub</cwd>\n</environment_context>"}]}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"# Context from my IDE setup:\n\n## Open tabs:\n- a.go: a.go\n\n## My request for Codex:\nAdd the opener button"}]}}`,
+	}
+	path := filepath.Join(dir, "rollout-2026-09-04T10-00-00-abc.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := recentSessions(Profile{Name: "codex-work", Provider: "codex"}, 0)
+	if len(got) != 1 {
+		t.Fatalf("recent = %+v, want the rollout", got)
+	}
+	if got[0].session.title != "Add the opener button" {
+		t.Fatalf("title = %q, want what the user typed inside the wrapper", got[0].session.title)
+	}
+}
