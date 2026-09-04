@@ -401,7 +401,12 @@ timestamps on the profile's own transcripts. It is deliberately not labelled as
 quota: no provider records what a limit cost at a given hour, so the histogram
 measures the one thing that is actually on disk. `RECENT SESSIONS` reads the
 same transcripts for what each conversation was about, skipping the preamble
-both CLIs write before the first thing you actually typed. `R` turns that panel
+both CLIs write before the first thing you actually typed. Two shapes are
+handled, because the CLIs use both: a block sent *ahead* of the prompt is
+skipped whole (environment dumps, harness reminders, Codex's `AGENTS.md`
+instruction dump), while a block wrapped *around* the prompt is unwrapped
+instead — Codex's IDE integration leads with your open tabs and labels the part
+you typed, so skipping the message would lose the prompt with it. `R` turns that panel
 into a picker and resumes the row you choose.
 
 Use the arrow keys or `j`/`k` to select a profile:
