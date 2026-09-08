@@ -118,13 +118,15 @@ func appCommand(args []string, cfg *Config, path string, stdout io.Writer) error
 			return errors.New("usage: ai app use <app> <member>")
 		}
 		return useApp(args[1], args[2], cfg, path, stdout)
+	case "member":
+		return memberCommand(args[1:], cfg, path, stdout)
 	case "path":
 		if len(args) != 2 {
 			return errors.New("usage: ai app path <app>")
 		}
 		return appPath(*cfg, args[1], stdout)
 	default:
-		return fmt.Errorf("usage: ai app <add|use|list|path> ...; unknown subcommand %q", args[0])
+		return fmt.Errorf("usage: ai app <add|member|use|list|path> ...; unknown subcommand %q", args[0])
 	}
 }
 
@@ -190,6 +192,123 @@ func useApp(name, member string, cfg *Config, path string, stdout io.Writer) err
 	}
 	fmt.Fprintf(stdout, "%s -> %s\n", name, member)
 	return nil
+}
+
+func memberCommand(args []string, cfg *Config, path string, stdout io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("usage: ai app member <add|remove> <app> <profile> [profile...]")
+	}
+	switch args[0] {
+	case "add":
+		if len(args) < 3 {
+			return errors.New("usage: ai app member add <app> <profile> [profile...]")
+		}
+		return addMembers(args[1], args[2:], cfg, path, stdout)
+	case "remove", "rm":
+		if len(args) < 3 {
+			return errors.New("usage: ai app member remove <app> <profile> [profile...]")
+		}
+		return removeMembers(args[1], args[2:], cfg, path, stdout)
+	default:
+		return fmt.Errorf("usage: ai app member <add|remove> ...; unknown subcommand %q", args[0])
+	}
+}
+
+// saveApp writes app back over its entry in cfg and persists the file. The
+// symlink is deliberately not touched: neither add nor remove can change which
+// member is active, so repointing it would be a no-op that rewrites a path
+// something else may be reading.
+func saveApp(app App, cfg *Config, path string) error {
+	for index := range cfg.Apps {
+		if cfg.Apps[index].Name == app.Name {
+			cfg.Apps[index] = app
+			return saveConfig(path, *cfg)
+		}
+	}
+	return fmt.Errorf("app %q not found", app.Name)
+}
+
+// addMembers widens an app's roster. Every name is checked before anything is
+// written, matching addApp: a list with one bad name leaves the config exactly
+// as it was rather than half-applied.
+func addMembers(name string, members []string, cfg *Config, path string, stdout io.Writer) error {
+	app, err := findApp(*cfg, name)
+	if err != nil {
+		return err
+	}
+	widened := append([]string(nil), app.Members...)
+	for _, member := range members {
+		if _, err := findProfile(*cfg, member); err != nil {
+			return fmt.Errorf("member %q is not a profile: %w", member, err)
+		}
+		if contains(widened, member) {
+			// Repeats within one call land here too, which is the same mistake
+			// wearing a different hat.
+			return fmt.Errorf("%q is already a member of app %q", member, name)
+		}
+		widened = append(widened, member)
+	}
+	app.Members = widened
+	if err := saveApp(app, cfg, path); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "%s -> %s (%d member(s))\n", name, app.Active, len(app.Members))
+	return nil
+}
+
+// removeMembers narrows an app's roster.
+//
+// Two removals are refused rather than resolved. Emptying an app leaves a
+// symlink resolving to a member that is no longer named, and dropping the
+// *active* member would have to silently repoint that symlink -- which is the
+// one thing an app profile promises not to do on its own, since something
+// else's static config is pointing at it. Both say what to do instead.
+func removeMembers(name string, members []string, cfg *Config, path string, stdout io.Writer) error {
+	app, err := findApp(*cfg, name)
+	if err != nil {
+		return err
+	}
+	narrowed := append([]string(nil), app.Members...)
+	for _, member := range members {
+		if !contains(narrowed, member) {
+			return fmt.Errorf("%q is not a member of app %q; members are %v", member, name, app.Members)
+		}
+		narrowed = without(narrowed, member)
+	}
+	if len(narrowed) == 0 {
+		return fmt.Errorf("app %q needs at least one member; it would have none left", name)
+	}
+	if !contains(narrowed, app.Active) {
+		return fmt.Errorf(
+			"%q is the active member of app %q; switch with \"ai app use %s <member>\" first",
+			app.Active, name, name,
+		)
+	}
+	app.Members = narrowed
+	if err := saveApp(app, cfg, path); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "%s -> %s (%d member(s))\n", name, app.Active, len(app.Members))
+	return nil
+}
+
+func contains(names []string, name string) bool {
+	for _, candidate := range names {
+		if candidate == name {
+			return true
+		}
+	}
+	return false
+}
+
+func without(names []string, name string) []string {
+	kept := make([]string, 0, len(names))
+	for _, candidate := range names {
+		if candidate != name {
+			kept = append(kept, candidate)
+		}
+	}
+	return kept
 }
 
 func listApps(cfg Config, stdout io.Writer) error {
