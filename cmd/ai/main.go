@@ -903,6 +903,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  ai profile export <profile> <bundle.age>")
 	fmt.Fprintln(w, "  ai profile import <bundle.age>")
 	fmt.Fprintln(w, "  ai app add <name> <member> [member...]  group profiles under one app name")
+	fmt.Fprintln(w, "  ai app member add <app> <profile>...    widen an app's roster")
+	fmt.Fprintln(w, "  ai app member remove <app> <profile>... narrow it; never the active member")
 	fmt.Fprintln(w, "  ai app use <app> <member>               switch which member an app resolves to")
 	fmt.Fprintln(w, "  ai app list")
 	fmt.Fprintln(w, "  ai app path <app>                       stable path to paste into another app's config")

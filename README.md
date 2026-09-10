@@ -83,6 +83,30 @@ Switching to a member of a *different* provider than shiori was last
 configured for means updating shiori's own backend selection too — that part
 is shiori's integration, not something `ai` can do on its behalf.
 
+The roster is not fixed at creation. `ai app add` names the members an app
+starts with; `ai app member` changes them afterwards:
+
+```sh
+ai app member add shiori codex-work        # one or more profiles
+ai app member remove shiori gemini-work
+```
+
+Neither touches the symlink, because neither can change which member is
+active — widening a roster that something else is already pointed at must not
+move what that path resolves to. Use `ai app use` for that, and note the
+ordering it implies: a profile has to be a member before it can be made
+active.
+
+Two removals are refused rather than resolved. **The active member** cannot be
+removed, because dropping it would force the symlink to be repointed silently,
+which is the one thing an app profile promises not to do on its own — switch
+away with `ai app use` first. And the **last** member cannot be removed, since
+an app with an empty roster still has a link resolving to a profile it no
+longer names. Both errors say which command to reach for instead.
+
+Every name is checked before anything is written, so a call naming one bad
+profile leaves the roster exactly as it was rather than half-applied.
+
 There's no live switching: `ai app use` only has to be right for shiori's
 *next* launch, not for one already running with the old target open.
 
@@ -105,7 +129,9 @@ App names and profile names share one namespace: you can't name an app the
 same as an existing profile (or vice versa), and `apps` itself is reserved.
 There's no `ai app rm` yet, matching plain profiles, which have no delete
 command either — and a profile currently used by an app can't be renamed
-from the TUI, since that would leave the app's symlink pointing nowhere.
+from the TUI, since that would leave the app's symlink pointing nowhere. For
+the same reason, a profile that is still a member has to be removed from the
+app before it can be renamed.
 
 ## Install the provider CLIs
 
