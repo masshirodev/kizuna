@@ -68,6 +68,14 @@ type instancesDescribedMsg struct {
 	instances []profileInstance
 }
 
+// sessionPreviewMsg carries one conversation read for the picker pane. It names
+// the profile as well as the session, because the read is started off the
+// keypress and the account under the cursor can change before it lands.
+type sessionPreviewMsg struct {
+	profile string
+	preview sessionPreview
+}
+
 type statusKind int
 
 const (
@@ -100,6 +108,14 @@ type tuiModel struct {
 	// processes, the other lists transcripts.
 	record     int
 	describing bool
+	// preview is the conversation shown beside the picker list, and previews is
+	// what has already been read while this picker has been open. The cache is
+	// what makes moving the cursor down and back free: a transcript re-read on
+	// every pass is the one thing a pane that follows the cursor must not do.
+	// Both are dropped when a picker opens, so a preview is never older than
+	// the picker showing it.
+	preview  sessionPreview
+	previews map[string]sessionPreview
 	// handoff is the pass being set up: the session leaving, where it is going,
 	// and the brief written for it. It is one struct rather than four fields
 	// because the three modals are one decision, and a half-built pass must not
@@ -359,6 +375,22 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				kind = statusErr
 			}
 			m.setStatus(kind, msg.status.message())
+		}
+	case sessionPreviewMsg:
+		if m.previews == nil {
+			m.previews = make(map[string]sessionPreview)
+		}
+		m.previews[msg.preview.session] = msg.preview
+		if m.mode != tuiRecent && m.mode != tuiHandoff {
+			return m, nil
+		}
+		// The cursor may have moved on while the transcript was being read, and
+		// a preview shown beside the wrong row is worse than none: it describes
+		// a session that is not the one about to be resumed.
+		if profile, ok := m.selectedProfile(); ok && profile.Name == msg.profile &&
+			m.record >= 0 && m.record < len(m.recent) &&
+			m.recent[m.record].session.id == msg.preview.session {
+			m.preview = msg.preview
 		}
 	case instancesDescribedMsg:
 		m.describing = false
@@ -655,8 +687,9 @@ func (m *tuiModel) openRecent() tea.Cmd {
 	if len(m.recent) > 0 {
 		m.record = 0
 		m.mode = tuiRecent
+		m.previews = nil
 		m.clearStatus()
-		return nil
+		return m.selectPreview()
 	}
 	args, err := resumeArgs(profile.Provider)
 	if err != nil {
@@ -675,10 +708,12 @@ func (m tuiModel) updateRecent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if m.record > 0 {
 			m.record--
+			return m, m.selectPreview()
 		}
 	case "down", "j":
 		if m.record < len(m.recent)-1 {
 			m.record++
+			return m, m.selectPreview()
 		}
 	case "enter":
 		profile, ok := m.selectedProfile()
@@ -762,8 +797,34 @@ func (m *tuiModel) openHandoff() tea.Cmd {
 	m.handoff = handoffDraft{}
 	m.record = 0
 	m.mode = tuiHandoff
+	m.previews = nil
 	m.clearStatus()
-	return nil
+	return m.selectPreview()
+}
+
+// selectPreview points the pane at the row under the cursor: at what has
+// already been read when the session is in the cache, and otherwise at a read
+// started off the keypress. Nothing about a preview is worth making a cursor
+// move wait for the disk.
+func (m *tuiModel) selectPreview() tea.Cmd {
+	profile, ok := m.selectedProfile()
+	if !ok || m.record < 0 || m.record >= len(m.recent) {
+		m.preview = sessionPreview{}
+		return nil
+	}
+	record := m.recent[m.record]
+	if cached, read := m.previews[record.session.id]; read {
+		m.preview = cached
+		return nil
+	}
+	m.preview = sessionPreview{}
+	return previewSessionCmd(profile, record)
+}
+
+func previewSessionCmd(profile Profile, record recordedSession) tea.Cmd {
+	return func() tea.Msg {
+		return sessionPreviewMsg{profile: profile.Name, preview: readSessionPreview(profile, record)}
+	}
 }
 
 // updateHandoff picks the session that is leaving, then either asks where it
@@ -774,10 +835,12 @@ func (m tuiModel) updateHandoff(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if m.record > 0 {
 			m.record--
+			return m, m.selectPreview()
 		}
 	case "down", "j":
 		if m.record < len(m.recent)-1 {
 			m.record++
+			return m, m.selectPreview()
 		}
 	case "enter":
 		profile, ok := m.selectedProfile()
@@ -1694,28 +1757,105 @@ func (m tuiModel) confirmContent(width int) []string {
 	}
 }
 
+// A picker splits into a list and a preview when the box is wide enough for
+// both halves to be read, and stays a plain list when it is not. The minimums
+// are what each half needs to say anything: a session row is a time, a title and
+// a folder side by side, and a preview much narrower than this wraps every
+// sentence into a column of single words.
+const (
+	pickerModalWidth = 112
+	pickerListMin    = 46
+	previewPaneMin   = 34
+	// previewMinRows keeps the pane worth reading when the list is short. Three
+	// recorded sessions make a three-row list, and a three-row preview beside it
+	// is a heading and one sentence.
+	previewMinRows = 12
+	// pickerListShare is how much of a split picker the list takes. The list
+	// carries three fixed columns and the preview only wraps, so the half that
+	// cannot fold gets the larger share.
+	pickerListShare = 58
+)
+
 // recentPicker offers the conversations the panel behind it is showing. It
 // names the profile because the answer is only ever that profile's own history:
 // a session id lives inside the profile that recorded it, so the picker cannot
 // hand one account another's conversation even when both worked in the folder.
-func (m tuiModel) recentPicker(width int) []string {
+func (m tuiModel) recentPicker(width, rows int) []string {
 	profile, ok := m.selectedProfile()
 	if !ok {
 		return nil
 	}
 	lines := append([]string{headerTitleStyle.Render("Resume a " + profile.Name + " session"), ""},
-		m.recentRows(width)...)
+		m.pickerBody(profile, width, rows)...)
 	return append(lines, "", hintStyle.Render("Reopens the conversation by id, in the folder it ran in."))
 }
 
-// recentRows renders the recent list with a cursor on it. Unlike the instance
-// pickers a row fits on one line, because a transcript has no PID to name it by
-// and the time already tells two of them apart.
-func (m tuiModel) recentRows(width int) []string {
-	// The modal's width covers its own padding, and the cursor bar takes two
-	// more columns before the row starts. A row sized to the full width wraps,
-	// which turns one session into two lines and the list into nonsense.
-	rowWidth := max(width-modalPadding-2, 8)
+// pickerBody is the list of sessions, with the chosen conversation read out
+// beside it when there is room for both. Below that width the preview folds away
+// rather than being squeezed, the same way the cockpit folds a column instead of
+// shrinking it: the list is what the keys act on, and it keeps the space.
+func (m tuiModel) pickerBody(profile Profile, width, rows int) []string {
+	content := max(width-modalPadding, 8)
+	if content < pickerListMin+dividerWidth+previewPaneMin {
+		return windowRows(m.recentRows(content), m.record, rows)
+	}
+	columns := content - dividerWidth
+	list := max(columns*pickerListShare/100, pickerListMin)
+	preview := columns - list
+	return joinPanes(windowRows(m.recentRows(list), m.record, rows),
+		m.previewPane(profile, preview, rows), list, preview, rows)
+}
+
+// windowRows scrolls a list longer than the space it has, keeping the row under
+// the cursor in view. A picker that cannot show the row about to be acted on is
+// worse than a short list: the keys still work, and there is nothing on screen
+// saying what they would do.
+func windowRows(rows []string, cursor, height int) []string {
+	if height < 1 || len(rows) <= height {
+		return rows
+	}
+	start := min(max(cursor-height/2, 0), len(rows)-height)
+	return rows[start : start+height]
+}
+
+// previewPane is the conversation under the cursor, or nothing at all when the
+// cursor is not on one — which is the empty-list case the picker never opens in
+// but the renderer still has to survive.
+func (m tuiModel) previewPane(profile Profile, width, rows int) []string {
+	if m.record < 0 || m.record >= len(m.recent) {
+		return nil
+	}
+	return m.previewLines(profile, m.recent[m.record], width, rows)
+}
+
+// joinPanes puts the two halves side by side at exactly rows lines, each padded
+// to its own width. The gutter is the cockpit's hairline, so a picker split in
+// two reads as the same kind of division as the frame behind it.
+func joinPanes(left, right []string, leftWidth, rightWidth, rows int) []string {
+	divider := " " + ruleStyle.Render("│") + " "
+	lines := make([]string, 0, rows)
+	for row := range rows {
+		first, second := "", ""
+		if row < len(left) {
+			first = left[row]
+		}
+		if row < len(right) {
+			second = right[row]
+		}
+		lines = append(lines, padLine(first, leftWidth)+divider+padLine(second, rightWidth))
+	}
+	return lines
+}
+
+// recentRows renders the recent list with a cursor on it, in a column of the
+// given width. Unlike the instance pickers a row fits on one line, because a
+// transcript has no PID to name it by and the time already tells two of them
+// apart.
+func (m tuiModel) recentRows(column int) []string {
+	// The cursor bar takes two columns before the row starts. A row sized to the
+	// full width wraps, which turns one session into two lines and the list into
+	// nonsense.
+	rowWidth := max(column-2, 8)
 	rows := make([]string, 0, len(m.recent))
 	for index, record := range m.recent {
 		selected := index == m.record
@@ -1732,13 +1872,13 @@ func (m tuiModel) recentRows(width int) []string {
 // handoffPicker asks which session is leaving. It is the resume picker's list
 // with a different verb on it, deliberately: the row you would have resumed is
 // the row you are handing over.
-func (m tuiModel) handoffPicker(width int) []string {
+func (m tuiModel) handoffPicker(width, rows int) []string {
 	profile, ok := m.selectedProfile()
 	if !ok {
 		return nil
 	}
 	lines := append([]string{headerTitleStyle.Render("Hand over a " + profile.Name + " session"), ""},
-		m.recentRows(width)...)
+		m.pickerBody(profile, width, rows)...)
 	hint := "The conversation is read, reduced to a brief, and left where it is."
 	if m.autoSwap {
 		hint = "Auto-swap is on: this goes to whichever account has the most quota left."

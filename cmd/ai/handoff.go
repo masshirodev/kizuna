@@ -163,7 +163,9 @@ func transcriptPath(profile Profile, record recordedSession) (string, error) {
 			}
 		}
 	default:
-		return "", fmt.Errorf("provider %q records nothing to hand off", profile.Provider)
+		// Worded for both callers: the brief and the picker's preview pane both
+		// need this file, and neither can say anything without it.
+		return "", fmt.Errorf("provider %q records no transcript to read back", profile.Provider)
 	}
 	return "", errors.New("the transcript for this session is no longer on disk")
 }

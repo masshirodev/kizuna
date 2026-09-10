@@ -536,9 +536,16 @@ const modalPadding = 4
 // place to answer from.
 func (m tuiModel) modalView(frame layout) string {
 	width := min(max(frame.width-16, 32), 72)
-	if m.mode == tuiHelp {
+	switch m.mode {
+	case tuiHelp:
 		width = min(max(frame.width-16, 32), helpModalWidth)
+	case tuiRecent, tuiHandoff:
+		width = min(max(frame.width-16, 32), pickerModalWidth)
 	}
+	// A picker's body is as tall as its list, with a floor so a short list still
+	// leaves a preview worth reading beside it, and a ceiling so the box never
+	// grows past the frame it is centred over.
+	rows := min(max(len(m.recent), previewMinRows), max(frame.height-chromeRows-6, 4))
 	content, style := []string(nil), modalStyle
 	switch m.mode {
 	case tuiForm:
@@ -550,9 +557,9 @@ func (m tuiModel) modalView(frame layout) string {
 	case tuiHijack:
 		content = m.confirmContent(width)
 	case tuiRecent:
-		content = m.recentPicker(width)
+		content = m.recentPicker(width, rows)
 	case tuiHandoff:
-		content = m.handoffPicker(width)
+		content = m.handoffPicker(width, rows)
 	case tuiHandoffTo:
 		content = m.handoffToPicker(width)
 	case tuiHandoffBrief:

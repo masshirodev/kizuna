@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -297,10 +298,9 @@ func claudeTranscripts(profile Profile) []string {
 	return paths
 }
 
-// readClaudeTranscript pulls one conversation out of a Claude log. Everything
-// needed sits on the first user entry — the folder, the time, and the first
-// thing the user typed — so reading stops there rather than decoding a
-// transcript that can run to megabytes of tool output.
+// readClaudeTranscript pulls one conversation out of a Claude log: where and
+// when it ran, and what it is called. Reading stops as soon as both are settled
+// rather than decoding a transcript that can run to megabytes of tool output.
 func readClaudeTranscript(path string) (recordedSession, bool) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -309,20 +309,47 @@ func readClaudeTranscript(path string) (recordedSession, bool) {
 	defer file.Close()
 
 	record := recordedSession{session: instanceSession{id: claudeSessionID(path)}}
-	found := false
+	found, named := false, false
+	// opening is what was first asked. It titles the row only if the log never
+	// names the conversation, so a session Claude has since named is not still
+	// listed under the sentence that started it.
+	opening := ""
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), maxTranscriptLine)
-	for lines := 0; lines < claudeTranscriptScanLines && scanner.Scan(); lines++ {
+	// The loop stops as soon as the record is settled — a placed, dated, named
+	// conversation — whichever order the two records arrive in. The check sits
+	// ahead of Scan() so a settled transcript does not read one more line, and
+	// a line here can be 300 KB.
+	for lines := 0; lines < claudeTranscriptScanLines && !(found && named) && scanner.Scan(); lines++ {
+		line := scanner.Bytes()
+		// The lines between the opening message and the conversation's name are
+		// the expensive ones — one attachment runs to tens of kilobytes, and the
+		// first forty lines of a transcript here measured 300 KB — and once the
+		// opening is recorded nothing but a name record can still change the
+		// answer. A key absent from the raw bytes cannot be set on the decoded
+		// struct, so those lines are skipped without being parsed at all.
+		if found && opening != "" && !bytes.Contains(line, claudeTitleKey) && !bytes.Contains(line, claudeAgentNameKey) {
+			continue
+		}
 		var entry struct {
 			Type      string `json:"type"`
 			CWD       string `json:"cwd"`
 			Timestamp string `json:"timestamp"`
 			IsMeta    bool   `json:"isMeta"`
+			AITitle   string `json:"aiTitle"`
+			AgentName string `json:"agentName"`
 			Message   struct {
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
 		}
-		if json.Unmarshal(scanner.Bytes(), &entry) != nil || entry.Type != "user" {
+		if json.Unmarshal(line, &entry) != nil {
+			continue
+		}
+		if name, exact := claudeConversationName(entry.Type, entry.AITitle, entry.AgentName); name != "" && !named {
+			record.session.title, named = name, exact
+			continue
+		}
+		if entry.Type != "user" {
 			continue
 		}
 		// Where and when come from the first user entry even when its text is
@@ -335,15 +362,38 @@ func readClaudeTranscript(path string) (recordedSession, bool) {
 				record.when = when
 			}
 		}
-		if entry.IsMeta {
+		if entry.IsMeta || opening != "" {
 			continue
 		}
-		if title := summariseTitle(claudeMessageText(entry.Message.Content)); title != "" {
-			record.session.title = title
-			return record, true
-		}
+		opening = summariseTitle(claudeMessageText(entry.Message.Content))
 	}
-	return record, found
+	if record.session.title == "" {
+		record.session.title = opening
+	}
+	return record, found || record.session.title != ""
+}
+
+// The two keys that carry a conversation's name, as they appear on the wire.
+var (
+	claudeTitleKey     = []byte(`"aiTitle"`)
+	claudeAgentNameKey = []byte(`"agentName"`)
+)
+
+// claudeConversationName is the name Claude Code gave a conversation itself,
+// which is what its own UI shows and therefore what the picker should show
+// instead of the sentence the session happened to open with. Two records carry
+// one: `ai-title` is the phrase written when the conversation is named, and
+// `agent-name` is the slug an agent session runs under. The first is the name
+// proper and ends the search; the second is only better than the opening
+// message, so it is kept and scanning continues in case a title follows.
+func claudeConversationName(entryType, aiTitle, agentName string) (string, bool) {
+	switch entryType {
+	case "ai-title":
+		return strings.TrimSpace(aiTitle), true
+	case "agent-name":
+		return strings.TrimSpace(agentName), false
+	}
+	return "", false
 }
 
 // claudeMessageText flattens the two shapes a Claude message body takes: a bare
@@ -445,9 +495,12 @@ func claudeSessionID(path string) string {
 
 const (
 	// claudeTranscriptScanLines bounds how far into a transcript the first user
-	// entry is looked for. Claude writes several settings records before it,
-	// never a long run of them.
-	claudeTranscriptScanLines = 40
+	// entry and the conversation's name are looked for. It is wider than the
+	// preamble needs because the name is written after the first exchange, not
+	// before it — measured on this machine at lines 18 to 34 — and a transcript
+	// that has both is abandoned as soon as it has given them up, so the bound
+	// only ever costs the short sessions that were never named.
+	claudeTranscriptScanLines = 120
 	maxTranscriptLine         = 16 * 1024 * 1024
 )
 
