@@ -188,6 +188,87 @@ func writeTranscript(t *testing.T, root, profile, project, session, cwd, timesta
 	}
 }
 
+// writeTranscriptLines puts one Claude conversation log on disk verbatim, for
+// the cases that care about what surrounds the first user entry rather than
+// about the entry itself.
+func writeTranscriptLines(t *testing.T, root, profile, project, session string, lines ...string) {
+	t.Helper()
+	dir := filepath.Join(root, appName, "profiles", profile, "claude", "projects", project)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, session+".jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Claude Code names a conversation itself a few turns in and shows that name in
+// its own UI. A picker that titled the row with the opening sentence instead
+// disagreed with the CLI about what the same session was called.
+func TestClaudeTranscriptPrefersTheNameClaudeGaveTheConversation(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	writeTranscriptLines(t, root, "claude-personal", "-work-hub", "sid",
+		`{"type":"user","cwd":"/work/hub","timestamp":"2026-09-04T11:30:00Z","message":{"content":[{"type":"text","text":"the resume dialog should show a preview"}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"on it"}]}}`,
+		`{"type":"ai-title","aiTitle":"Resume picker preview pane","sessionId":"sid"}`,
+	)
+
+	got := recentSessions(Profile{Name: "claude-personal", Provider: "claude"}, 0)
+	if len(got) != 1 {
+		t.Fatalf("recent = %+v, want one record", got)
+	}
+	if got[0].session.title != "Resume picker preview pane" {
+		t.Fatalf("title = %q, want the name Claude gave the conversation", got[0].session.title)
+	}
+	if got[0].folder != "/work/hub" || got[0].when.IsZero() {
+		t.Fatalf("record = %+v, want the folder and time from the first user entry", got[0])
+	}
+}
+
+// A title written after an agent name replaces it: the slug is a name too, but
+// the title is the one the CLI shows.
+func TestClaudeTranscriptPrefersATitleOverAnAgentName(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	writeTranscriptLines(t, root, "claude-personal", "-work-hub", "sid",
+		`{"type":"user","cwd":"/work/hub","timestamp":"2026-09-04T11:30:00Z","message":{"content":[{"type":"text","text":"opening message"}]}}`,
+		`{"type":"agent-name","agentName":"resume-picker-preview","sessionId":"sid"}`,
+		`{"type":"ai-title","aiTitle":"Resume picker preview pane","sessionId":"sid"}`,
+	)
+
+	got := recentSessions(Profile{Name: "claude-personal", Provider: "claude"}, 0)
+	if len(got) != 1 || got[0].session.title != "Resume picker preview pane" {
+		t.Fatalf("recent = %+v, want the title rather than the agent slug", got)
+	}
+}
+
+// An agent session carries a slug and often no title at all. It still names the
+// conversation better than the sentence it opened with.
+func TestClaudeTranscriptFallsBackToAnAgentNameThenToTheOpeningMessage(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	writeTranscriptLines(t, root, "claude-personal", "-work-hub", "named",
+		`{"type":"user","cwd":"/work/hub","timestamp":"2026-09-04T11:30:00Z","message":{"content":[{"type":"text","text":"opening message"}]}}`,
+		`{"type":"agent-name","agentName":"resume-picker-preview","sessionId":"named"}`,
+	)
+	writeTranscriptLines(t, root, "claude-personal", "-work-hub", "unnamed",
+		`{"type":"user","cwd":"/work/hub","timestamp":"2026-09-04T10:30:00Z","message":{"content":[{"type":"text","text":"opening message"}]}}`,
+	)
+
+	got := recentSessions(Profile{Name: "claude-personal", Provider: "claude"}, 0)
+	if len(got) != 2 {
+		t.Fatalf("recent = %+v, want two records", got)
+	}
+	if got[0].session.title != "resume-picker-preview" {
+		t.Fatalf("named session title = %q, want the agent slug", got[0].session.title)
+	}
+	if got[1].session.title != "opening message" {
+		t.Fatalf("unnamed session title = %q, want the opening message", got[1].session.title)
+	}
+}
+
 func TestRecentSessionsReadsCodexRollouts(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", root)

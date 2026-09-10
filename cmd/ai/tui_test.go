@@ -888,6 +888,134 @@ func TestResumePickerOffersTheRecordedSessions(t *testing.T) {
 	}
 }
 
+// The picker is two panes on a terminal with room for both: the list on the
+// left and the conversation under the cursor on the right.
+func TestResumePickerShowsTheConversationBesideTheList(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m.recent = recentTestSessions(t.TempDir())
+	m.mode = tuiRecent
+	m.preview = sessionPreview{session: "aaa", messages: []handoffMessage{
+		{fromUser: true, text: "rename the contact form"},
+		{fromUser: false, text: "the form is in the detail panel"},
+	}}
+	view := m.View()
+	for _, want := range []string{"PREVIEW", "Edit contacts", "you", "rename the contact form", "codex", "the form is in the detail panel"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("the preview pane is missing %q:\n%s", want, view)
+		}
+	}
+}
+
+// Below the width where both halves can be read the preview folds away rather
+// than squeezing the list, the same way the cockpit folds a column.
+func TestResumePickerFoldsThePreviewOnANarrowTerminal(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.width, m.height = 80, 30
+	m.cursor = 1
+	m.recent = recentTestSessions(t.TempDir())
+	m.mode = tuiRecent
+	m.preview = sessionPreview{session: "aaa", messages: []handoffMessage{{fromUser: true, text: "rename the contact form"}}}
+	view := m.View()
+	if strings.Contains(view, "PREVIEW") {
+		t.Fatalf("a terminal too narrow for both halves kept the preview:\n%s", view)
+	}
+	if !strings.Contains(view, "Edit contacts") {
+		t.Fatalf("the list itself was lost:\n%s", view)
+	}
+}
+
+// Moving the cursor reads the row it lands on, off the keypress. A row already
+// read is shown from the cache instead, so bouncing up and down a list does not
+// re-read a transcript per press.
+func TestMovingTheResumeCursorReadsTheRowItLandsOnOnce(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m.recent = recentTestSessions(t.TempDir())
+	m.mode = tuiRecent
+
+	updated, cmd := m.updateRecent(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	got := updated.(tuiModel)
+	if cmd == nil || !got.preview.pending() {
+		t.Fatalf("moving down did not start a read: cmd %v, preview %+v", cmd != nil, got.preview)
+	}
+
+	read := sessionPreview{session: "bbb", messages: []handoffMessage{{fromUser: true, text: "the status card"}}}
+	updated, _ = got.Update(sessionPreviewMsg{profile: "codex-work", preview: read})
+	got = updated.(tuiModel)
+	if got.preview.session != "bbb" {
+		t.Fatalf("preview = %+v, want the row under the cursor", got.preview)
+	}
+
+	updated, _ = got.updateRecent(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	updated, cmd = updated.(tuiModel).updateRecent(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	got = updated.(tuiModel)
+	if cmd != nil {
+		t.Fatal("a row already read was read again")
+	}
+	if got.preview.session != "bbb" {
+		t.Fatalf("preview = %+v, want the cached read", got.preview)
+	}
+}
+
+// A read lands after the keypress that started it, by which time the cursor may
+// have moved. A preview shown beside the wrong row describes a session that is
+// not the one about to be resumed.
+func TestAPreviewLandingLateIsNotShownBesideAnotherRow(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m.recent = recentTestSessions(t.TempDir())
+	m.mode = tuiRecent
+
+	updated, _ := m.Update(sessionPreviewMsg{profile: "codex-work",
+		preview: sessionPreview{session: "bbb", messages: []handoffMessage{{fromUser: true, text: "the status card"}}}})
+	got := updated.(tuiModel)
+	if !got.preview.pending() {
+		t.Fatalf("preview = %+v, want the stale read left out of the pane", got.preview)
+	}
+	if _, cached := got.previews["bbb"]; !cached {
+		t.Fatal("the stale read was thrown away rather than kept for the row it belongs to")
+	}
+}
+
+// The handoff picker chooses from the same list and therefore reads the same
+// way: the session about to be reduced to a brief is the one shown.
+func TestHandoffPickerShowsTheConversationBesideTheList(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m.recent = recentTestSessions(t.TempDir())
+	m.mode = tuiHandoff
+	m.preview = sessionPreview{session: "aaa", messages: []handoffMessage{{fromUser: true, text: "rename the contact form"}}}
+	view := m.View()
+	for _, want := range []string{"Hand over a codex-work session", "PREVIEW", "rename the contact form"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("the handoff picker is missing %q:\n%s", want, view)
+		}
+	}
+}
+
+// A list longer than the pane scrolls to keep the row the keys act on in view.
+func TestPickerScrollsToTheRowUnderTheCursor(t *testing.T) {
+	rows := []string{"a", "b", "c", "d", "e", "f"}
+	if got := windowRows(rows, 0, 3); len(got) != 3 || got[0] != "a" {
+		t.Fatalf("window at the top = %q", got)
+	}
+	if got := windowRows(rows, 5, 3); len(got) != 3 || got[2] != "f" {
+		t.Fatalf("window at the bottom = %q", got)
+	}
+	if got := windowRows(rows, 3, 3); len(got) != 3 || got[1] != "d" {
+		t.Fatalf("window in the middle = %q, want the cursor row on it", got)
+	}
+	if got := windowRows(rows, 0, 9); len(got) != len(rows) {
+		t.Fatalf("a list that fits was windowed anyway: %q", got)
+	}
+}
+
 // With nothing recorded — an account that has not run yet, or a provider whose
 // transcripts are not read — R has to stay the key that resumes rather than
 // opening an empty box.

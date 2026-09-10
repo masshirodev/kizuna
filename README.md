@@ -531,6 +531,10 @@ are dated instead of numbered.
 It reads the outgoing conversation, reduces it to a brief, and starts another
 account on that brief in the same folder.
 
+Which session is leaving is chosen from the same two-pane picker `R` uses (see
+[The picker is two panes](#the-picker-is-two-panes)), so the conversation about
+to be reduced to a brief is readable before it is.
+
 Nothing is copied into either CLI's state directory. The conversation stays
 where it was recorded; what moves is a markdown file under
 `~/.config/ai/handoffs/`.
@@ -604,6 +608,37 @@ belongs to, so resuming from anywhere else reaches a different conversation or
 none at all. A recorded folder that has since been moved or deleted is reported
 rather than quietly swapped for the current launch folder.
 
+### The picker is two panes
+
+`R` and `H` open the same list, and both put the conversation under the cursor
+in a pane beside it — the list on the left, the session's opening exchange on
+the right, the way a file picker shows the file it is hovering. A title says
+what a conversation was called; it does not say whether it is the one being
+looked for, and two sessions in the same folder on the same afternoon are told
+apart by what was said in them.
+
+What the pane reads is bounded twice, because it follows the cursor and the
+panel behind it already scans every transcript on every refresh. Only the
+opening turns are read, and only the first several hundred runes of each; a
+conversation that continues past what fits ends in `…`. The opening rather than
+the tail, because what a session was for is settled in its first exchanges,
+while reaching the tail of a six-megabyte transcript means reading all of it.
+
+The read happens off the keypress, so moving the cursor never waits on the disk;
+the pane says `reading the transcript…` until it lands. A row already read is
+shown from a cache that lives as long as the picker, so moving up and down a
+list re-reads nothing. A read that lands after the cursor has moved on is filed
+against the row it belongs to rather than shown beside another one.
+
+Below the width where both halves can be read the preview folds away and the
+picker is a plain list, the same way the cockpit folds a column rather than
+squeezing it. A list longer than the pane scrolls to keep the row the keys act
+on in view.
+
+The pane is filled from the same transcripts the handoff brief is built from, so
+it shows nothing for a provider whose conversations are not read back —
+OpenCode and Antigravity say so instead of sitting on `reading…`.
+
 This is a wider offer than the provider's own resume flow, which only ever sees
 the folder it was started in. The panel has read every folder the account has
 worked in, so a conversation from another project is one keypress away instead
@@ -619,6 +654,15 @@ transcript file per conversation, which is what gets parsed for a title.
 OpenCode keeps its own SQLite database (`opencode.db`) with title, folder, and
 timestamp as plain columns — no parsing needed, and resuming picks the exact
 conversation by id (`opencode --session <id>`), the same as Codex and Claude.
+
+**A row is titled with the conversation's own name where there is one.** Claude
+Code names a conversation itself a few turns in and writes that name into the
+transcript (`ai-title`, and `agent-name` for an agent session); that is the name
+its own UI shows, so it is the name the row carries. Titling the row with the
+opening sentence instead left the launcher and the CLI disagreeing about what
+the same session was called. The opening sentence is still the fallback, for a
+session too short to have been named and for Codex, which records no name at
+all.
 Antigravity is not read yet: its conversation store is a per-conversation
 SQLite database whose readable metadata carries ids but not a title, and the
 title lives in a protobuf blob with no published schema — resuming a specific
