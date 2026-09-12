@@ -395,6 +395,146 @@ built in, same as the managed clone. Unlike the managed clone, an
 `AI_SOURCE_DIR` override is never switched to `main` on your behalf — it is
 there so you can point at whatever branch you are testing.
 
+## Clone a profile
+
+A second account for the same provider usually wants the first one's setup: the
+same MCP servers, the same skills, the same settings, the same default
+arguments. `ai profile clone` makes that profile without making it by hand.
+
+```sh
+ai profile clone max spare
+# cloned max into spare (claude)
+# configuration copied; credentials were not — run 'ai login spare'
+```
+
+**A clone copies the setup, not the account.** That is the whole decision this
+command makes, and it follows from what the launcher is for: two profiles exist
+to keep two accounts apart, and a clone carrying the credential file would hand
+one refresh token to two directories and let the provider's own rotation
+invalidate whichever was used second. The new profile starts logged out.
+
+What "configuration" means is an allowlist per provider, not a list of
+exclusions — a state directory also holds conversation history, caches, machine
+identifiers, and the credential file, and forgetting to exclude one of those
+costs more than a clone arriving without some setting nobody noticed:
+
+| Provider | Copied |
+| -------- | ------ |
+| Claude Code | `settings.json`, `skills/`, `agents/`, `commands/`, `hooks/`, `rules/`, `output-styles/`, `plugins/config.json`, `CLAUDE.md`, `AGENTS.md`, and the `mcpServers` key of `.claude.json` |
+| Codex | `config.toml`, `skills/`, `prompts/`, `rules/`, `hooks.json`, `AGENTS.md` |
+| OpenCode | the whole `config/opencode` tree, less `node_modules` |
+| Antigravity | `config/config.json`, `config/mcp_config.json`, `antigravity-cli/settings.json` |
+
+Claude Code's `.claude.json` is the one file copied in part rather than whole.
+It holds the MCP servers, but the rest of it is the account — user id, OAuth
+record, per-project history — so only `mcpServers` crosses.
+
+Symlinks are recreated as symlinks. A profile whose `AGENTS.md` points at your
+dotfiles repo gets a clone that tracks the same file, rather than a copy that
+silently stops following it.
+
+`--with-state` copies everything instead, credentials and history included,
+minus the lock and instance bookkeeping that describes processes running right
+now. It exists for the case where the export/import round trip below is not
+what you want, and it says what it did rather than being the quiet default:
+
+```sh
+ai profile clone max spare --with-state
+# credentials came with it; do not run both accounts at once
+```
+
+Cloning is refused while the source profile is running, for the same reason
+export is: a config file read while its CLI is writing one is a clone of a
+half-written file.
+
+## Copy MCP servers and skills between profiles
+
+An MCP server is configured once and then wanted everywhere — the same
+endpoint, the same token, in every account that has to reach it. Skills are the
+same story with folders instead of settings. Both move between profiles without
+touching anything else those profiles hold:
+
+```sh
+ai mcp list max
+# context7           http    https://mcp.context7.com/mcp
+# lattice            http    https://apps.example/api/mcp
+ai mcp copy max pro context7 lattice     # named servers
+ai mcp copy max pro                      # or all of them
+
+ai skill list max
+ai skill copy max pro release
+```
+
+An entry the destination already has is refused rather than overwritten, and
+the error names `--replace`, which is how you say you meant it. Every name is
+checked before the first one is written, so a call naming one server that is
+already there leaves the destination exactly as it was rather than half applied.
+Both commands are refused while the destination is running: its CLI reads that
+config at startup and rewrites parts of it as it goes, and editing the file
+underneath a live process is a race whose loser is whichever wrote first.
+
+### The server is translated, not pasted
+
+Each CLI writes MCP configuration in its own syntax, in its own file, so what
+crosses between two profiles cannot be a fragment of one provider's config — it
+has to be the server itself. `ai` reads whichever of these the source keeps, and
+writes whichever the destination expects:
+
+| Provider | File | Key |
+| -------- | ---- | --- |
+| Claude Code | `claude/.claude.json` | `mcpServers` |
+| Codex | `codex/config.toml` | `[mcp_servers.<name>]` |
+| OpenCode | `config/opencode/opencode.json[c]` | `mcp` |
+| Antigravity | `home/.gemini/config/mcp_config.json` | `mcpServers` |
+
+A stdio server carries its command, arguments, and environment; a remote one
+carries its URL and headers. Nothing else does: a setting invented for one CLI
+means nothing in another, and guessing at a translation is how a copy silently
+changes what a server does. Copying a Codex server leaves its per-tool approval
+settings behind for exactly that reason.
+
+Two consequences worth knowing. Every other key of the destination's file is
+left byte for byte as it was, in the order it was already in — `.claude.json` is
+Claude Code's own ninety-kilobyte state file, and a copy that reordered it would
+be impossible to read back to check what it actually changed. And an
+`opencode.jsonc` with comments in it is **refused** rather than rewritten,
+because `encoding/json` cannot write those comments back and deleting them
+silently is worse than not copying.
+
+DeepSeek profiles are refused for both: `ai` sets no XDG directories for them,
+so they read the machine's ordinary OpenCode config rather than an isolated one
+this launcher may write into.
+
+### Skills are files, and cross unchanged
+
+A skill is a folder with a `SKILL.md` in it, which is the one thing Claude Code,
+Codex, and OpenCode all agree on — so unlike an MCP server, a skill needs no
+translation. Only the folder differs: `claude/skills/`, `codex/skills/`,
+`config/opencode/skills/`. Antigravity has no skill mechanism and is refused.
+
+A directory without a `SKILL.md` is not a skill and is passed over — Codex keeps
+its built-ins under a dotted folder beside the real ones. A replacement removes
+the old folder first, so a replaced skill cannot end up with a `SKILL.md` from
+one and half the scripts of another.
+
+This does copy files, and the files are whatever the skill's author put in them,
+scripts included. `ai` moves them between two directories that already belong to
+you; it does not read them, and it is not a way to accept a skill from anyone
+else.
+
+### From the TUI
+
+`C` clones the selected profile after asking for a name. `m` and `s` install
+MCP servers and skills **into** it from another profile — the selected profile
+is the destination, the same way `l` logs into it and `u` updates its CLI.
+
+Both open the same two frames: a list of the profiles with something to lend,
+and then a multi-select of what that profile has. Space ticks a row, `a` ticks
+every row the destination does not already have, and Enter installs the ticked
+ones. A row the destination already has is shown as `installed` and left
+unticked by `a`, so replacing one is something done on purpose to a row you
+looked at rather than a side effect of a bulk key.
+
 ## Move a profile to another computer
 
 Install [`age`](https://age-encryption.org/) on both computers, then export the
@@ -440,8 +580,8 @@ the screen says which account is in play rather than leaving it to the row
 highlight, and it carries the launch folder and any pending update.
 
 Everything else — the profile editor, the folder and argument prompts, the
-delete confirmation, and the instance pickers — opens as a box over that screen,
-so the cockpit stays put while you answer.
+delete confirmation, the clone and copy pickers, and the instance pickers —
+opens as a box over that screen, so the cockpit stays put while you answer.
 
 Narrow terminals fold columns away rather than squeezing them: under 118 columns
 the live panel merges into the middle, and under 78 the whole thing stacks into
@@ -528,6 +668,9 @@ Use the arrow keys or `j`/`k` to select a profile:
 - `c` changes the folder used for subsequent CLI launches.
 - `a` adds a profile.
 - `e` edits its name, provider, command, default arguments, or note.
+- `C` clones it: a new profile with the same setup and no credentials.
+- `m` installs MCP servers into it from another profile.
+- `s` installs skills into it from another profile.
 - `r` refreshes locally cached usage percentages and re-runs the update check.
 - `x` deletes it and its isolated state after confirmation.
 - `K` selects a running instance to stop; Enter stops that instance, while

@@ -100,6 +100,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return profileCommand(args[1:], &cfg, configPath, stdout)
 	case "app":
 		return appCommand(args[1:], &cfg, configPath, stdout)
+	case "mcp":
+		return mcpCommand(args[1:], cfg, stdout)
+	case "skill":
+		return skillCommand(args[1:], cfg, stdout)
 	case "run":
 		if len(args) < 2 {
 			return errors.New("usage: ai run <profile> [command arguments...]")
@@ -210,6 +214,13 @@ func profileCommand(args []string, cfg *Config, path string, stdout io.Writer) e
 			return errors.New("usage: ai profile import <bundle.age>")
 		}
 		return importProfile(args[1], cfg, path, stdout)
+	}
+	if args[0] == "clone" {
+		rest, withState := takeFlag(args[1:], "--with-state")
+		if len(rest) != 2 {
+			return errors.New("usage: ai profile clone <profile> <name> [--with-state]")
+		}
+		return cloneProfile(rest[0], rest[1], withState, cfg, path, stdout)
 	}
 	if args[0] != "add" || len(args) < 3 || len(args) > 4 {
 		return errors.New("usage: ai profile add <name> <provider> [command]")
@@ -902,12 +913,18 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  ai profile list")
 	fmt.Fprintln(w, "  ai profile export <profile> <bundle.age>")
 	fmt.Fprintln(w, "  ai profile import <bundle.age>")
+	fmt.Fprintln(w, "  ai profile clone <profile> <name> [--with-state]")
+	fmt.Fprintln(w, "                                          same setup, no credentials")
 	fmt.Fprintln(w, "  ai app add <name> <member> [member...]  group profiles under one app name")
 	fmt.Fprintln(w, "  ai app member add <app> <profile>...    widen an app's roster")
 	fmt.Fprintln(w, "  ai app member remove <app> <profile>... narrow it; never the active member")
 	fmt.Fprintln(w, "  ai app use <app> <member>               switch which member an app resolves to")
 	fmt.Fprintln(w, "  ai app list")
 	fmt.Fprintln(w, "  ai app path <app>                       stable path to paste into another app's config")
+	fmt.Fprintln(w, "  ai mcp list <profile>")
+	fmt.Fprintln(w, "  ai mcp copy <source> <destination> [server...] [--replace]")
+	fmt.Fprintln(w, "  ai skill list <profile>")
+	fmt.Fprintln(w, "  ai skill copy <source> <destination> [skill...] [--replace]")
 	fmt.Fprintln(w, "  ai login <profile>")
 	fmt.Fprintln(w, "  ai install <profile|provider>           install the provider's own CLI")
 	fmt.Fprintln(w, "  ai update <profile>")
