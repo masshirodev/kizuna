@@ -30,6 +30,9 @@ const (
 	tuiHandoffTo
 	tuiHandoffBrief
 	tuiParams
+	tuiClone
+	tuiShareFrom
+	tuiShareItems
 	tuiConfirmInstall
 	tuiConfirmSelfUpdate
 	tuiHelp
@@ -120,7 +123,13 @@ type tuiModel struct {
 	// and the brief written for it. It is one struct rather than four fields
 	// because the three modals are one decision, and a half-built pass must not
 	// survive an escape out of the middle of it.
-	handoff  handoffDraft
+	handoff handoffDraft
+	// clone is the name being typed for a copy of the selected profile, and
+	// share is a copy of MCP servers or skills being set up between two of
+	// them. Both are kept on the model rather than passed between modes so an
+	// escape out of the middle of one leaves nothing half-built behind.
+	clone    string
+	share    shareDraft
 	autoSwap bool
 	lineage  map[string]lineageLink
 	update   updateStatus
@@ -331,6 +340,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateHandoffBrief(msg)
 		case tuiParams:
 			return m.updateParams(msg)
+		case tuiClone:
+			return m.updateClone(msg)
+		case tuiShareFrom:
+			return m.updateShareFrom(msg)
+		case tuiShareItems:
+			return m.updateShareItems(msg)
 		case tuiConfirmInstall:
 			return m.updateInstall(msg)
 		case tuiConfirmSelfUpdate:
@@ -479,6 +494,20 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "A":
 		m.toggleAutoSwap()
+	case "C":
+		if hasSelection {
+			m.mode = tuiClone
+			m.clone = ""
+			m.clearStatus()
+		}
+	case "m":
+		if hasSelection {
+			m.openShare(shareMCP)
+		}
+	case "s":
+		if hasSelection {
+			m.openShare(shareSkills)
+		}
 	case "p":
 		if hasSelection {
 			m.mode = tuiParams
@@ -2058,6 +2087,7 @@ func helpSections() [][]helpSection {
 				{"/", "filter by name or provider"},
 				{"a", "add"},
 				{"e", "edit"},
+				{"C", "clone its setup"},
 				{"x", "delete"},
 			}},
 		},
@@ -2067,6 +2097,10 @@ func helpSections() [][]helpSection {
 				{"i", "install the CLI"},
 				{"u", "update the CLI"},
 				{"K", "stop a running instance"},
+			}},
+			{"FROM ANOTHER PROFILE", []helpEntry{
+				{"m", "install MCP servers"},
+				{"s", "install skills"},
 			}},
 			{"AI-SESSION", []helpEntry{
 				{"A", "auto-swap on handoff"},
@@ -2108,6 +2142,12 @@ func (m tuiModel) helpEntries() []helpEntry {
 		return []helpEntry{{"↵", "open it there"}, {"e", "edit the brief"}, {"esc", "keep the brief"}}
 	case m.mode == tuiParams:
 		return []helpEntry{{"↵", "run"}, {"ctrl-u", "clear"}, {"esc", "cancel"}}
+	case m.mode == tuiClone:
+		return []helpEntry{{"↵", "clone"}, {"ctrl-u", "clear"}, {"esc", "cancel"}}
+	case m.mode == tuiShareFrom:
+		return []helpEntry{{"↑↓/jk", "choose profile"}, {"↵", "see what it has"}, {"esc", "cancel"}}
+	case m.mode == tuiShareItems:
+		return []helpEntry{{"↑↓/jk", "move"}, {"space", "tick"}, {"a", "tick new"}, {"↵", "install"}, {"esc", "cancel"}}
 	case m.mode == tuiConfirmInstall:
 		return []helpEntry{{"y", "install"}, {"n/esc", "cancel"}}
 	case m.mode == tuiConfirmSelfUpdate:
@@ -2130,6 +2170,8 @@ func (m tuiModel) helpEntries() []helpEntry {
 			{"c", "folder"},
 			{"r", "refresh"},
 			{"a e x", "add edit delete"},
+			{"C", "clone"},
+			{"m s", "mcp skills"},
 			{"K", "stop"},
 		}
 	}
@@ -2203,4 +2245,451 @@ func sortedProfiles(profiles []Profile) []Profile {
 	result := append([]Profile(nil), profiles...)
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result
+}
+
+// --- Cloning a profile, and lending what is in one -------------------------
+
+// shareKind is what a copy between two profiles is carrying. The two kinds go
+// through the same three frames — pick a source, tick what to take, apply —
+// because from the keyboard they are the same question asked about different
+// things, and the differences between them are all below this file.
+type shareKind int
+
+const (
+	shareMCP shareKind = iota
+	shareSkills
+)
+
+func (kind shareKind) noun() string {
+	if kind == shareSkills {
+		return "skill"
+	}
+	return "MCP server"
+}
+
+func (kind shareKind) supported(profile Profile) bool {
+	if kind == shareSkills {
+		return supportsSkills(profile)
+	}
+	return supportsMCP(profile)
+}
+
+// read lists what one profile has of this kind, already in picker shape. The
+// detail line is what makes a row worth reading: an MCP server is identified by
+// where it points, a skill by what it says it is for.
+func (kind shareKind) read(profile Profile) ([]shareItem, error) {
+	if kind == shareSkills {
+		skills, err := readSkills(profile)
+		if err != nil {
+			return nil, err
+		}
+		items := make([]shareItem, 0, len(skills))
+		for _, entry := range skills {
+			items = append(items, shareItem{name: entry.name, detail: entry.description})
+		}
+		return items, nil
+	}
+	servers, err := readMCPServers(profile)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]shareItem, 0, len(servers))
+	for _, server := range servers {
+		items = append(items, shareItem{name: server.Name, detail: server.transport() + " · " + server.endpoint()})
+	}
+	return items, nil
+}
+
+func (kind shareKind) copy(source, destination Profile, names []string) ([]string, error) {
+	if kind == shareSkills {
+		return copySkills(source, destination, names, true)
+	}
+	return copyMCPServers(source, destination, names, true)
+}
+
+// shareDraft is a copy being set up: what kind of thing, which profiles could
+// lend one, and which of the chosen profile's items are ticked. The destination
+// is not in here — it is whichever profile the cursor is on, the same profile
+// every other key on the list acts on.
+type shareDraft struct {
+	kind    shareKind
+	sources []shareSource
+	source  int
+	items   []shareItem
+	item    int
+}
+
+// shareSource is one profile that has something to lend, with how much of it.
+// The count is taken when the picker opens rather than when a row is drawn:
+// rendering a frame is not the place to reread four config files, and the
+// cockpit redraws on every keypress.
+type shareSource struct {
+	profile Profile
+	count   int
+}
+
+// shareItem is one row of the multi-select.
+type shareItem struct {
+	name   string
+	detail string
+	// present is whether the destination already has one by this name. It is
+	// shown rather than filtered out, because "you already have this" is an
+	// answer the picker was opened to get.
+	present bool
+	chosen  bool
+}
+
+// shareSource is the profile lending, when one has been chosen. Both the
+// renderer and the apply step index the same slice, and neither should be the
+// place a stale index becomes a panic.
+func (m tuiModel) shareSource() (Profile, bool) {
+	if m.share.source < 0 || m.share.source >= len(m.share.sources) {
+		return Profile{}, false
+	}
+	return m.share.sources[m.share.source].profile, true
+}
+
+func (draft shareDraft) chosenNames() []string {
+	var names []string
+	for _, item := range draft.items {
+		if item.chosen {
+			names = append(names, item.name)
+		}
+	}
+	return names
+}
+
+// openShare starts a copy into the selected profile. Everything that would make
+// the copy impossible is settled here, before a picker offers a choice that
+// cannot be carried out.
+func (m *tuiModel) openShare(kind shareKind) {
+	destination, ok := m.selectedProfile()
+	if !ok {
+		return
+	}
+	if !kind.supported(destination) {
+		m.setStatus(statusErr, fmt.Sprintf("%s (%s) keeps no %ss this launcher can write",
+			destination.Name, destination.Provider, kind.noun()))
+		return
+	}
+	if profileIsRunning(destination) {
+		m.setStatus(statusErr, "cannot write to a running profile's configuration")
+		return
+	}
+	sources := shareSources(m.profiles, destination, kind)
+	if len(sources) == 0 {
+		m.setStatus(statusErr, "no other profile has a "+kind.noun()+" to lend")
+		return
+	}
+	m.share = shareDraft{kind: kind, sources: sources}
+	m.mode = tuiShareFrom
+	m.clearStatus()
+}
+
+// shareSources lists the profiles with something of this kind to give. A
+// profile with none is left out rather than offered and then found empty: the
+// picker's job is to narrow the choice, and a row that leads nowhere widens it.
+func shareSources(profiles []Profile, destination Profile, kind shareKind) []shareSource {
+	var sources []shareSource
+	for _, profile := range profiles {
+		if profile.Name == destination.Name || !kind.supported(profile) {
+			continue
+		}
+		items, err := kind.read(profile)
+		if err != nil || len(items) == 0 {
+			continue
+		}
+		sources = append(sources, shareSource{profile: profile, count: len(items)})
+	}
+	return sources
+}
+
+func (m tuiModel) updateShareFrom(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q", "ctrl+c":
+		m.mode = tuiList
+		m.clearStatus()
+	case "up", "k":
+		if m.share.source > 0 {
+			m.share.source--
+		}
+	case "down", "j":
+		if m.share.source < len(m.share.sources)-1 {
+			m.share.source++
+		}
+	case "enter":
+		if err := m.loadShareItems(); err != nil {
+			m.setStatus(statusErr, err.Error())
+			return m, nil
+		}
+		m.mode = tuiShareItems
+		m.clearStatus()
+	}
+	return m, nil
+}
+
+// loadShareItems fills the multi-select from the chosen source, marking the
+// rows the destination already has.
+func (m *tuiModel) loadShareItems() error {
+	destination, ok := m.selectedProfile()
+	if !ok {
+		return errors.New("nothing selected")
+	}
+	source, chosen := m.shareSource()
+	if !chosen {
+		return errors.New("no source chosen")
+	}
+	items, err := m.share.kind.read(source)
+	if err != nil {
+		return err
+	}
+	existing, err := m.share.kind.read(destination)
+	if err != nil {
+		return err
+	}
+	present := make(map[string]bool, len(existing))
+	for _, item := range existing {
+		present[item.name] = true
+	}
+	for index := range items {
+		items[index].present = present[items[index].name]
+	}
+	m.share.items, m.share.item = items, 0
+	return nil
+}
+
+func (m tuiModel) updateShareItems(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.mode = tuiList
+		m.clearStatus()
+	case "up", "k":
+		if m.share.item > 0 {
+			m.share.item--
+		}
+	case "down", "j":
+		if m.share.item < len(m.share.items)-1 {
+			m.share.item++
+		}
+	case " ":
+		if m.share.item >= 0 && m.share.item < len(m.share.items) {
+			m.share.items[m.share.item].chosen = !m.share.items[m.share.item].chosen
+		}
+	case "a":
+		// Ticking everything deliberately passes over what the destination
+		// already has. Those rows overwrite something, so they are ticked one
+		// at a time or not at all — a bulk key must not be the thing that
+		// replaced a definition nobody looked at.
+		m.toggleAllShareItems()
+	case "enter":
+		return m.applyShare()
+	}
+	return m, nil
+}
+
+func (m *tuiModel) toggleAllShareItems() {
+	all := true
+	for _, item := range m.share.items {
+		if !item.present && !item.chosen {
+			all = false
+			break
+		}
+	}
+	for index := range m.share.items {
+		if m.share.items[index].present {
+			continue
+		}
+		m.share.items[index].chosen = !all
+	}
+}
+
+func (m tuiModel) applyShare() (tea.Model, tea.Cmd) {
+	destination, ok := m.selectedProfile()
+	if !ok {
+		m.mode = tuiList
+		return m, nil
+	}
+	source, ok := m.shareSource()
+	if !ok {
+		m.mode = tuiList
+		return m, nil
+	}
+	names := m.share.chosenNames()
+	if len(names) == 0 {
+		m.setStatus(statusErr, "nothing ticked; space selects a row")
+		return m, nil
+	}
+	copied, err := m.share.kind.copy(source, destination, names)
+	if err != nil {
+		m.setStatus(statusErr, err.Error())
+		return m, nil
+	}
+	m.mode = tuiList
+	m.setStatus(statusOK, fmt.Sprintf("copied %s from %s: %s",
+		plural(len(copied), m.share.kind.noun()), source.Name, strings.Join(copied, ", ")))
+	return m, nil
+}
+
+// updateClone takes the new profile's name. A clone is a name and nothing else
+// to decide: everything about how it launches comes from the profile it copies,
+// which is the point of having the key at all.
+func (m tuiModel) updateClone(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.mode = tuiList
+		m.clearStatus()
+		return m, nil
+	case "enter":
+		if err := m.saveClone(); err != nil {
+			m.setStatus(statusErr, err.Error())
+			return m, nil
+		}
+		m.mode = tuiList
+		return m, tea.Batch(loadUsageCmd(m.profiles), m.loadCockpitCmd())
+	case "backspace", "ctrl+h":
+		if runes := []rune(m.clone); len(runes) > 0 {
+			m.clone = string(runes[:len(runes)-1])
+		}
+		return m, nil
+	case "ctrl+u":
+		m.clone = ""
+		return m, nil
+	}
+	if msg.Type == tea.KeyRunes {
+		m.clone += string(msg.Runes)
+	}
+	return m, nil
+}
+
+func (m *tuiModel) saveClone() error {
+	source, ok := m.selectedProfile()
+	if !ok {
+		return errors.New("nothing selected")
+	}
+	cfg, err := loadConfig(m.configPath)
+	if err != nil {
+		return err
+	}
+	name := strings.TrimSpace(m.clone)
+	if err := cloneProfile(source.Name, name, false, &cfg, m.configPath, io.Discard); err != nil {
+		return err
+	}
+	m.profiles = sortedProfiles(cfg.Profiles)
+	// The clone has to be visible to be selected, and a filter that matched the
+	// profile it came from need not match the name just typed.
+	m.filter, m.searching = "", false
+	m.cursor = 0
+	for index, profile := range m.visibleProfiles() {
+		if profile.Name == name {
+			m.cursor = index
+			break
+		}
+	}
+	m.setStatus(statusOK, "cloned "+source.Name+" into "+name+" — log in with l")
+	return nil
+}
+
+// cloneContent asks for the name and says what the new profile will and will
+// not have. The second half matters more than the first: "clone" reads as a
+// duplicate account, and this one is a duplicate setup.
+func (m tuiModel) cloneContent(width int) []string {
+	source, ok := m.selectedProfile()
+	if !ok {
+		return nil
+	}
+	value := max(width-modalPadding, 8)
+	what := "settings, MCP servers, and skills"
+	if len(profileConfigPaths(source.Provider)) == 0 {
+		what = "launch settings"
+	}
+	return []string{
+		headerTitleStyle.Render("Clone " + source.Name),
+		"",
+		fieldLabelActive.Render(pad("name", detailLabelWidth)) +
+			fieldValueStyle.Render(truncate(m.clone, max(value-detailLabelWidth-1, 4))) + cursorStyle.Render(" "),
+		"",
+		confirmBodyStyle.Render(truncate("Copies its "+what+".", value)),
+		hintStyle.Render(truncate("Credentials do not come with it — the clone starts logged out.", value)),
+		hintStyle.Render(truncate("Moving an account instead: ai profile export, then import.", value)),
+	}
+}
+
+// shareFromPicker asks which profile is lending. Every row here has at least
+// one thing to give, so the count beside it is a promise rather than a label.
+func (m tuiModel) shareFromPicker(width int) []string {
+	destination, ok := m.selectedProfile()
+	if !ok {
+		return nil
+	}
+	noun := m.share.kind.noun()
+	lines := []string{headerTitleStyle.Render("Install " + noun + "s into " + destination.Name), ""}
+	valueWidth := max(width-modalPadding-2, 8)
+	for index, source := range m.share.sources {
+		ink := selectedPen(index == m.share.source)
+		bar := ink.render(lipgloss.NewStyle(), "  ")
+		if index == m.share.source {
+			bar = ink.render(cursorBarStyle, "▌ ")
+		}
+		name := min(max(valueWidth-26, 8), 26)
+		lines = append(lines, bar+
+			ink.render(fieldValueStyle, pad(truncate(source.profile.Name, name), name))+
+			ink.render(providerStyle(source.profile.Provider), pad(truncate(source.profile.Provider, 12), 12))+
+			ink.render(dimStyle, truncate(plural(source.count, noun), max(valueWidth-name-12, 4))))
+	}
+	return append(lines, "", hintStyle.Render("Copying is one way: nothing is taken from "+destination.Name+"."))
+}
+
+// shareItemsPicker is the multi-select. A row the destination already has is
+// shown as installed and left unticked, so replacing one is something you do on
+// purpose to a row you looked at.
+func (m tuiModel) shareItemsPicker(width, rows int) []string {
+	destination, ok := m.selectedProfile()
+	if !ok {
+		return nil
+	}
+	source, chosen := m.shareSource()
+	if !chosen {
+		return nil
+	}
+	lines := []string{
+		headerTitleStyle.Render(source.Name + " → " + destination.Name),
+		"",
+	}
+	content := max(width-modalPadding, 8)
+	lines = append(lines, windowRows(m.shareItemRows(content), m.share.item, rows)...)
+	ticked := len(m.share.chosenNames())
+	footer := hintStyle.Render("space ticks a row · a ticks every new one · ↵ installs")
+	if ticked > 0 {
+		footer = fieldValueStyle.Render(plural(ticked, m.share.kind.noun())+" ticked") +
+			hintStyle.Render(" · ↵ installs · space unticks")
+	}
+	return append(lines, "", footer)
+}
+
+func (m tuiModel) shareItemRows(column int) []string {
+	const tickWidth = 4
+	nameWidth := min(max(column/3, 10), 24)
+	rows := make([]string, 0, len(m.share.items))
+	for index, item := range m.share.items {
+		ink := selectedPen(index == m.share.item)
+		bar := ink.render(lipgloss.NewStyle(), "  ")
+		if index == m.share.item {
+			bar = ink.render(cursorBarStyle, "▌ ")
+		}
+		tick, tickStyle := "[ ]", dimStyle
+		if item.chosen {
+			tick, tickStyle = "[x]", liveStyle
+		}
+		marker := ""
+		if item.present {
+			marker = " installed"
+		}
+		detail := max(column-2-tickWidth-nameWidth-lipgloss.Width(marker)-1, 4)
+		rows = append(rows, bar+
+			ink.render(tickStyle, pad(tick, tickWidth))+
+			ink.render(fieldValueStyle, pad(truncate(item.name, nameWidth), nameWidth))+" "+
+			ink.render(dimStyle, pad(truncate(item.detail, detail), detail))+
+			ink.render(updateStyle, marker))
+	}
+	return rows
 }

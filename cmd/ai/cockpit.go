@@ -539,13 +539,17 @@ func (m tuiModel) modalView(frame layout) string {
 	switch m.mode {
 	case tuiHelp:
 		width = min(max(frame.width-16, 32), helpModalWidth)
-	case tuiRecent, tuiHandoff:
+	case tuiRecent, tuiHandoff, tuiShareItems:
 		width = min(max(frame.width-16, 32), pickerModalWidth)
 	}
 	// A picker's body is as tall as its list, with a floor so a short list still
 	// leaves a preview worth reading beside it, and a ceiling so the box never
 	// grows past the frame it is centred over.
-	rows := min(max(len(m.recent), previewMinRows), max(frame.height-chromeRows-6, 4))
+	listed := len(m.recent)
+	if m.mode == tuiShareItems {
+		listed = len(m.share.items)
+	}
+	rows := min(max(listed, previewMinRows), max(frame.height-chromeRows-6, 4))
 	content, style := []string(nil), modalStyle
 	switch m.mode {
 	case tuiForm:
@@ -554,6 +558,12 @@ func (m tuiModel) modalView(frame layout) string {
 		content = m.folderContent()
 	case tuiParams:
 		content = m.paramsContent()
+	case tuiClone:
+		content = m.cloneContent(width)
+	case tuiShareFrom:
+		content = m.shareFromPicker(width)
+	case tuiShareItems:
+		content = m.shareItemsPicker(width, rows)
 	case tuiHijack:
 		content = m.confirmContent(width)
 	case tuiRecent:
