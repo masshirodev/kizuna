@@ -143,15 +143,28 @@ func previewWhere(now time.Time, record recordedSession) string {
 	return formatWhen(now, record.when) + " · " + where
 }
 
-// previewBody lays the exchange out as blocks: who spoke, then what they said,
-// wrapped. Reading is what the pane is for, so the turns are separated by a
-// blank line rather than packed. It is built to its full length and cut by
-// fitPreview afterwards, so that every way the pane can run short of the
-// conversation — the pane's height, or the read's own bound — ends in the same
-// marker rather than in a sentence that merely stops.
+// previewBody is the opening of a conversation, marked as going on past what
+// was read when it does.
 func previewBody(provider string, preview sessionPreview, width int) []string {
+	lines := conversationLines(provider, preview.messages, width)
+	if preview.more {
+		lines = append(lines, "", previewCutMarker)
+	}
+	return lines
+}
+
+// conversationLines lays an exchange out as blocks: who spoke, then what they
+// said, wrapped. Reading is what these panes are for, so the turns are
+// separated by a blank line rather than packed.
+//
+// Both callers build the whole exchange here and cut it afterwards — the
+// picker's pane from the end, the handoff brief from the start, since one is
+// reading a conversation from its opening and the other is showing how it
+// ended. That way every route to running short of the conversation finishes at
+// the same marker rather than at a sentence that merely stops.
+func conversationLines(provider string, messages []handoffMessage, width int) []string {
 	var lines []string
-	for index, message := range preview.messages {
+	for index, message := range messages {
 		if index > 0 {
 			lines = append(lines, "")
 		}
@@ -167,9 +180,6 @@ func previewBody(provider string, preview sessionPreview, width int) []string {
 		for _, wrapped := range wrapText(message.text, width) {
 			lines = append(lines, body.Render(wrapped))
 		}
-	}
-	if preview.more {
-		lines = append(lines, "", previewCutMarker)
 	}
 	return lines
 }
@@ -187,6 +197,30 @@ func fitPreview(lines []string, rows int) []string {
 		return lines
 	}
 	return append(lines[:rows-1], previewCutMarker)
+}
+
+// fitTail settles a block that is worth reading from its end rather than its
+// start, dropping the earliest rows and saying so above what is left. It is the
+// handoff brief's cut: the question that screen asks is whether this is the
+// work that was meant to move, and the answer is in the last thing that was
+// said rather than the first.
+func fitTail(lines []string, rows int, earlier bool) []string {
+	if rows < 1 {
+		return nil
+	}
+	if len(lines) <= rows && !earlier {
+		return lines
+	}
+	if len(lines) > rows-1 {
+		lines = lines[len(lines)-max(rows-1, 0):]
+		// A cut that lands on the blank between two turns would leave the marker
+		// with a gap under it, which reads as a missing line rather than as a
+		// conversation carrying on above.
+		for len(lines) > 0 && lines[0] == "" {
+			lines = lines[1:]
+		}
+	}
+	return append([]string{previewCutMarker}, lines...)
 }
 
 // wrapText breaks one turn into lines that fit the pane. Newlines the speaker

@@ -526,6 +526,42 @@ func (m tuiModel) bottomBarView(frame layout) string {
 // line built to the full width is a line that wraps.
 const modalPadding = 4
 
+const (
+	// modalInset is what a box gives back to the frame it is centred over,
+	// rather than what it takes: the cockpit behind a box is the context the
+	// question was asked from, and a box reaching the rules on both sides hides
+	// it. Everything else is the box's, so a wider terminal grows the box until
+	// it meets its own ceiling.
+	modalInset = 8
+	// modalMinWidth is the narrowest a box is drawn at. Below it the terminal is
+	// narrower than the box, which centerBox handles by pinning it to the left
+	// edge rather than by shrinking it further.
+	modalMinWidth = 32
+	// promptModalWidth caps the boxes that ask one question. They grow with the
+	// terminal like every other box, but only so far: a label and the value
+	// beside it read worse spread across an ultrawide than they do in a column,
+	// and none of them has more to say when given more room.
+	promptModalWidth = 88
+	// modalChromeRows is what a box spends on itself around its body: the
+	// border, the heading and the blank under it, the hint at the foot, and the
+	// status line with its own blank. A body sized past what is left loses its
+	// last rows off the bottom of the frame.
+	modalChromeRows = 10
+)
+
+// modalWidth sizes a box against the frame behind it: as wide as the terminal
+// allows, up to the ceiling that box's own content earns.
+func modalWidth(frame layout, ceiling int) int {
+	return min(max(frame.width-modalInset, modalMinWidth), ceiling)
+}
+
+// modalRows is how many rows a box's body may draw. Unlike the width this is
+// not a preference: a taller box is clamped against the bottom of the frame by
+// centerBox and has the rows past it dropped.
+func modalRows(frame layout) int {
+	return max(frame.height-modalChromeRows, 4)
+}
+
 // modalView is what the cockpit is covered with. Every mode but the list is a
 // box: the frame behind it stays put, so answering a prompt never costs the
 // context that prompted it.
@@ -535,21 +571,19 @@ const modalPadding = 4
 // answer to what was just typed, and a panel it might be covering is the wrong
 // place to answer from.
 func (m tuiModel) modalView(frame layout) string {
-	width := min(max(frame.width-16, 32), 72)
+	width := modalWidth(frame, promptModalWidth)
 	switch m.mode {
 	case tuiHelp:
-		width = min(max(frame.width-16, 32), helpModalWidth)
-	case tuiRecent, tuiHandoff, tuiShareItems:
-		width = min(max(frame.width-16, 32), pickerModalWidth)
+		width = modalWidth(frame, helpModalWidth)
+	case tuiRecent, tuiHandoff, tuiShareItems, tuiHandoffBrief:
+		width = modalWidth(frame, pickerModalWidth)
 	}
-	// A picker's body is as tall as its list, with a floor so a short list still
-	// leaves a preview worth reading beside it, and a ceiling so the box never
-	// grows past the frame it is centred over.
-	listed := len(m.recent)
-	if m.mode == tuiShareItems {
-		listed = len(m.share.items)
-	}
-	rows := min(max(listed, previewMinRows), max(frame.height-chromeRows-6, 4))
+	// The boxes that show a conversation or a list are handed the whole height
+	// the frame has left and take what they can use of it. The ceiling is the
+	// frame's; the floor each of them settles on is its own, because a box
+	// padded to the terminal's height around a two-line answer is a column of
+	// blank rows rather than a bigger box.
+	rows := modalRows(frame)
 	content, style := []string(nil), modalStyle
 	switch m.mode {
 	case tuiForm:
@@ -573,7 +607,7 @@ func (m tuiModel) modalView(frame layout) string {
 	case tuiHandoffTo:
 		content = m.handoffToPicker(width)
 	case tuiHandoffBrief:
-		content = m.handoffBriefContent(width)
+		content = m.handoffBriefContent(width, rows)
 	case tuiConfirmInstall:
 		content = m.installContent(width)
 	case tuiConfirmSelfUpdate:

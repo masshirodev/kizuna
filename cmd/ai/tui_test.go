@@ -1087,3 +1087,87 @@ func TestRecordedFolderPrefersTheRecordedDirectory(t *testing.T) {
 		t.Fatal("a folder that no longer exists was accepted")
 	}
 }
+
+// The confirmation before a handoff reads out the end of the conversation being
+// moved. The head of the brief it just wrote is the same four lines every time
+// and says nothing about which session this is.
+func TestHandoffBriefShowsHowTheConversationEnded(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.mode = tuiHandoffBrief
+	m.handoff = handoffDraft{
+		source:       recordedSession{session: instanceSession{id: "aaa", title: "Widen the modals"}},
+		destinations: []Profile{{Name: "codex-work", Provider: "codex"}},
+		path:         "/tmp/handoffs/aaa.md",
+		provider:     "claude",
+		closing: []handoffMessage{
+			{fromUser: true, text: "now make the picker taller"},
+			{fromUser: false, text: "the body settles at the height of the taller half"},
+		},
+	}
+	view := m.View()
+	for _, want := range []string{"Hand this to codex-work", "Widen the modals", "HOW IT ENDED",
+		"now make the picker taller", "the body settles at the height of the taller half"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("the handoff brief is missing %q:\n%s", want, view)
+		}
+	}
+}
+
+// A conversation longer than the box says so above what is shown, rather than
+// starting mid-sentence as if that were the beginning.
+func TestHandoffBriefMarksAConversationItOnlyShowsTheEndOf(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.mode = tuiHandoffBrief
+	m.handoff = handoffDraft{
+		destinations: []Profile{{Name: "codex-work", Provider: "codex"}},
+		path:         "/tmp/handoffs/aaa.md",
+		provider:     "claude",
+		earlier:      true,
+		closing:      []handoffMessage{{fromUser: true, text: "and now ship it"}},
+	}
+	lines := m.closingLines(60, modalRows(frameLayout(m.width, m.height)))
+	if len(lines) == 0 || lines[0] != previewCutMarker {
+		t.Fatalf("closing lines = %q, want the cut marker above what is left", lines)
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "and now ship it") {
+		t.Fatalf("the last turn was lost to the marker: %q", lines)
+	}
+}
+
+// Modals grow with the terminal rather than sitting at one width. The ceiling
+// is the box's own; below it the frame decides.
+func TestModalsGrowWithTheTerminal(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	narrow := modalWidth(frameLayout(96, 30), pickerModalWidth)
+	wide := modalWidth(frameLayout(160, 30), pickerModalWidth)
+	if narrow >= wide {
+		t.Fatalf("a wider terminal did not widen the box: %d then %d", narrow, wide)
+	}
+	if capped := modalWidth(frameLayout(400, 30), pickerModalWidth); capped != pickerModalWidth {
+		t.Fatalf("width = %d on an ultrawide, want the ceiling of %d", capped, pickerModalWidth)
+	}
+	if floor := modalWidth(frameLayout(20, 30), pickerModalWidth); floor != modalMinWidth {
+		t.Fatalf("width = %d on a tiny terminal, want the floor of %d", floor, modalMinWidth)
+	}
+}
+
+// The picker is as tall as the taller of its two halves, not as tall as the
+// terminal: a two-message conversation on a tall screen would otherwise be
+// drawn under a column of blank rows.
+func TestPickerDoesNotPadPastWhatItHasToShow(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.height = 60
+	m.cursor = 1
+	m.recent = recentTestSessions(t.TempDir())
+	m.mode = tuiRecent
+	m.preview = sessionPreview{session: "aaa", messages: []handoffMessage{{fromUser: true, text: "rename it"}}}
+	frame := frameLayout(m.width, m.height)
+	body := m.pickerBody(testProfiles()[1], modalWidth(frame, pickerModalWidth), modalRows(frame))
+	if len(body) != previewMinRows {
+		t.Fatalf("picker body is %d rows for a short list and a short preview, want %d",
+			len(body), previewMinRows)
+	}
+}

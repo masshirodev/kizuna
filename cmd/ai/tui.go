@@ -808,7 +808,15 @@ type handoffDraft struct {
 	destinations []Profile
 	target       int
 	path         string
-	preview      []string
+	// closing is how the outgoing conversation ended, and earlier says it ran on
+	// before that. They are read once, when the brief is written, because the
+	// confirmation screen is drawn on every keypress and the transcript behind
+	// them is the large file this whole feature exists to avoid re-reading.
+	closing []handoffMessage
+	earlier bool
+	// provider names who the model half of those turns was, so the screen can
+	// label it the way the picker's preview does.
+	provider string
 }
 
 // openHandoff starts a pass by asking which session is leaving. That question
@@ -948,29 +956,11 @@ func (m tuiModel) startHandoff() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.handoff.path = path
-	m.handoff.preview = briefPreview(body)
+	m.handoff.closing, m.handoff.earlier = brief.closing, brief.earlier
+	m.handoff.provider = profile.Provider
 	m.mode = tuiHandoffBrief
 	m.clearStatus()
 	return m, nil
-}
-
-// briefPreviewLines is how much of the brief the confirmation shows. It is
-// enough to recognise the work and not enough to read it: the file is right
-// there, and e opens it.
-const briefPreviewLines = 8
-
-func briefPreview(body string) []string {
-	var kept []string
-	for _, line := range strings.Split(body, "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		kept = append(kept, line)
-		if len(kept) >= briefPreviewLines {
-			break
-		}
-	}
-	return kept
 }
 
 func (m tuiModel) updateHandoffBrief(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1792,7 +1782,7 @@ func (m tuiModel) confirmContent(width int) []string {
 // a folder side by side, and a preview much narrower than this wraps every
 // sentence into a column of single words.
 const (
-	pickerModalWidth = 112
+	pickerModalWidth = 150
 	pickerListMin    = 46
 	previewPaneMin   = 34
 	// previewMinRows keeps the pane worth reading when the list is short. Three
@@ -1803,6 +1793,12 @@ const (
 	// carries three fixed columns and the preview only wraps, so the half that
 	// cannot fold gets the larger share.
 	pickerListShare = 58
+	// pickerListMax is where the list stops taking that share: it is the width
+	// at which a row's folder reaches the cap recentRow already puts on it, so
+	// past here the share buys padding between the three columns and nothing
+	// else. Every column a wider terminal offers after that goes to the
+	// preview, which turns width into sentences that fit on one line.
+	pickerListMax = 72
 )
 
 // recentPicker offers the conversations the panel behind it is showing. It
@@ -1829,10 +1825,19 @@ func (m tuiModel) pickerBody(profile Profile, width, rows int) []string {
 		return windowRows(m.recentRows(content), m.record, rows)
 	}
 	columns := content - dividerWidth
-	list := max(columns*pickerListShare/100, pickerListMin)
+	// The list takes its share of the box, but never so much that the preview
+	// drops under the width it needs, and never past the width its own rows can
+	// use however wide the terminal is.
+	list := min(max(columns*pickerListShare/100, pickerListMin), columns-previewPaneMin, pickerListMax)
 	preview := columns - list
-	return joinPanes(windowRows(m.recentRows(list), m.record, rows),
-		m.previewPane(profile, preview, rows), list, preview, rows)
+	read := m.previewPane(profile, preview, rows)
+	// The two halves settle at the height of the taller one, with the same floor
+	// a short list has always had and the frame's ceiling above it. Taking the
+	// ceiling outright instead would put a column of blank rows under a
+	// two-message conversation on a tall terminal.
+	height := min(max(max(len(m.recent), len(read)), previewMinRows), rows)
+	return joinPanes(windowRows(m.recentRows(list), m.record, height),
+		read, list, preview, height)
 }
 
 // windowRows scrolls a list longer than the space it has, keeping the row under
@@ -1965,25 +1970,56 @@ func quotaStyle(percent int) lipgloss.Style {
 // handoffBriefContent is the last frame before the work moves. With auto-swap
 // on it is the only frame, which is why it names the destination rather than
 // assuming the previous screen already did.
-func (m tuiModel) handoffBriefContent(width int) []string {
+//
+// Under the two facts is the end of the conversation being handed over, rather
+// than the head of the brief that was just written. The brief opens with the
+// same four lines every time — who the next agent is and what it is being
+// handed — and none of them answers the question this screen is actually
+// asking, which is whether this is the work that was meant to move. The last
+// few things that were said answer it at a glance.
+func (m tuiModel) handoffBriefContent(width, rows int) []string {
 	target := "somewhere"
 	if m.handoff.target < len(m.handoff.destinations) {
 		target = m.handoff.destinations[m.handoff.target].Name
 	}
 	value := max(width-modalPadding, 8)
+	title, titleStyle := m.handoff.source.session.title, fieldValueStyle
+	if title == "" {
+		title, titleStyle = "untitled session", unknownStyle
+	}
+	label := max(value-detailLabelWidth, 8)
 	lines := []string{
 		headerTitleStyle.Render("Hand this to " + target),
 		"",
+		fieldLabelStyle.Render(pad("session", detailLabelWidth)) + titleStyle.Render(truncate(title, label)),
 		fieldLabelStyle.Render(pad("brief", detailLabelWidth)) +
-			fieldValueStyle.Render(truncate(shortenHome(m.handoff.path), max(value-detailLabelWidth, 8))),
+			fieldValueStyle.Render(truncate(shortenHome(m.handoff.path), label)),
+		"",
+		sectionLabelStyle.Render("HOW IT ENDED"),
 		"",
 	}
-	for _, line := range m.handoff.preview {
-		lines = append(lines, hintStyle.Render(truncate(line, value)))
-	}
+	lines = append(lines, m.closingLines(value, rows)...)
 	return append(lines, "",
 		confirmBodyStyle.Render("Nothing is written into either CLI's own state."),
 		hintStyle.Render("↵ opens "+target+" on it · e edits it first · esc keeps the file"))
+}
+
+// briefFacingRows is what handoffBriefContent spends on itself beyond what
+// modalRows has already set aside for a box's own chrome: the session and brief
+// lines with the blank and heading under them, and a footer of two lines rather
+// than one.
+const briefFacingRows = 6
+
+// closingLines is the tail of the outgoing conversation, cut to what is left of
+// the box. A session with nothing in it never reaches this screen — buildBrief
+// refuses one — but the renderer says so rather than showing a gap if it ever
+// does.
+func (m tuiModel) closingLines(width, rows int) []string {
+	if len(m.handoff.closing) == 0 {
+		return []string{unknownStyle.Render("nothing was said in this session")}
+	}
+	body := conversationLines(m.handoff.provider, m.handoff.closing, width)
+	return fitTail(body, max(rows-briefFacingRows, minBlockRows), m.handoff.earlier)
 }
 
 // statusIcon marks how a message landed. The log panel and the modal footer
@@ -2059,7 +2095,7 @@ const (
 	// helpModalWidth is wider than the prompts share, because the key list is
 	// two columns of text rather than one question. A terminal too narrow for
 	// that gets one column instead of a clipped two.
-	helpModalWidth = 84
+	helpModalWidth = 110
 )
 
 // helpSection is one titled group of keys in the help pane. The grouping is by

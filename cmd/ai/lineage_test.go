@@ -96,7 +96,7 @@ func TestAutoSwapSkipsTheDestinationQuestionOnly(t *testing.T) {
 	if got.mode != tuiHandoffBrief {
 		t.Fatalf("mode = %v, want the brief straight away with auto-swap on: %q", got.mode, got.status)
 	}
-	if got.handoff.path == "" || len(got.handoff.preview) == 0 {
+	if got.handoff.path == "" || len(got.handoff.closing) == 0 {
 		t.Fatalf("auto-swap produced no brief: %+v", got.handoff)
 	}
 	// The account with the most quota left is the one it chose.
