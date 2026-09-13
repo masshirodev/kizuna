@@ -47,6 +47,13 @@ const (
 	// proxy for substance, but it is the one available without asking a model,
 	// and asking one is what a handoff exists to avoid.
 	minBriefNote = 400
+	// briefClosingTurns is how much of the end of the conversation the
+	// confirmation screen shows. It is not what goes into the file: the brief
+	// keeps the model's prose only where it was long enough to be a conclusion,
+	// which is the right reduction for an agent picking the work up and the
+	// wrong one for someone deciding whether this is the session they meant to
+	// move. That decision is made on the exchange as it actually ended.
+	briefClosingTurns = 14
 )
 
 // sessionBrief is everything the outgoing session contributes. Git state is
@@ -59,6 +66,11 @@ type sessionBrief struct {
 	notes      []string
 	transcript string
 	truncated  bool
+	// closing is the tail of the conversation as it was said, for the
+	// confirmation screen rather than for the file. earlier says the
+	// conversation ran on before it.
+	closing []handoffMessage
+	earlier bool
 }
 
 // readSessionMessages reads a whole recorded conversation, not just far enough
@@ -198,10 +210,29 @@ func buildBrief(profile Profile, record recordedSession) (sessionBrief, error) {
 		notes = notes[len(notes)-maxBriefNotes:]
 	}
 	brief.notes = notes
+	brief.closing, brief.earlier = closingTurns(messages)
 	if len(brief.prompts) == 0 {
 		return brief, errors.New("nothing was asked in this session; there is nothing to hand over")
 	}
 	return brief, nil
+}
+
+// closingTurns takes the end of the conversation for the confirmation screen,
+// each turn clipped the way the picker's preview clips one: a pasted stack
+// trace is a turn too, and the whole of it would push every later turn off the
+// box. It reports separately whether anything was said before what it kept, so
+// the screen can mark a conversation it is only showing the end of.
+func closingTurns(messages []handoffMessage) ([]handoffMessage, bool) {
+	earlier := len(messages) > briefClosingTurns
+	if earlier {
+		messages = messages[len(messages)-briefClosingTurns:]
+	}
+	closing := make([]handoffMessage, 0, len(messages))
+	for _, message := range messages {
+		message.text = clipRunes(message.text, previewTurnRunes)
+		closing = append(closing, message)
+	}
+	return closing, earlier
 }
 
 // appendPrompt drops the half-written copy of a request. Interrupting a turn

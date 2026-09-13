@@ -145,3 +145,60 @@ func TestBriefIsWrittenOutsideAnyProviderState(t *testing.T) {
 		t.Fatalf("brief written inside a profile's state: %q", path)
 	}
 }
+
+// The brief keeps the end of the conversation as it was said, separately from
+// the reduction it writes into the file. The confirmation screen asks a
+// different question than the brief does — is this the work I meant to move —
+// and the answer is in the last thing said rather than in the longest.
+func TestBriefKeepsHowTheConversationEnded(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	lines := []string{
+		`{"type":"user","cwd":"/work/hub","message":{"content":[{"type":"text","text":"Add a settings page"}]}}`,
+	}
+	for index := range briefClosingTurns {
+		lines = append(lines, `{"type":"assistant","message":{"content":[{"type":"text","text":"step `+
+			string(rune('a'+index))+`"}]}}`)
+	}
+	lines = append(lines, `{"type":"user","cwd":"/work/hub","message":{"content":[{"type":"text","text":"ship it"}]}}`)
+	writeClaudeSession(t, root, "claude-personal", "-work-hub", "aaa", lines...)
+
+	brief, err := buildBrief(Profile{Name: "claude-personal", Provider: "claude"},
+		recordedSession{session: instanceSession{id: "aaa"}, folder: "/work/hub"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(brief.closing) != briefClosingTurns {
+		t.Fatalf("kept %d closing turns, want the bound of %d", len(brief.closing), briefClosingTurns)
+	}
+	last := brief.closing[len(brief.closing)-1]
+	if !last.fromUser || last.text != "ship it" {
+		t.Fatalf("last turn = %+v, want the end of the conversation", last)
+	}
+	if !brief.earlier {
+		t.Fatal("a conversation that ran on before what was kept was not marked as such")
+	}
+	// The file is the reduction it always was: short model turns are narration,
+	// and none of them belongs in the brief.
+	if body := renderBrief(brief, gitState{}, time.Now()); strings.Contains(body, "step a") {
+		t.Fatalf("the closing turns leaked into the brief itself:\n%s", body)
+	}
+}
+
+// A conversation short enough to show whole is not marked as cut.
+func TestABriefShorterThanTheBoundIsNotMarkedAsCut(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	writeClaudeSession(t, root, "claude-personal", "-work-hub", "aaa",
+		`{"type":"user","cwd":"/work/hub","message":{"content":[{"type":"text","text":"Add a settings page"}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}`)
+
+	brief, err := buildBrief(Profile{Name: "claude-personal", Provider: "claude"},
+		recordedSession{session: instanceSession{id: "aaa"}, folder: "/work/hub"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(brief.closing) != 2 || brief.earlier {
+		t.Fatalf("closing = %+v, earlier = %v, want the whole exchange unmarked", brief.closing, brief.earlier)
+	}
+}

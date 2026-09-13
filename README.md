@@ -736,6 +736,15 @@ itself, and asking the incoming one to summarise means reading the transcript �
 the cost being avoided. Extraction is mechanical. Press `e` at the confirmation
 to edit the brief before it goes; you know what mattered.
 
+The confirmation itself shows **how the conversation ended** — the last turns as
+they were actually said, under `HOW IT ENDED`, with the same speaker labels the
+resume picker uses. That is deliberately not the head of the brief that was just
+written, which opens with the same four lines every time and answers a different
+question than this screen asks. The question here is whether this is the work you
+meant to move, and the last thing said answers it at a glance. A conversation
+longer than the box says so with a `…` above what is shown, rather than starting
+mid-sentence as though that were the beginning.
+
 Destinations are ranked by the quota window that runs out soonest, since a
 weekly allowance with room is no help at the moment the five-hour one is spent.
 An account whose quota is unknown sorts below a measured one.
@@ -803,6 +812,18 @@ Below the width where both halves can be read the preview folds away and the
 picker is a plain list, the same way the cockpit folds a column rather than
 squeezing it. A list longer than the pane scrolls to keep the row the keys act
 on in view.
+
+**The box is sized to the terminal and to what it has to say.** Every modal grows
+with the window up to a ceiling of its own — the pickers are the widest, the help
+pane next, and the boxes that ask one question stop soonest, since a label and
+the value beside it read worse spread across an ultrawide than they do in a
+column. The width a wide terminal adds past that goes to the preview rather than
+the list: a session row is a time, a title and a folder, and beyond the width
+those need, more columns only pad the gaps between them, while the preview turns
+every extra column into a sentence that fits on one line. Height works the same
+way in reverse — the picker settles at the height of its taller half rather than
+filling the screen, so a two-message conversation is not drawn under a column of
+blank rows.
 
 The pane is filled from the same transcripts the handoff brief is built from, so
 it shows nothing for a provider whose conversations are not read back —
