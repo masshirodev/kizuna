@@ -1153,21 +1153,61 @@ func TestModalsGrowWithTheTerminal(t *testing.T) {
 	}
 }
 
-// The picker is as tall as the taller of its two halves, not as tall as the
-// terminal: a two-message conversation on a tall screen would otherwise be
-// drawn under a column of blank rows.
-func TestPickerDoesNotPadPastWhatItHasToShow(t *testing.T) {
+// The picker is as tall as the frame lets it be whatever is under the cursor.
+// Sizing it to the conversation it is previewing means a different box for every
+// row, and the row the cursor is heading for moves while it is being aimed at.
+func TestPickerKeepsItsHeightAcrossRows(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	m := wideModel(testProfiles())
 	m.height = 60
 	m.cursor = 1
 	m.recent = recentTestSessions(t.TempDir())
 	m.mode = tuiRecent
-	m.preview = sessionPreview{session: "aaa", messages: []handoffMessage{{fromUser: true, text: "rename it"}}}
 	frame := frameLayout(m.width, m.height)
-	body := m.pickerBody(testProfiles()[1], modalWidth(frame, pickerModalWidth), modalRows(frame))
-	if len(body) != previewMinRows {
-		t.Fatalf("picker body is %d rows for a short list and a short preview, want %d",
-			len(body), previewMinRows)
+	width, rows := modalWidth(frame, pickerModalWidth), modalRows(frame)
+
+	m.record, m.preview = 0, sessionPreview{session: "aaa", messages: []handoffMessage{{fromUser: true, text: "rename it"}}}
+	short := m.pickerBody(testProfiles()[1], width, rows)
+	m.record, m.preview = 1, sessionPreview{session: "bbb", messages: longTestConversation(40)}
+	long := m.pickerBody(testProfiles()[1], width, rows)
+
+	if len(short) != rows || len(long) != rows {
+		t.Fatalf("picker body is %d rows on a short conversation and %d on a long one, want %d for both",
+			len(short), len(long), rows)
 	}
+}
+
+// The same, one level up: the whole box holds its size as the cursor moves, and
+// holds it when a status line appears in it as well.
+func TestPickerBoxKeepsItsHeight(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.height = 60
+	m.cursor = 1
+	m.recent = recentTestSessions(t.TempDir())
+	m.mode = tuiRecent
+	frame := frameLayout(m.width, m.height)
+
+	m.record, m.preview = 0, sessionPreview{session: "aaa", messages: []handoffMessage{{fromUser: true, text: "rename it"}}}
+	_, short := boxSize(m.modalView(frame))
+	m.record, m.preview = 1, sessionPreview{session: "bbb", messages: longTestConversation(40)}
+	_, long := boxSize(m.modalView(frame))
+	m.status, m.statusKind = "that session is already open", statusErr
+	_, noted := boxSize(m.modalView(frame))
+
+	if short != long || short != noted {
+		t.Fatalf("picker box is %d rows short, %d long, %d with a status; want one height",
+			short, long, noted)
+	}
+}
+
+func longTestConversation(turns int) []handoffMessage {
+	messages := make([]handoffMessage, 0, turns)
+	for index := range turns {
+		messages = append(messages, handoffMessage{
+			fromUser: index%2 == 0,
+			text:     "a turn long enough to wrap more than once in the pane beside the list",
+		})
+	}
+	return messages
 }

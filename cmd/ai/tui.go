@@ -1785,10 +1785,6 @@ const (
 	pickerModalWidth = 150
 	pickerListMin    = 46
 	previewPaneMin   = 34
-	// previewMinRows keeps the pane worth reading when the list is short. Three
-	// recorded sessions make a three-row list, and a three-row preview beside it
-	// is a heading and one sentence.
-	previewMinRows = 12
 	// pickerListShare is how much of a split picker the list takes. The list
 	// carries three fixed columns and the preview only wraps, so the half that
 	// cannot fold gets the larger share.
@@ -1822,7 +1818,7 @@ func (m tuiModel) recentPicker(width, rows int) []string {
 func (m tuiModel) pickerBody(profile Profile, width, rows int) []string {
 	content := max(width-modalPadding, 8)
 	if content < pickerListMin+dividerWidth+previewPaneMin {
-		return windowRows(m.recentRows(content), m.record, rows)
+		return padToRows(windowRows(m.recentRows(content), m.record, rows), rows, -1)
 	}
 	columns := content - dividerWidth
 	// The list takes its share of the box, but never so much that the preview
@@ -1830,14 +1826,13 @@ func (m tuiModel) pickerBody(profile Profile, width, rows int) []string {
 	// use however wide the terminal is.
 	list := min(max(columns*pickerListShare/100, pickerListMin), columns-previewPaneMin, pickerListMax)
 	preview := columns - list
-	read := m.previewPane(profile, preview, rows)
-	// The two halves settle at the height of the taller one, with the same floor
-	// a short list has always had and the frame's ceiling above it. Taking the
-	// ceiling outright instead would put a column of blank rows under a
-	// two-message conversation on a tall terminal.
-	height := min(max(max(len(m.recent), len(read)), previewMinRows), rows)
-	return joinPanes(windowRows(m.recentRows(list), m.record, height),
-		read, list, preview, height)
+	// Both halves are drawn at the height the frame allows, whatever is under the
+	// cursor. Settling on the content instead gives the box a different size for
+	// every row: the arrow key that moves the cursor also moves the rows around
+	// it, and stepping from a long conversation to a two-message one collapses
+	// the list beside it as well.
+	return joinPanes(windowRows(m.recentRows(list), m.record, rows),
+		m.previewPane(profile, preview, rows), list, preview, rows)
 }
 
 // windowRows scrolls a list longer than the space it has, keeping the row under
@@ -2011,15 +2006,17 @@ func (m tuiModel) handoffBriefContent(width, rows int) []string {
 const briefFacingRows = 6
 
 // closingLines is the tail of the outgoing conversation, cut to what is left of
-// the box. A session with nothing in it never reaches this screen — buildBrief
-// refuses one — but the renderer says so rather than showing a gap if it ever
-// does.
+// the box and padded back out to it, so a short exchange leaves the box the size
+// a long one does. A session with nothing in it never reaches this screen —
+// buildBrief refuses one — but the renderer says so rather than showing a gap if
+// it ever does.
 func (m tuiModel) closingLines(width, rows int) []string {
+	height := max(rows-briefFacingRows, minBlockRows)
 	if len(m.handoff.closing) == 0 {
-		return []string{unknownStyle.Render("nothing was said in this session")}
+		return padToRows([]string{unknownStyle.Render("nothing was said in this session")}, height, -1)
 	}
 	body := conversationLines(m.handoff.provider, m.handoff.closing, width)
-	return fitTail(body, max(rows-briefFacingRows, minBlockRows), m.handoff.earlier)
+	return padToRows(fitTail(body, height, m.handoff.earlier), height, -1)
 }
 
 // statusIcon marks how a message landed. The log panel and the modal footer
@@ -2692,7 +2689,9 @@ func (m tuiModel) shareItemsPicker(width, rows int) []string {
 		"",
 	}
 	content := max(width-modalPadding, 8)
-	lines = append(lines, windowRows(m.shareItemRows(content), m.share.item, rows)...)
+	// Padded to the frame like the other list boxes: a profile with four skills
+	// and one with forty are then the same box, and the keys under it stay put.
+	lines = append(lines, padToRows(windowRows(m.shareItemRows(content), m.share.item, rows), rows, -1)...)
 	ticked := len(m.share.chosenNames())
 	footer := hintStyle.Render("space ticks a row · a ticks every new one · ↵ installs")
 	if ticked > 0 {

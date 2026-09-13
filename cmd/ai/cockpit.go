@@ -579,11 +579,17 @@ func (m tuiModel) modalView(frame layout) string {
 		width = modalWidth(frame, pickerModalWidth)
 	}
 	// The boxes that show a conversation or a list are handed the whole height
-	// the frame has left and take what they can use of it. The ceiling is the
-	// frame's; the floor each of them settles on is its own, because a box
-	// padded to the terminal's height around a two-line answer is a column of
-	// blank rows rather than a bigger box.
+	// the frame has left and fill it, whether or not what they are showing needs
+	// it. They are the boxes whose content changes under the cursor, and a box
+	// that sizes itself to the row it is on is a box that resizes on every arrow
+	// key — which moves the rows the cursor is heading for.
 	rows := modalRows(frame)
+	status := m.statusLine(width)
+	// The status line comes out of that height rather than being added to it, so
+	// a message about the last keypress does not grow the box by two rows.
+	if status != "" && fullHeightModal(m.mode) {
+		rows = max(rows-statusRows, minBlockRows)
+	}
 	content, style := []string(nil), modalStyle
 	switch m.mode {
 	case tuiForm:
@@ -620,9 +626,33 @@ func (m tuiModel) modalView(frame layout) string {
 	if len(content) == 0 {
 		return ""
 	}
-	if m.status != "" {
-		icon, statusStyle := statusIcon(m.statusKind)
-		content = append(content, "", statusStyle.Render(icon+" "+truncate(m.status, max(width-2, 4))))
+	if status != "" {
+		content = append(content, "", status)
 	}
 	return style.Width(width).Render(strings.Join(content, "\n"))
+}
+
+// statusRows is what a status costs a box: the line itself and the blank that
+// separates it from the hint above.
+const statusRows = 2
+
+// statusLine is the box's own report of how the last keypress landed, or
+// nothing when there is none to make.
+func (m tuiModel) statusLine(width int) string {
+	if m.status == "" {
+		return ""
+	}
+	icon, statusStyle := statusIcon(m.statusKind)
+	return statusStyle.Render(icon + " " + truncate(m.status, max(width-2, 4)))
+}
+
+// fullHeightModal names the boxes that draw at the frame's height rather than
+// at their content's. They are the ones handed rows by modalView: a list with a
+// conversation read out beside it, and the brief that ends a handoff.
+func fullHeightModal(mode tuiMode) bool {
+	switch mode {
+	case tuiRecent, tuiHandoff, tuiShareItems, tuiHandoffBrief:
+		return true
+	}
+	return false
 }

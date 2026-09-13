@@ -813,17 +813,25 @@ picker is a plain list, the same way the cockpit folds a column rather than
 squeezing it. A list longer than the pane scrolls to keep the row the keys act
 on in view.
 
-**The box is sized to the terminal and to what it has to say.** Every modal grows
-with the window up to a ceiling of its own — the pickers are the widest, the help
-pane next, and the boxes that ask one question stop soonest, since a label and
-the value beside it read worse spread across an ultrawide than they do in a
-column. The width a wide terminal adds past that goes to the preview rather than
-the list: a session row is a time, a title and a folder, and beyond the width
-those need, more columns only pad the gaps between them, while the preview turns
-every extra column into a sentence that fits on one line. Height works the same
-way in reverse — the picker settles at the height of its taller half rather than
-filling the screen, so a two-message conversation is not drawn under a column of
-blank rows.
+**The box is sized to the terminal, not to what it happens to be showing.** Every
+modal grows in width with the window up to a ceiling of its own — the pickers are
+the widest, the help pane next, and the boxes that ask one question stop soonest,
+since a label and the value beside it read worse spread across an ultrawide than
+they do in a column. The width a wide terminal adds past that goes to the preview
+rather than the list: a session row is a time, a title and a folder, and beyond
+the width those need, more columns only pad the gaps between them, while the
+preview turns every extra column into a sentence that fits on one line.
+
+Height is the frame's, and it does not move. The pickers, the item list of a
+share, and the handoff confirmation are drawn at the full height the frame allows
+and padded out to it, however much the row under the cursor has to say. Sizing
+them to their content instead — which is what they used to do — meant a different
+box for every row: stepping from a long conversation to a two-message one
+collapsed the list beside it as well, and the row being aimed at moved while it
+was being aimed at. A status line inside one of these boxes comes out of that
+height rather than being added to it, so a message about the last keypress does
+not push the box two rows taller either. The boxes that ask one question are
+still as tall as the question.
 
 The pane is filled from the same transcripts the handoff brief is built from, so
 it shows nothing for a provider whose conversations are not read back —
