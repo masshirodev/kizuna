@@ -104,8 +104,15 @@ type tuiModel struct {
 	workingDir string
 	folderPath string
 	params     string
-	instances  []profileInstance
-	instance   int
+	// arguments is what the argument prompt offers to reuse, and argumentRow is
+	// the row picked from it, or -1 while the text is being typed. argumentDraft is
+	// what was typed before a row was picked, so stepping back up to the field
+	// returns it rather than leaving the recalled set in its place.
+	arguments     argumentHistory
+	argumentRow   int
+	argumentDraft string
+	instances     []profileInstance
+	instance      int
 	// record indexes recent while the resume picker is open. It is separate
 	// from instance because the two pickers offer different things: one lists
 	// processes, the other lists transcripts.
@@ -510,9 +517,7 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "p":
 		if hasSelection {
-			m.mode = tuiParams
-			m.params = ""
-			m.clearStatus()
+			m.openParams()
 		}
 	case "l":
 		if hasSelection {
@@ -1061,6 +1066,19 @@ func (m *tuiModel) toggleAutoSwap() {
 	m.setStatus(statusOK, "auto-swap off — H asks where the work should go")
 }
 
+// openParams opens the argument prompt with the history as it is on disk now,
+// so a set pinned from another TUI since this one started is already there.
+func (m *tuiModel) openParams() {
+	m.mode = tuiParams
+	m.params, m.argumentDraft, m.argumentRow = "", "", -1
+	m.clearStatus()
+	history, err := loadArgumentHistory()
+	if err != nil {
+		m.setStatus(statusErr, err.Error())
+	}
+	m.arguments = history
+}
+
 func (m tuiModel) updateParams(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
@@ -1079,20 +1097,113 @@ func (m tuiModel) updateParams(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mode = tuiList
-		return m, m.execProfile(profile, profileRunArgs(profile, args), false)
+		cmd := m.execProfile(profile, profileRunArgs(profile, args), false)
+		if cmd != nil && len(args) > 0 {
+			set := argumentSet{Args: args, Profile: profile.Name, Provider: profile.Provider, Used: m.clock()}
+			if _, err := updateArgumentHistory(func(history argumentHistory) argumentHistory {
+				return history.record(set)
+			}); err != nil {
+				// The launch goes ahead: remembering the arguments is a
+				// convenience, and the session is what was asked for.
+				m.log = append(m.log, logEntry{kind: statusErr, text: "arguments not remembered: " + err.Error()})
+			}
+		}
+		return m, cmd
+	case "down":
+		if m.argumentRow < len(m.arguments.entries())-1 {
+			if m.argumentRow < 0 {
+				m.argumentDraft = m.params
+			}
+			m.pickArgumentRow(m.argumentRow + 1)
+		}
+		return m, nil
+	case "up":
+		if m.argumentRow > 0 {
+			m.pickArgumentRow(m.argumentRow - 1)
+		} else if m.argumentRow == 0 {
+			m.argumentRow, m.params = -1, m.argumentDraft
+		}
+		return m, nil
+	case "ctrl+p":
+		m.toggleArgumentPin()
+		return m, nil
 	case "backspace", "ctrl+h":
 		if runes := []rune(m.params); len(runes) > 0 {
 			m.params = string(runes[:len(runes)-1])
 		}
+		m.argumentRow = -1
 		return m, nil
 	case "ctrl+u":
 		m.params = ""
+		m.argumentRow = -1
 		return m, nil
 	}
 	if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
+		// Editing a recalled set makes it a new one, so the row it came from is
+		// no longer the thing a pin or the highlight would be about.
 		m.params += string(msg.Runes)
+		m.argumentRow = -1
 	}
 	return m, nil
+}
+
+// pickArgumentRow moves the highlight and recalls that row into the field,
+// where it can be run as it is or edited first.
+func (m *tuiModel) pickArgumentRow(row int) {
+	entries := m.arguments.entries()
+	if row < 0 || row >= len(entries) {
+		return
+	}
+	m.argumentRow = row
+	m.params = formatArguments(entries[row].Args)
+}
+
+// toggleArgumentPin pins or unpins the highlighted row, or, with no row
+// highlighted, what has been typed. The highlight follows the set to where it
+// lands, so pressing the key twice is a no-op rather than a pin on whatever
+// slid into the row it left.
+func (m *tuiModel) toggleArgumentPin() {
+	set := argumentSet{}
+	if entries := m.arguments.entries(); m.argumentRow >= 0 && m.argumentRow < len(entries) {
+		set = entries[m.argumentRow]
+	} else {
+		args, err := parseArguments(m.params)
+		if err != nil {
+			m.setStatus(statusErr, err.Error())
+			return
+		}
+		if len(args) == 0 {
+			m.setStatus(statusErr, "type some arguments, or pick a row, to pin")
+			return
+		}
+		set.Args = args
+	}
+	history, err := updateArgumentHistory(func(history argumentHistory) argumentHistory {
+		return history.togglePin(set)
+	})
+	if err != nil {
+		m.setStatus(statusErr, err.Error())
+		return
+	}
+	m.arguments = history
+	pinned := history.pinnedIndex(set.Args)
+	label := formatArguments(set.Args)
+	if pinned >= 0 {
+		m.setStatus(statusOK, "pinned "+label)
+	} else {
+		m.setStatus(statusOK, "unpinned "+label)
+	}
+	if m.argumentRow < 0 {
+		return
+	}
+	switch recent := history.recentIndex(set.Args); {
+	case pinned >= 0:
+		m.argumentRow = pinned
+	case recent >= 0:
+		m.argumentRow = len(history.Pinned) + recent
+	default:
+		m.argumentRow = -1
+	}
 }
 
 func (m tuiModel) updateKill(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1644,18 +1755,85 @@ func (m tuiModel) folderContent() []string {
 	}
 }
 
-func (m tuiModel) paramsContent() []string {
+// paramsContent is the field and, under it, the sets there are to reuse:
+// pinned ones first, then the most recent. Each row names the account it last
+// went to, because the list is shared by every provider and a flag is only
+// meaningful to the CLI it was written for.
+func (m tuiModel) paramsContent(width, rows int) []string {
 	name := "profile"
 	if profile, ok := m.selectedProfile(); ok {
 		name = profile.Name
 	}
-	return []string{
+	value := max(width-modalPadding, 8)
+	lines := []string{
 		headerTitleStyle.Render("Run " + name + " with arguments"),
 		"",
 		fieldLabelActive.Render(pad("Arguments", 12)) + " " + fieldValueStyle.Render(m.params) + cursorStyle.Render(" "),
 		"",
-		hintStyle.Render("Added after the profile default arguments. Shell-style quotes are supported."),
 	}
+	// The field, the blank under it, and the blank above the hint are what the
+	// list shares the box's rows with.
+	list, cursor := m.argumentRows(value)
+	lines = append(lines, windowRows(list, cursor, max(rows-3, 4))...)
+	return append(lines, "",
+		hintStyle.Render(truncate("Added after the profile default arguments. Shell-style quotes are supported.", value)))
+}
+
+// argumentRows renders both sections and reports which line the highlight is
+// on, so a list taller than the box can be windowed around it.
+//
+// The columns are as wide as what is in them rather than an even split of the
+// box, so on a wide terminal the account stays beside the set it belongs to
+// instead of drifting to the far edge. The arguments give way first when there
+// is not room for both, since the account is what tells two similar sets apart.
+func (m tuiModel) argumentRows(width int) ([]string, int) {
+	entries := m.arguments.entries()
+	if len(entries) == 0 {
+		return []string{hintStyle.Render(truncate(fmt.Sprintf("Arguments you run are kept here, the last %d of them — ctrl-p pins a set for good.", recentArgumentLimit), width))}, 0
+	}
+	argsWidth, profileWidth, providerWidth := 0, len("never run"), 0
+	for _, set := range entries {
+		argsWidth = max(argsWidth, lipgloss.Width(formatArguments(set.Args)))
+		profileWidth = max(profileWidth, lipgloss.Width(set.Profile))
+		providerWidth = max(providerWidth, lipgloss.Width(set.Provider))
+	}
+	profileWidth, providerWidth = min(profileWidth, 20), min(providerWidth, 12)
+	const bar, gap = 2, 2
+	argsWidth = max(min(argsWidth, width-bar-gap-profileWidth-1-providerWidth), 8)
+	var lines []string
+	cursor, row := 0, 0
+	section := func(title string, sets []argumentSet) {
+		lines = append(lines, sectionLabelStyle.Render(title))
+		if len(sets) == 0 {
+			lines = append(lines, dimStyle.Render("  none"))
+		}
+		for _, set := range sets {
+			selected := row == m.argumentRow
+			if selected {
+				cursor = len(lines)
+			}
+			ink := selectedPen(selected)
+			marker := ink.render(lipgloss.NewStyle(), "  ")
+			if selected {
+				marker = ink.render(cursorBarStyle, "▌ ")
+			}
+			// A set pinned straight from the field has never been run anywhere,
+			// and says so rather than borrowing whichever account was selected
+			// when it was pinned.
+			account := ink.render(dimStyle, pad("never run", profileWidth+1+providerWidth))
+			if set.Profile != "" {
+				account = ink.render(dimStyle, pad(truncate(set.Profile, profileWidth), profileWidth)+" ") +
+					ink.render(providerStyle(set.Provider), pad(truncate(set.Provider, providerWidth), providerWidth))
+			}
+			lines = append(lines, marker+
+				ink.render(fieldValueStyle, pad(truncate(formatArguments(set.Args), argsWidth), argsWidth+gap))+
+				account)
+			row++
+		}
+	}
+	section("PINNED", m.arguments.Pinned)
+	section("RECENT", m.arguments.Recent)
+	return lines, cursor
 }
 
 func (m tuiModel) installContent(width int) []string {
@@ -2109,7 +2287,7 @@ func helpSections() [][]helpSection {
 		{
 			{"LAUNCH", []helpEntry{
 				{"↵", "run the selected profile"},
-				{"p", "run with extra arguments"},
+				{"p", "run with extra, recent, or pinned arguments"},
 				{"R", "resume a recent conversation"},
 				{"h", "open a running session"},
 				{"H", "hand a session to another account"},
@@ -2174,7 +2352,7 @@ func (m tuiModel) helpEntries() []helpEntry {
 	case m.mode == tuiHandoffBrief:
 		return []helpEntry{{"↵", "open it there"}, {"e", "edit the brief"}, {"esc", "keep the brief"}}
 	case m.mode == tuiParams:
-		return []helpEntry{{"↵", "run"}, {"ctrl-u", "clear"}, {"esc", "cancel"}}
+		return []helpEntry{{"↵", "run"}, {"↑↓", "reuse a set"}, {"ctrl-p", "pin"}, {"ctrl-u", "clear"}, {"esc", "cancel"}}
 	case m.mode == tuiClone:
 		return []helpEntry{{"↵", "clone"}, {"ctrl-u", "clear"}, {"esc", "cancel"}}
 	case m.mode == tuiShareFrom:

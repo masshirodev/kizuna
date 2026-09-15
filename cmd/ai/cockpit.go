@@ -597,7 +597,7 @@ func (m tuiModel) modalView(frame layout) string {
 	case tuiFolder:
 		content = m.folderContent()
 	case tuiParams:
-		content = m.paramsContent()
+		content = m.paramsContent(width, rows)
 	case tuiClone:
 		content = m.cloneContent(width)
 	case tuiShareFrom:
