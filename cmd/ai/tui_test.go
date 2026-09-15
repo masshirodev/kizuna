@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -679,6 +680,165 @@ func TestParamsPromptCollectsArgumentsAndReportsQuoteErrors(t *testing.T) {
 	got = updated.(tuiModel)
 	if cmd != nil || got.mode != tuiParams || !strings.Contains(got.status, "unclosed quote") {
 		t.Fatalf("unclosed quote was accepted: mode %v, status %q", got.mode, got.status)
+	}
+}
+
+// paramsKey sends one key to the argument prompt.
+func paramsKey(t *testing.T, m tuiModel, msg tea.KeyMsg) tuiModel {
+	t.Helper()
+	updated, _ := m.updateParams(msg)
+	return updated.(tuiModel)
+}
+
+func seedArgumentHistory(t *testing.T, history argumentHistory) {
+	t.Helper()
+	if err := saveArgumentHistory(history); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The prompt offers pinned sets and then the recent ones, whichever provider
+// they ran on, and each row says which account that was.
+func TestParamsPromptListsPinnedAndRecentArgumentsFromEveryProvider(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	seedArgumentHistory(t, argumentHistory{
+		Pinned: []argumentSet{{Args: []string{"--search"}, Profile: "codex-work", Provider: "codex"}},
+		Recent: []argumentSet{{Args: []string{"--model", "opus 5"}, Profile: "claude-personal", Provider: "claude"}},
+	})
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m = press(t, m, "p")
+	view := m.View()
+	for _, want := range []string{"PINNED", "RECENT", "--search", "--model 'opus 5'", "claude-personal", "claude", "ctrl-p"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("argument prompt is missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Index(view, "--search") > strings.Index(view, "opus 5") {
+		t.Fatalf("pinned sets are not listed first:\n%s", view)
+	}
+}
+
+func TestParamsPromptSaysWhatTheListIsBeforeAnythingHasRun(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := press(t, wideModel(testProfiles()), "p")
+	if view := m.View(); !strings.Contains(view, "Arguments you run are kept here") {
+		t.Fatalf("empty argument history has no explanation:\n%s", view)
+	}
+	if got := paramsKey(t, m, tea.KeyMsg{Type: tea.KeyDown}); got.argumentRow != -1 {
+		t.Fatalf("down moved into an empty list: row %d", got.argumentRow)
+	}
+}
+
+func TestParamsPromptRecallsARowAndGivesTheDraftBack(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	seedArgumentHistory(t, argumentHistory{
+		Pinned: []argumentSet{{Args: []string{"--search"}}},
+		Recent: []argumentSet{{Args: []string{"--model", "gpt 5"}}},
+	})
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m = press(t, m, "p")
+	m = paramsKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("--half")})
+
+	m = paramsKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = paramsKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.argumentRow != 1 || m.params != "--model 'gpt 5'" {
+		t.Fatalf("row %d recalled %q, want the recent set quoted as it parses", m.argumentRow, m.params)
+	}
+	if got := paramsKey(t, m, tea.KeyMsg{Type: tea.KeyDown}); got.argumentRow != 1 {
+		t.Fatalf("down ran off the end of the list: row %d", got.argumentRow)
+	}
+
+	m = paramsKey(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	m = paramsKey(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if m.argumentRow != -1 || m.params != "--half" {
+		t.Fatalf("back at the field: row %d, text %q, want the draft", m.argumentRow, m.params)
+	}
+
+	// Editing a recalled set makes it a new one, detached from its row.
+	m = paramsKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = paramsKey(t, m, tea.KeyMsg{Type: tea.KeySpace, Runes: []rune(" ")})
+	if m.argumentRow != -1 || m.params != "--search " {
+		t.Fatalf("typing over a recalled row: row %d, text %q", m.argumentRow, m.params)
+	}
+}
+
+func TestParamsPromptPinsTheRowAndFollowsIt(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	seedArgumentHistory(t, argumentHistory{Recent: []argumentSet{
+		{Args: []string{"-a"}, Profile: "claude-personal", Provider: "claude"},
+		{Args: []string{"-b"}, Profile: "codex-work", Provider: "codex"},
+	}})
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m = press(t, m, "p")
+	m = paramsKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = paramsKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = paramsKey(t, m, tea.KeyMsg{Type: tea.KeyCtrlP})
+	if got := argumentLabels(m.arguments.Pinned); !slices.Equal(got, []string{"-b"}) || m.argumentRow != 0 {
+		t.Fatalf("pinned %v with the highlight on row %d, want -b pinned and still highlighted", got, m.argumentRow)
+	}
+	if !strings.Contains(m.status, "pinned -b") {
+		t.Fatalf("status = %q", m.status)
+	}
+	onDisk, err := loadArgumentHistory()
+	if err != nil || !slices.Equal(argumentLabels(onDisk.Pinned), []string{"-b"}) {
+		t.Fatalf("the pin was not written: %+v, %v", onDisk, err)
+	}
+
+	m = paramsKey(t, m, tea.KeyMsg{Type: tea.KeyCtrlP})
+	if len(m.arguments.Pinned) != 0 || m.argumentRow != 0 || m.params != "-b" {
+		t.Fatalf("second press did not undo the first: pinned %v, row %d", argumentLabels(m.arguments.Pinned), m.argumentRow)
+	}
+}
+
+func TestParamsPromptPinsWhatWasTyped(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m = press(t, m, "p")
+	if got := paramsKey(t, m, tea.KeyMsg{Type: tea.KeyCtrlP}); !strings.Contains(got.status, "to pin") {
+		t.Fatalf("pinning nothing: status %q", got.status)
+	}
+	m = paramsKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(`--model "gpt 5"`)})
+	m = paramsKey(t, m, tea.KeyMsg{Type: tea.KeyCtrlP})
+	if len(m.arguments.Pinned) != 1 || !slices.Equal(m.arguments.Pinned[0].Args, []string{"--model", "gpt 5"}) {
+		t.Fatalf("pinned = %+v, want the typed set", m.arguments.Pinned)
+	}
+	if m.argumentRow != -1 || m.mode != tuiParams {
+		t.Fatalf("pinning from the field moved on: row %d, mode %v", m.argumentRow, m.mode)
+	}
+	if view := m.View(); !strings.Contains(view, "never run") {
+		t.Fatalf("a set pinned before running claims an account:\n%s", view)
+	}
+}
+
+func TestParamsPromptRemembersTheArgumentsItLaunchedWith(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m.workingDir = t.TempDir()
+	m.now = time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	m = press(t, m, "p")
+	m = paramsKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("--search")})
+	updated, cmd := m.updateParams(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(tuiModel)
+	if got.unlock != nil {
+		defer got.unlock()
+	}
+	if cmd == nil || got.mode != tuiList {
+		t.Fatalf("the prompt did not launch: mode %v, cmd %v, status %q", got.mode, cmd != nil, got.status)
+	}
+	history, err := loadArgumentHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Recent) != 1 {
+		t.Fatalf("recent = %v, want the launched set", argumentLabels(history.Recent))
+	}
+	if set := history.Recent[0]; set.Profile != "codex-work" || set.Provider != "codex" || !set.Used.Equal(m.now) {
+		t.Fatalf("recorded %+v, want the account it launched and when", set)
 	}
 }
 

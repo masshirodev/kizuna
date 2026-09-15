@@ -655,7 +655,8 @@ into a picker and resumes the row you choose.
 Use the arrow keys or `j`/`k` to select a profile:
 
 - Enter runs the selected profile.
-- `p` runs it with extra arguments typed at the prompt.
+- `p` runs it with extra arguments typed at the prompt, or with a recent or
+  pinned set picked from under it.
 - `R` resumes one of the recent sessions, in the folder it ran in.
 - `h` hijacks a running instance: it opens that instance's conversation in this
   terminal, leaving the original process running.
@@ -693,6 +694,39 @@ conversation it has open and the folder it was launched in, so two instances of
 the same profile can be told apart by what they are doing rather than by PID.
 The resume picker — `R` — lists transcripts rather than processes, so its rows
 are dated instead of numbered.
+
+### Recent and pinned arguments
+
+The `p` prompt lists what it has been given before under the field: `PINNED`
+sets first, in the order they were pinned, then the last five sets run under
+`RECENT`, newest first. Only a launch that actually started is recorded, and
+only when it carried arguments — a plain run is what Enter is for.
+
+The list is shared by every profile and every provider, which is the point:
+the `--model` you gave one Claude account is one keypress away on the next.
+It is also the risk, since a flag one CLI understands is one another rejects,
+so each row names the profile and provider it last ran on. Running a set that
+is already listed moves it to the front rather than listing it twice, and
+updates which account it names.
+
+- `↓` and `↑` move through the rows. A picked row is copied into the field, so
+  Enter runs it as it is and typing edits it first. Editing detaches it from the
+  row it came from. Going back up past the first row restores what you had
+  typed before.
+- `ctrl-p` pins the highlighted row, or unpins it if it is already pinned. With
+  no row highlighted it pins whatever is typed in the field, without running
+  it; such a set reads `never run` until it has been.
+
+A pin stays until it is unpinned, and running it updates it in place rather
+than listing it again under `RECENT`, so it does not use up one of the five.
+Unpinning puts the set back at the front of `RECENT`, where the next five runs
+age it out like any other.
+
+The history lives in `~/.config/ai/arguments.json`, created `0600` because a
+set can carry a prompt as well as flags. Every change rereads the file first,
+so two open TUIs do not undo each other's pins, and a file that cannot be
+parsed is reported and left untouched rather than replaced with an empty
+history.
 
 ## Handing a session to another account
 
