@@ -239,7 +239,7 @@ func TestTerminateProfileLockStopsOnlySelectedInstance(t *testing.T) {
 		}
 	}
 
-	if err := terminateProfileLock(firstDir); err != nil {
+	if _, err := terminateProfileLock(firstDir); err != nil {
 		t.Fatal(err)
 	}
 	if err := first.Wait(); err == nil {

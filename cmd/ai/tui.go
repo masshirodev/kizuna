@@ -99,7 +99,7 @@ type tuiModel struct {
 	width      int
 	height     int
 	running    bool
-	unlock     func()
+	unlock     func() string
 	usage      map[string]usageRemaining
 	workingDir string
 	folderPath string
@@ -227,6 +227,15 @@ func (m *tuiModel) setStatus(kind statusKind, message string) {
 	}
 }
 
+// statusSuffix appends a merge note to a status message, or nothing when the
+// merge had nothing worth reporting.
+func statusSuffix(note string) string {
+	if note == "" {
+		return ""
+	}
+	return " (" + note + ")"
+}
+
 func (m *tuiModel) clearStatus() {
 	m.statusKind = statusNone
 	m.status = ""
@@ -251,6 +260,11 @@ func runTUI() error {
 		workingDir: workingDir,
 		autoSwap:   cfg.Settings.AutoSwap,
 		lineage:    handedOff(readLineage()),
+	}
+	// Same reclaim as the CLI path: a TUI opened after a power-off or a
+	// term kill merges whatever the dead launches left behind.
+	for _, note := range reclaimStrayIsolatedInstances(cfg) {
+		m.log = append([]logEntry{{kind: statusOK, text: note}}, m.log...)
 	}
 	_, err = tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
@@ -362,12 +376,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case processFinishedMsg:
 		m.running = false
+		mergeNote := ""
 		if m.unlock != nil {
-			m.unlock()
+			mergeNote = m.unlock()
 			m.unlock = nil
 		}
 		if msg.err != nil {
-			m.setStatus(statusErr, "process exited: "+msg.err.Error())
+			m.setStatus(statusErr, "process exited: "+msg.err.Error()+statusSuffix(mergeNote))
+		} else if mergeNote != "" {
+			m.setStatus(statusOK, mergeNote)
 		} else {
 			m.setStatus(statusOK, "process finished")
 		}
@@ -761,6 +778,14 @@ func (m tuiModel) updateRecent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// The picker stays open: the other rows are still resumable, and
 			// this one is only unreachable because its folder moved.
 			m.setStatus(statusErr, err.Error())
+			return m, nil
+		}
+		// A fresh launch seeds from the profile store, so a session that only
+		// exists in a running instance's private copy would resume into
+		// nothing. The picker shows it (the live panel reads the union), but
+		// reopening waits for the merge.
+		if profile.Provider == "opencode" && !opencodeSessionInProfileDB(profile, record.session.id) {
+			m.setStatus(statusErr, "that session is still in a running instance and has not merged yet; stop that instance first")
 			return m, nil
 		}
 		args, err := reopenArgs(profile.Provider, record.session)
@@ -1222,16 +1247,17 @@ func (m tuiModel) updateKill(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		instance := m.instances[m.instance]
-		if err := terminateProfileLock(instance.lockDir); err != nil {
+		note, err := terminateProfileLock(instance.lockDir)
+		if err != nil {
 			var staleErr staleProfileLockError
 			if errors.As(err, &staleErr) {
-				m.setStatus(statusOK, staleErr.Error())
+				m.setStatus(statusOK, staleErr.Error()+statusSuffix(note))
 			} else {
 				m.setStatus(statusErr, "stop failed: "+err.Error())
 			}
 		} else {
 			name, _ := m.selectedProfile()
-			m.setStatus(statusOK, fmt.Sprintf("stopped %s instance %d (PID %d)", name.Name, m.instance+1, instance.pid))
+			m.setStatus(statusOK, fmt.Sprintf("stopped %s instance %d (PID %d)", name.Name, m.instance+1, instance.pid)+statusSuffix(note))
 		}
 		m.instances = nil
 		m.mode = tuiList
@@ -1541,7 +1567,7 @@ func (m *tuiModel) execProfileIn(profile Profile, args []string, exclusive bool,
 		return nil
 	}
 	var lockDir string
-	var unlock func()
+	var unlock func() string
 	if exclusive {
 		lockDir, unlock, err = acquireExclusiveRunLock(workdir)
 	} else {
@@ -1553,7 +1579,9 @@ func (m *tuiModel) execProfileIn(profile Profile, args []string, exclusive bool,
 	}
 	cmd := exec.Command(profile.Command, args...)
 	cmd.Dir = folder
-	cmd.Env = launchEnvironment(profile, os.Environ())
+	// The environment depends on the lock directory: an isolated OpenCode
+	// instance points its data/state homes at the instance, not the profile.
+	cmd.Env = launchEnvironment(profile, workdir, lockDir, os.Environ())
 	if cmd, err = applyIndicator(cmd, profile, lockDir); err != nil {
 		unlock()
 		m.setStatus(statusErr, err.Error())
@@ -2403,37 +2431,83 @@ func terminateProfile(profile Profile) error {
 	}
 	var errs []error
 	for _, lockDir := range lockDirs {
-		if err := terminateProfileLock(lockDir); err != nil {
+		if _, err := terminateProfileLock(lockDir); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
 }
 
-func terminateProfileLock(lockDir string) error {
+func terminateProfileLock(lockDir string) (string, error) {
 	// A wrapped launch runs the CLI under a tmux server of its own; killing the
 	// client alone would leave it running headless on its socket.
 	stopTmuxServer(lockDir)
 	pid, err := profileLockPID(lockDir)
 	if err != nil {
-		return err
+		return "", err
 	}
 	process, err := os.FindProcess(pid)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := process.Signal(syscall.Signal(0)); errors.Is(err, syscall.ESRCH) {
+		if note, ok := retireStaleLockDir(lockDir); ok {
+			return note, nil
+		}
 		removeProfileLock(lockDir)
-		return staleProfileLockError{pid: pid}
+		return "", staleProfileLockError{pid: pid}
 	}
 	if err := process.Kill(); err != nil {
 		if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
+			if note, ok := retireStaleLockDir(lockDir); ok {
+				return note, nil
+			}
 			removeProfileLock(lockDir)
-			return nil
+			return "", nil
 		}
-		return err
+		return "", err
 	}
-	return nil
+	// A kill from here usually self-heals: the launcher waiting on the child
+	// exits through the normal path and merges on the way out. This retire is
+	// the backstop for the launches that cannot — and for the store left
+	// behind while the victim finishes dying, the wait below comes first.
+	if waitForPIDDeath(pid, 5*time.Second) {
+		if note, ok := retireStaleLockDir(lockDir); ok {
+			return note, nil
+		}
+	}
+	return "", nil
+}
+
+// retireStaleLockDir merges and removes an isolated OpenCode instance
+// directory, for the kill paths and the stale-lock branches. It reports
+// whether the directory was an isolated instance at all; anything else keeps
+// the old remove-the-lock-files behavior in the caller.
+func retireStaleLockDir(lockDir string) (string, bool) {
+	if !isIsolatedInstanceDir(lockDir) {
+		return "", false
+	}
+	workdir, profile, ok := profileOfInstanceDir(lockDir)
+	if !ok {
+		return "", false
+	}
+	if note := retireIsolatedInstance(workdir, profile, lockDir); note != "" {
+		return note, true
+	}
+	return "cleared stale instance store", true
+}
+
+// waitForPIDDeath polls for a process to actually exit after a kill, so a
+// merge that follows does not open a database its writer still holds.
+func waitForPIDDeath(pid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
 }
 
 func removeProfileLock(lockDir string) {

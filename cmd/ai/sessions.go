@@ -64,7 +64,7 @@ func claudeLiveSessions(profile Profile) []claudeAgent {
 	ctx, cancel := context.WithTimeout(context.Background(), sessionLookupTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, profile.Command, "agents", "--json")
-	cmd.Env = launchEnvironment(profile, os.Environ())
+	cmd.Env = launchEnvironment(profile, "", "", os.Environ())
 	output, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -227,31 +227,90 @@ func recentSessions(profile Profile, limit int) []recordedSession {
 // the list-then-read-each-file shape the other two providers need. A missing
 // database (no session run yet) or any query error is treated the same as
 // "nothing to show" rather than surfaced, matching every other reader here.
+//
+// With concurrent instances, each running launch owns a private copy of the
+// store. The read unions the profile database with every live instance's
+// copy, so the live panel names what every instance is doing. Stale,
+// not-yet-merged copies are deliberately excluded: only merged sessions can
+// actually be reopened (a fresh launch seeds from the profile database), and
+// the next ai start merges the strays in.
 func opencodeSessions(profile Profile, limit int) []recordedSession {
+	paths := opencodeSessionDBs(profile)
+	if len(paths) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var records []recordedSession
+	for index, dbPath := range paths {
+		rows, err := queryOpenCodeSessions(dbPath, 0)
+		if err != nil {
+			if index == 0 {
+				return nil
+			}
+			continue
+		}
+		for _, record := range rows {
+			if seen[record.session.id] {
+				continue
+			}
+			seen[record.session.id] = true
+			records = append(records, record)
+		}
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].when.After(records[j].when) })
+	if limit > 0 && len(records) > limit {
+		records = records[:limit]
+	}
+	return records
+}
+
+// opencodeSessionDBs lists the session stores to union: the profile's, then
+// every live isolated instance's copy.
+func opencodeSessionDBs(profile Profile) []string {
 	root, err := profileRoot()
 	if err != nil {
 		return nil
 	}
-	dbPath := filepath.Join(root, profile.Name, "data", "opencode", "opencode.db")
-	if _, err := os.Stat(dbPath); err != nil {
-		return nil
+	workdir := filepath.Join(root, profile.Name)
+	var paths []string
+	if dbPath := filepath.Join(workdir, "data", "opencode", "opencode.db"); fileExists(dbPath) {
+		paths = append(paths, dbPath)
 	}
+	lockDirs, err := activeProfileInstanceLocks(workdir)
+	if err != nil {
+		return paths
+	}
+	for _, lockDir := range lockDirs {
+		if !isIsolatedInstanceDir(lockDir) {
+			continue
+		}
+		if dbPath := filepath.Join(lockDir, "data", "opencode", "opencode.db"); fileExists(dbPath) {
+			paths = append(paths, dbPath)
+		}
+	}
+	return paths
+}
+
+func queryOpenCodeSessions(dbPath string, limit int) ([]recordedSession, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer db.Close()
 
-	rows, err := db.Query(
-		"SELECT id, title, directory, time_created FROM session ORDER BY time_created DESC LIMIT ?",
-		limit,
-	)
+	query := "SELECT id, title, directory, time_created FROM session ORDER BY time_created DESC"
+	var rows *sql.Rows
+	if limit > 0 {
+		rows, err = db.Query(query+" LIMIT ?", limit)
+	} else {
+		rows, err = db.Query(query)
+	}
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 
-	records := make([]recordedSession, 0, limit)
+	var records []recordedSession
 	for rows.Next() {
 		var id, title, directory string
 		var createdMillis int64
@@ -264,7 +323,7 @@ func opencodeSessions(profile Profile, limit int) []recordedSession {
 			when:    time.UnixMilli(createdMillis),
 		})
 	}
-	return records
+	return records, rows.Err()
 }
 
 // claudeTranscripts lists a profile's Claude conversation logs newest first.
