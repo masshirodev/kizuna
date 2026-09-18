@@ -94,6 +94,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// Power-offs, term kills, and SIGKILLs never run an exit merge. Reclaim
+	// those stray stores now, before anything else touches the profiles.
+	for _, note := range reclaimStrayIsolatedInstances(cfg) {
+		fmt.Fprintln(stdout, note)
+	}
 
 	switch args[0] {
 	case "profile":
@@ -360,7 +365,7 @@ func launchExternal(command string, args []string, profile Profile, stdout, stde
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.Env = launchEnvironment(profile, os.Environ())
+	cmd.Env = launchEnvironment(profile, workdir, workdir, os.Environ())
 	return runLockedCommand(cmd, workdir, sessionTitle(profile))
 }
 
@@ -381,11 +386,13 @@ func launchProfileCommand(command string, args []string, profile Profile, stdout
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.Env = launchEnvironment(profile, os.Environ())
 	lockDir, unlock, err := acquireProfileRunLock(profile, workdir)
 	if err != nil {
 		return err
 	}
+	// The environment depends on the lock directory: an isolated OpenCode
+	// instance points its data/state homes at the instance, not the profile.
+	cmd.Env = launchEnvironment(profile, workdir, lockDir, os.Environ())
 	cmd, err = applyIndicator(cmd, profile, lockDir)
 	if err != nil {
 		unlock()
@@ -394,8 +401,12 @@ func launchProfileCommand(command string, args []string, profile Profile, stdout
 	return runCommandWithLock(cmd, lockDir, unlock, sessionTitle(profile))
 }
 
-func runCommandWithLock(cmd *exec.Cmd, lockDir string, unlock func(), title string) error {
-	defer unlock()
+func runCommandWithLock(cmd *exec.Cmd, lockDir string, unlock func() string, title string) error {
+	defer func() {
+		if note := unlock(); note != "" {
+			fmt.Fprintln(os.Stderr, note)
+		}
+	}()
 	// A no-op unless this launch was wrapped; the socket outlives the tmux
 	// server that created it.
 	defer stopTmuxServer(lockDir)
@@ -796,15 +807,25 @@ func cleanEnvironment(values []string) []string {
 // launchEnvironment removes state selectors inherited from an outer AI CLI
 // and then applies this profile's selectors. Antigravity needs three additional
 // removals before its private HOME and empty D-Bus address are appended; doing
-// that here avoids changing HOME for every other provider.
-func launchEnvironment(profile Profile, values []string) []string {
+// that here avoids changing HOME for every other provider. An isolated
+// OpenCode instance (lockDir carrying a seed receipt) points its data and
+// state homes at the instance while keeping the profile's config tree.
+func launchEnvironment(profile Profile, workdir, lockDir string, values []string) []string {
 	cleaned := cleanEnvironment(values)
 	if profile.Provider == "antigravity" {
 		cleaned = withoutEnv(cleaned, antigravityHomeEnv)
 		cleaned = withoutEnv(cleaned, antigravityDBusEnv)
 		cleaned = withoutEnv(cleaned, antigravityCacheEnv)
 	}
-	return append(cleaned, profileEnv(profile)...)
+	markers := []string{profileNameEnv + "=" + profile.Name, profileProviderEnv + "=" + profile.Provider}
+	if usesIsolatedDataDir(profile) && isIsolatedInstanceDir(lockDir) {
+		return append(cleaned, append(markers,
+			"XDG_CONFIG_HOME="+filepath.Join(workdir, "config"),
+			"XDG_DATA_HOME="+filepath.Join(lockDir, "data"),
+			"XDG_STATE_HOME="+filepath.Join(lockDir, "state"),
+		)...)
+	}
+	return append(cleaned, append(markers, profileEnv(profile)...)...)
 }
 
 func defaultCommand(provider string) string {
@@ -938,5 +959,5 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  ai version                              build revision and update check")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Providers with isolated state: codex, claude, antigravity, opencode, deepseek")
-	fmt.Fprintln(w, "Concurrent runs: codex and claude (Antigravity and OpenCode remain exclusive)")
+	fmt.Fprintln(w, "Concurrent runs: codex, claude, and opencode (opencode runs each instance on a private data copy that merges back on exit; Antigravity remains exclusive)")
 }

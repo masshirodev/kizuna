@@ -215,8 +215,31 @@ single `CODEX_HOME` or `CLAUDE_CONFIG_DIR`. This means one login per profile and
 the same settings and session history in every instance. The instance directory
 is removed when the CLI exits and reclaimed automatically after a crash.
 
-Antigravity and OpenCode profiles remain exclusive: a second launch is refused
-while the first is running because their file-backed OAuth stores are not known
+OpenCode profiles run concurrently too, but on a private copy instead of the
+shared store: each launch seeds `instances/run-XXX/data` and `.../state` from
+the profile's `data/opencode` (`opencode.db` snapshotted with `VACUUM INTO`,
+plus `auth.json`) and `state/opencode` (`model.json`, prompt history), and
+points `XDG_DATA_HOME`/`XDG_STATE_HOME` there while keeping the profile's
+`XDG_CONFIG_HOME`. Sharing one `opencode.db` between live processes corrupts
+it or fails with `SQLITE_BUSY` upstream, so the copy is the whole point. When
+the instance exits — normally, through `K`, or by crashing — its store merges
+back into the profile: new sessions and their messages by id, credential rows
+only when newer (`time_updated`), `auth.json` only when this instance actually
+refreshed it (a stale copy never overwrites a newer one), prompt history
+appended, logs carried over. Identity, migration, and event tables never
+cross. A merge that cannot finish keeps the store and retries on the next
+start: opening `ai` reclaims stray instances left by power-offs, killed
+terminals, and `kill -9`s before anything else runs.
+
+Two consequences. The recent list shows every live instance's sessions, but
+only merged ones can be resumed — a fresh launch seeds from the profile store,
+so resuming a session that still lives in another running instance is refused
+with the reason instead of opening nothing. And hijacking a live OpenCode
+instance stays refused for the same reason a second launch used to be: two
+writers on one session is exactly the shared-database bug.
+
+Antigravity profiles remain exclusive: a second launch is refused
+while the first is running because its file-backed OAuth stores are not known
 to coordinate token refreshes across processes.
 
 Antigravity does not expose a config-home override, so its entire `HOME` is the
@@ -492,6 +515,14 @@ carries its URL and headers. Nothing else does: a setting invented for one CLI
 means nothing in another, and guessing at a translation is how a copy silently
 changes what a server does. Copying a Codex server leaves its per-tool approval
 settings behind for exactly that reason.
+
+Header values cross verbatim, including how they name environment variables —
+and the CLIs disagree about that. Claude Code expands `${VAR}` in header
+values; OpenCode wants `{env:VAR}`. A copied remote server whose headers carry
+a token reference may therefore need that reference rewritten by hand in the
+destination's file before the server authenticates. `ai` does not rewrite it:
+the value is the server's credential plumbing, and mangling it silently would
+be worse than a server that fails loudly on its first call.
 
 Two consequences worth knowing. Every other key of the destination's file is
 left byte for byte as it was, in the order it was already in — `.claude.json` is
@@ -929,9 +960,11 @@ itself and are best effort:
 | Antigravity | not available; the instance is listed without a title |
 | OpenCode | not available; the instance is listed without a title |
 
-Hijacking an Antigravity or OpenCode profile is refused for the same reason a
+Hijacking an Antigravity profile is refused for the same reason a
 second launch is: its credential store is exclusive while the first process is
-running.
+running. Hijacking a live OpenCode instance is refused as well — reopening its
+conversation elsewhere would put two writers on one session — while resuming a
+merged OpenCode session works like any other.
 
 The selected-profile panel shows its default arguments and note. In the profile
 editor, Enter or Tab advances through all fields; on the final field it saves.
@@ -960,9 +993,12 @@ The launcher deliberately does not modify OpenUsage's database or copy tokens.
 It runs OpenUsage's supported installer with the selected profile environment,
 so Codex and Claude hooks are installed beside that profile's own state. Login,
 integration, and export remain exclusive operations and are refused while any
-instance is running. Antigravity and OpenCode also retain this exclusive lock
-for ordinary runs. If a launcher is interrupted, its lock is reclaimed
-automatically after all PIDs recorded in it have exited. Different profiles can
+instance is running. Antigravity also retains the exclusive lock
+for ordinary runs. OpenCode runs concurrently on private per-instance stores
+(see "Run a profile" above); stopping one from the TUI merges its store back
+first. If a launcher is interrupted, its lock is reclaimed
+automatically after all PIDs recorded in it have exited, and an OpenCode store
+left behind merges on the next start. Different profiles can
 still run at once.
 In the TUI, select a running profile and press `K` to choose an individual CLI
 process by PID, or stop all of that profile's instances. Each lock records the

@@ -54,23 +54,28 @@ func supportsConcurrentRuns(profile Profile) bool {
 }
 
 // acquireProfileRunLock gives Codex and Claude each a short-lived instance
-// directory while leaving their provider home shared. Providers whose auth
+// directory while leaving their provider home shared. OpenCode gets an
+// instance directory too, but on a private data/state copy with a merge back
+// on exit, because its SQLite store cannot be shared. Providers whose auth
 // storage is not concurrency-safe keep the original profile-wide lock.
-func acquireProfileRunLock(profile Profile, workdir string) (string, func(), error) {
+func acquireProfileRunLock(profile Profile, workdir string) (string, func() string, error) {
+	if usesIsolatedDataDir(profile) {
+		return acquireIsolatedInstance(profile, workdir)
+	}
 	if !supportsConcurrentRuns(profile) {
 		return acquireExclusiveRunLock(workdir)
 	}
 	return acquireProfileInstance(workdir)
 }
 
-func acquireExclusiveRunLock(workdir string) (string, func(), error) {
+func acquireExclusiveRunLock(workdir string) (string, func() string, error) {
 	unlock, err := acquireProfileLock(workdir)
 	return workdir, unlock, err
 }
 
 // acquireProfileLock is the exclusive side of the profile lock. Login,
 // integration, export, and providers without concurrent auth support use it.
-func acquireProfileLock(workdir string) (func(), error) {
+func acquireProfileLock(workdir string) (func() string, error) {
 	unlock, err := acquireProcessLock(workdir)
 	if err != nil {
 		return nil, err
@@ -83,31 +88,17 @@ func acquireProfileLock(workdir string) (func(), error) {
 		}
 		return nil, profileBusyError(workdir)
 	}
-	return unlock, nil
+	return func() string { unlock(); return "" }, nil
 }
 
-func acquireProfileInstance(workdir string) (string, func(), error) {
-	root := filepath.Join(workdir, instancesDirectory)
-	if err := os.MkdirAll(root, 0700); err != nil {
-		return "", nil, err
-	}
-	stagingDir, err := os.MkdirTemp(root, ".creating-")
+func acquireProfileInstance(workdir string) (string, func() string, error) {
+	instanceDir, err := createBareInstanceDir(workdir)
 	if err != nil {
 		return "", nil, err
 	}
-	unlockStaging, err := acquireProcessLock(stagingDir)
-	if err != nil {
-		_ = os.RemoveAll(stagingDir)
-		return "", nil, err
-	}
-	instanceDir := filepath.Join(root, "run-"+strings.TrimPrefix(filepath.Base(stagingDir), ".creating-"))
-	if err := os.Rename(stagingDir, instanceDir); err != nil {
-		unlockStaging()
-		_ = os.RemoveAll(stagingDir)
-		return "", nil, err
-	}
-	cleanup := func() {
+	cleanup := func() string {
 		_ = os.RemoveAll(instanceDir)
+		return ""
 	}
 
 	// Creating the instance before checking the exclusive lock closes both
@@ -122,6 +113,30 @@ func acquireProfileInstance(workdir string) (string, func(), error) {
 		return "", nil, profileBusyError(workdir)
 	}
 	return instanceDir, cleanup, nil
+}
+
+// createBareInstanceDir stages and publishes an empty instance directory.
+// The staging lock survives the rename as the instance's liveness lock, so a
+// directory fresh off the rename already reads as active to every scanner.
+func createBareInstanceDir(workdir string) (string, error) {
+	root := filepath.Join(workdir, instancesDirectory)
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return "", err
+	}
+	stagingDir, err := os.MkdirTemp(root, ".creating-")
+	if err != nil {
+		return "", err
+	}
+	if _, err := acquireProcessLock(stagingDir); err != nil {
+		_ = os.RemoveAll(stagingDir)
+		return "", err
+	}
+	instanceDir := filepath.Join(root, "run-"+strings.TrimPrefix(filepath.Base(stagingDir), ".creating-"))
+	if err := os.Rename(stagingDir, instanceDir); err != nil {
+		_ = os.RemoveAll(stagingDir)
+		return "", err
+	}
+	return instanceDir, nil
 }
 
 func acquireProcessLock(workdir string) (func(), error) {
@@ -251,6 +266,12 @@ func activeProfileInstanceLocks(workdir string) ([]string, error) {
 		}
 		if active {
 			locks = append(locks, instanceDir)
+			continue
+		}
+		// A stale isolated OpenCode store is the merger's, never the
+		// scanner's: it may hold sessions no other copy has. Everything else
+		// stale is runtime bookkeeping and is reclaimed here.
+		if isIsolatedInstanceDir(instanceDir) {
 			continue
 		}
 		_ = os.RemoveAll(instanceDir)

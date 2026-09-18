@@ -177,7 +177,7 @@ func TestProfileEnvironmentIsolatedByName(t *testing.T) {
 func TestAntigravityEnvironmentUsesAPrivateHomeAndFileCredentials(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/shared/config")
 	profile := Profile{Name: "agy-work", Provider: "antigravity"}
-	got := launchEnvironment(profile, []string{
+	got := launchEnvironment(profile, "", "", []string{
 		"PATH=/bin",
 		antigravityHomeEnv + "=/host/home",
 		antigravityDBusEnv + "=unix:path=/run/user/1000/bus",
@@ -457,16 +457,34 @@ func TestCodexAndClaudeUseIndependentRunLocks(t *testing.T) {
 	}
 }
 
-func TestOpenCodeKeepsExclusiveRunLock(t *testing.T) {
-	workdir := t.TempDir()
+func TestOpenCodeUsesIsolatedRunLocks(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	workdir := filepath.Join(root, appName, "profiles", "open")
+	if err := os.MkdirAll(workdir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	profile := Profile{Name: "open", Provider: "opencode", Command: "opencode"}
-	_, unlock, err := acquireProfileRunLock(profile, workdir)
+	firstDir, unlockFirst, err := acquireProfileRunLock(profile, workdir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer unlock()
-	if _, _, err := acquireProfileRunLock(profile, workdir); err == nil {
-		t.Fatal("second OpenCode run unexpectedly acquired the profile lock")
+	defer func() { unlockFirst() }()
+	secondDir, unlockSecond, err := acquireProfileRunLock(profile, workdir)
+	if err != nil {
+		t.Fatalf("second OpenCode instance was refused: %v", err)
+	}
+	defer func() { unlockSecond() }()
+	if firstDir == secondDir {
+		t.Fatalf("concurrent runs shared one lock directory: %s", firstDir)
+	}
+	for _, dir := range []string{firstDir, secondDir} {
+		if filepath.Base(filepath.Dir(dir)) != instancesDirectory {
+			t.Fatalf("instance lock %q is not beneath %s", dir, instancesDirectory)
+		}
+		if !isIsolatedInstanceDir(dir) {
+			t.Fatalf("instance %q carries no seed receipt", dir)
+		}
 	}
 }
 
