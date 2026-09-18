@@ -117,6 +117,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
+		if _, isResume := parseResumeRequest(args[2:]); isResume {
+			return resumeProfile(profile, args[2:], stdout, stderr)
+		}
 		return launch(profile, args[2:], stdout, stderr)
 	case "login":
 		if len(args) != 2 {
@@ -190,6 +193,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		profile, err := resolveProfile(cfg, args[0])
 		if err != nil {
 			return fmt.Errorf("unknown command, profile, or app %q; try 'ai help'", args[0])
+		}
+		if _, isResume := parseResumeRequest(args[1:]); isResume {
+			return resumeProfile(profile, args[1:], stdout, stderr)
 		}
 		return launch(profile, args[1:], stdout, stderr)
 	}
@@ -952,6 +958,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  ai self-update                          rebuild from ~/.config/ai/repo, reopen")
 	fmt.Fprintln(w, "  ai run <profile> [arguments...]")
 	fmt.Fprintln(w, "  ai <profile> [arguments...]             shorthand for ai run")
+	fmt.Fprintln(w, "  ai run <profile> resume [session-id]")
+	fmt.Fprintln(w, "  ai <profile> resume [session-id]        reopen a recent conversation")
 	fmt.Fprintln(w, "  ai env <profile>")
 	fmt.Fprintln(w, "  ai integrate openusage <profile>")
 	fmt.Fprintln(w, "  ai integrate statusline <profile>       show the profile inside the CLI")

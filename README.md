@@ -516,13 +516,26 @@ means nothing in another, and guessing at a translation is how a copy silently
 changes what a server does. Copying a Codex server leaves its per-tool approval
 settings behind for exactly that reason.
 
-Header values cross verbatim, including how they name environment variables —
-and the CLIs disagree about that. Claude Code expands `${VAR}` in header
-values; OpenCode wants `{env:VAR}`. A copied remote server whose headers carry
-a token reference may therefore need that reference rewritten by hand in the
-destination's file before the server authenticates. `ai` does not rewrite it:
-the value is the server's credential plumbing, and mangling it silently would
-be worse than a server that fails loudly on its first call.
+Header values cross translated, not verbatim — and the CLIs disagree about how
+an environment variable is named inside one. Claude Code and Antigravity
+expand `${VAR}` (and `$VAR`); OpenCode wants `{env:VAR}`. A copied remote
+server has those references rewritten into the destination's spelling, in
+headers, URLs, environment values, and arguments alike, so a server that
+authenticated in one profile authenticates in the next without a hand edit.
+
+Codex interpolates nothing and keeps environment-sourced values in keys of
+their own, so the translation goes through those: a header that is exactly
+one reference becomes `env_http_headers`, an `Authorization: Bearer ${VAR}`
+becomes `bearer_token_env_var`, and a stdio variable passed through unchanged
+(`KEY` carrying `${KEY}`) becomes an `env_vars` entry. Reading goes the other
+way, so a Codex server copied elsewhere arrives with its indirections intact
+and a Codex-to-Codex copy round-trips byte for byte in meaning.
+
+Two gaps remain, both on Codex's side. A reference embedded in a longer value
+(`prefix-${VAR}`) and a variable passed under another variable's name have no
+spelling there and are kept literal — Codex sends them as written, so check
+the copy when it carries one. And `${VAR:-default}` loses its default on the
+way into OpenCode, which has no spelling for one.
 
 Two consequences worth knowing. Every other key of the destination's file is
 left byte for byte as it was, in the order it was already in — `.claude.json` is
@@ -945,6 +958,21 @@ resume flow in the current launch folder:
 
 Antigravity and OpenCode continue the last session for the current workspace
 instead of opening a picker.
+
+The same picker is one command away without opening the cockpit first:
+
+```sh
+ai codex-work resume            # the recent-sessions modal for that profile
+ai codex-work resume ses_abc    # one conversation, reopened in its folder
+ai run codex-work resume        # the run spelling works too
+```
+
+With nothing recorded — an account that has not run yet, or Antigravity,
+whose transcripts are not read — `resume` falls back to the provider's own
+flow above, which is the same offer `R` makes from inside the TUI. A
+`resume` followed by anything else is not the wrapper at all: a prompt that
+happens to start with the word keeps passing through to the provider
+untouched.
 
 `h` chooses from processes rather than from transcripts. It reads the running
 instances the launcher already tracks, resolves the session each one has open,
