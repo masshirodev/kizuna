@@ -227,7 +227,11 @@ func copyMCPServers(source, destination Profile, names []string, replace bool) (
 		}
 		copied = append(copied, server.Name)
 	}
-	if err := mergeMCPServers(destination, chosen); err != nil {
+	translated := make([]mcpServer, 0, len(chosen))
+	for _, server := range chosen {
+		translated = append(translated, translateMCPServer(server, source.Provider, destination.Provider))
+	}
+	if err := mergeMCPServers(destination, translated); err != nil {
 		return nil, err
 	}
 	return copied, nil
@@ -601,8 +605,19 @@ const codexMCPTable = "mcp_servers"
 // A key this scan does not recognise is left alone rather than guessed at, so a
 // server copied out of Codex arrives with its endpoint and its environment and
 // none of the per-tool approval settings that mean nothing anywhere else.
+//
+// Codex keeps environment-sourced values apart from static ones: `http_headers`
+// carries literals while `env_http_headers` names the variable each header is
+// read from, `bearer_token_env_var` names the variable sent as a bearer token,
+// and `env_vars` whitelists variables forwarded into a stdio server. Those are
+// normalised into shell-style references in memory (`${VAR}`), which is the
+// spelling every other provider expands — so a server copied on from here
+// carries the indirection rather than the variable's name.
 func readCodexMCP(data []byte) ([]mcpServer, error) {
 	servers := map[string]*mcpServer{}
+	envHeaders := map[string]map[string]string{}
+	bearers := map[string]string{}
+	envWhitelist := map[string][]string{}
 	var order []string
 	name, section := "", ""
 	for _, raw := range strings.Split(string(data), "\n") {
@@ -643,6 +658,12 @@ func readCodexMCP(data []byte) ([]mcpServer, error) {
 				server.Env, _ = tomlInlineTable(value)
 			case "http_headers":
 				server.Headers, _ = tomlInlineTable(value)
+			case "env_http_headers":
+				envHeaders[name], _ = tomlInlineTable(value)
+			case "bearer_token_env_var":
+				bearers[name], _ = tomlString(value)
+			case "env_vars":
+				envWhitelist[name] = tomlStringListLenient(value)
 			}
 		case "env":
 			if text, ok := tomlString(value); ok {
@@ -658,11 +679,46 @@ func readCodexMCP(data []byte) ([]mcpServer, error) {
 				}
 				server.Headers[key] = text
 			}
+		case "env_http_headers":
+			if text, ok := tomlString(value); ok {
+				if envHeaders[name] == nil {
+					envHeaders[name] = map[string]string{}
+				}
+				envHeaders[name][key] = text
+			}
 		}
 	}
 	list := make([]mcpServer, 0, len(order))
 	for _, name := range order {
-		list = append(list, *servers[name])
+		server := servers[name]
+		if server.Headers == nil {
+			server.Headers = map[string]string{}
+		}
+		for header, variable := range envHeaders[name] {
+			if _, static := server.Headers[header]; !static {
+				server.Headers[header] = "${" + variable + "}"
+			}
+		}
+		if bearer, ok := bearers[name]; ok && bearer != "" {
+			if _, static := server.Headers["Authorization"]; !static {
+				server.Headers["Authorization"] = "Bearer ${" + bearer + "}"
+			}
+		}
+		if server.Env == nil {
+			server.Env = map[string]string{}
+		}
+		for _, variable := range envWhitelist[name] {
+			if _, static := server.Env[variable]; !static {
+				server.Env[variable] = "${" + variable + "}"
+			}
+		}
+		if len(server.Headers) == 0 {
+			server.Headers = nil
+		}
+		if len(server.Env) == 0 {
+			server.Env = nil
+		}
+		list = append(list, *server)
 	}
 	return list, nil
 }
@@ -763,6 +819,24 @@ func tomlStringArray(value string) ([]string, bool) {
 		values = append(values, text)
 	}
 	return values, true
+}
+
+// tomlStringListLenient reads an array of strings the way env_vars uses one:
+// entries Codex documents for other purposes (objects with a source) are
+// passed over rather than failing the whole list, because a whitelist with
+// one remote entry still forwards every local one.
+func tomlStringListLenient(value string) []string {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, "[") || !strings.HasSuffix(value, "]") {
+		return nil
+	}
+	var values []string
+	for _, item := range splitTOMLList(value[1 : len(value)-1]) {
+		if text, ok := tomlString(item); ok {
+			values = append(values, text)
+		}
+	}
+	return values
 }
 
 func tomlInlineTable(value string) (map[string]string, bool) {
@@ -876,11 +950,76 @@ func renderCodexMCP(server mcpServer) string {
 	} else if server.URL != "" {
 		fmt.Fprintf(&out, "url = %s\n", strconv.Quote(server.URL))
 	}
-	out.WriteString(renderCodexTable(key, "env", server.Env))
+	staticEnv, forwarded := splitCodexEnv(server.Env)
+	staticHeaders, envHeaders, bearer := splitCodexHeaders(server.Headers)
+	// Server-level keys come before any subtable header: in TOML a bare key
+	// after a [subtable] line belongs to that subtable, so writing them later
+	// would file them as an env entry or a header instead.
+	if server.transport() == mcpStdio && len(forwarded) > 0 {
+		quoted := make([]string, len(forwarded))
+		for index, name := range forwarded {
+			quoted[index] = strconv.Quote(name)
+		}
+		fmt.Fprintf(&out, "env_vars = [%s]\n", strings.Join(quoted, ", "))
+	}
+	if server.transport() != mcpStdio && bearer != "" {
+		fmt.Fprintf(&out, "bearer_token_env_var = %s\n", strconv.Quote(bearer))
+	}
+	out.WriteString(renderCodexTable(key, "env", staticEnv))
 	if server.transport() != mcpStdio {
-		out.WriteString(renderCodexTable(key, "http_headers", server.Headers))
+		out.WriteString(renderCodexTable(key, "http_headers", staticHeaders))
+		out.WriteString(renderCodexTable(key, "env_http_headers", envHeaders))
 	}
 	return out.String()
+}
+
+// splitCodexHeaders divides headers into the three places Codex keeps them.
+// A header that is exactly one environment reference in either spelling names
+// the variable it is read from; an Authorization header of exactly
+// `Bearer <reference>` becomes the bearer token variable. Anything else — a
+// literal, or a reference embedded in a longer value Codex cannot spell —
+// stays a static header, which is where the translation gap lives: Codex
+// sends it literally, so a value like `prefix-${VAR}` arrives broken rather
+// than refused. It is kept rather than dropped because the alternative is a
+// copy that silently stops authenticating.
+func splitCodexHeaders(headers map[string]string) (static, sourced map[string]string, bearer string) {
+	for name, value := range headers {
+		if variable, ok := bearerRefName(value); ok && strings.EqualFold(name, "Authorization") && bearer == "" {
+			bearer = variable
+			continue
+		}
+		if variable, ok := envRefName(value); ok {
+			if sourced == nil {
+				sourced = map[string]string{}
+			}
+			sourced[name] = variable
+			continue
+		}
+		if static == nil {
+			static = map[string]string{}
+		}
+		static[name] = value
+	}
+	return static, sourced, bearer
+}
+
+// splitCodexEnv divides stdio environment into static values and variables
+// forwarded from the parent process. Only a self-reference — `KEY` carrying
+// exactly `${KEY}` — can cross as a forward; Codex has no spelling for
+// passing one variable's value under another's name, so those stay static.
+func splitCodexEnv(env map[string]string) (static map[string]string, forwarded []string) {
+	for name, value := range env {
+		if variable, ok := envRefName(value); ok && variable == name {
+			forwarded = append(forwarded, name)
+			continue
+		}
+		if static == nil {
+			static = map[string]string{}
+		}
+		static[name] = value
+	}
+	sort.Strings(forwarded)
+	return static, forwarded
 }
 
 func renderCodexTable(server, section string, values map[string]string) string {
