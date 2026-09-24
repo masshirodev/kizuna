@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -82,21 +81,11 @@ func readSessionMessages(profile Profile, record recordedSession) ([]handoffMess
 	if err != nil {
 		return nil, "", err
 	}
-	file, err := os.Open(path)
+	messages, err := readAllMessages(path, profile.Provider)
 	if err != nil {
 		return nil, "", err
 	}
-	defer file.Close()
-
-	var messages []handoffMessage
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), maxTranscriptLine)
-	for scanner.Scan() {
-		if message, ok := decodeHandoffLine(profile.Provider, scanner.Bytes()); ok {
-			messages = append(messages, message)
-		}
-	}
-	return messages, path, scanner.Err()
+	return messages, path, nil
 }
 
 // decodeHandoffLine pulls one said thing out of either provider's log. Both

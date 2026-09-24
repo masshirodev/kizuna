@@ -1,12 +1,15 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestReadSessionPreviewReadsTheOpeningTurnsInOrder(t *testing.T) {
+func TestReadSessionPreviewReadsTheConversationInOrder(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", root)
 	writeTranscriptLines(t, root, "claude-personal", "-work-hub", "sid",
@@ -20,8 +23,8 @@ func TestReadSessionPreviewReadsTheOpeningTurnsInOrder(t *testing.T) {
 	if preview.problem != "" {
 		t.Fatalf("problem = %q, want the transcript read", preview.problem)
 	}
-	if len(preview.messages) != 3 || preview.more {
-		t.Fatalf("preview = %+v, want three turns and no continuation", preview.messages)
+	if len(preview.messages) != 3 || preview.earlier {
+		t.Fatalf("preview = %+v, want three turns and the whole conversation", preview.messages)
 	}
 	if !preview.messages[0].fromUser || preview.messages[0].text != "add a preview pane" {
 		t.Fatalf("first turn = %+v, want what was asked", preview.messages[0])
@@ -31,9 +34,35 @@ func TestReadSessionPreviewReadsTheOpeningTurnsInOrder(t *testing.T) {
 	}
 }
 
-// A pane that stopped at its bound and one that reached the end of a
+// The pane shows how a conversation ended, not how it opened: a session opened
+// with a pasted brief names nothing at the top, while what was last being done
+// is what distinguishes it now.
+func TestReadSessionPreviewShowsTheEndNotTheOpening(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	lines := []string{`{"type":"user","cwd":"/work/hub","timestamp":"2026-09-04T11:30:00Z","message":{"content":[{"type":"text","text":"the opening question"}]}}`}
+	for index := 0; index < previewTurns+5; index++ {
+		lines = append(lines, `{"type":"assistant","message":{"content":[{"type":"text","text":"a filler turn"}]}}`)
+	}
+	lines = append(lines, `{"type":"assistant","message":{"content":[{"type":"text","text":"the final answer"}]}}`)
+	writeTranscriptLines(t, root, "claude-personal", "-work-hub", "sid", lines...)
+
+	preview := readSessionPreview(Profile{Name: "claude-personal", Provider: "claude"},
+		recordedSession{session: instanceSession{id: "sid"}})
+	if !preview.earlier {
+		t.Fatal("the preview did not mark that the conversation carries on above it")
+	}
+	if got := preview.messages[len(preview.messages)-1].text; got != "the final answer" {
+		t.Fatalf("last turn = %q, want the end of the conversation", got)
+	}
+	if preview.messages[0].text == "the opening question" {
+		t.Fatal("the preview still starts at the opening")
+	}
+}
+
+// A pane that stopped at its bound and one that reached the start of a
 // conversation look the same on screen unless the read says which it was.
-func TestReadSessionPreviewMarksAConversationItDidNotFinish(t *testing.T) {
+func TestReadSessionPreviewMarksAConversationItOnlyShowsTheEndOf(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", root)
 	lines := []string{`{"type":"user","cwd":"/work/hub","timestamp":"2026-09-04T11:30:00Z","message":{"content":[{"type":"text","text":"first"}]}}`}
@@ -47,8 +76,8 @@ func TestReadSessionPreviewMarksAConversationItDidNotFinish(t *testing.T) {
 	if len(preview.messages) != previewTurns {
 		t.Fatalf("read %d turns, want the bound of %d", len(preview.messages), previewTurns)
 	}
-	if !preview.more {
-		t.Fatal("a conversation that continues past the bound was not marked")
+	if !preview.earlier {
+		t.Fatal("a conversation longer than the bound was not marked as continuing above")
 	}
 }
 
@@ -111,8 +140,8 @@ func TestPreviewLinesFillExactlyTheRowsTheyAreGiven(t *testing.T) {
 	if len(lines) != 8 {
 		t.Fatalf("pane is %d rows, want the 8 it was given", len(lines))
 	}
-	if !strings.Contains(lines[len(lines)-1], "…") {
-		t.Fatalf("a cut conversation ends %q, want the continuation marker", lines[len(lines)-1])
+	if lines[5] != previewCutMarker {
+		t.Fatalf("a conversation cut at the top does not mark it:\n%s", strings.Join(lines, "\n"))
 	}
 }
 
@@ -166,4 +195,80 @@ func TestPreviewPaneDatesByLastActivity(t *testing.T) {
 	if !strings.Contains(got, active.Format("15:04")) || strings.Contains(got, start.Format("15:04")) {
 		t.Fatalf("previewWhere = %q, want the last-activity time %s", got, active.Format("15:04"))
 	}
+}
+
+// The tail read must not decode a broken record where its window begins a line
+// early, and must still find the last messages of a file larger than the window.
+func TestReadTailMessagesReadsOnlyTheEndOfALargeTranscript(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path := writeLargeTranscript(t, 200, 2000)
+
+	if info, err := os.Stat(path); err != nil || info.Size() <= previewTailBytes {
+		t.Fatalf("fixture is %d bytes, want it larger than the %d-byte window", statSize(path), previewTailBytes)
+	}
+	messages, earlier, err := readTailMessages(path, "claude", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !earlier {
+		t.Fatal("a transcript longer than what is shown was not marked as continuing above")
+	}
+	if len(messages) != 5 {
+		t.Fatalf("read %d messages, want the last 5", len(messages))
+	}
+	if got := messages[len(messages)-1].text; got != "the very last thing" {
+		t.Fatalf("last message = %q, want the end of the transcript", got)
+	}
+}
+
+// A single line larger than the read window leaves no complete record in it, so
+// the window has to widen past the line rather than give up on the session.
+func TestReadTailMessagesWidensPastAnOversizedLine(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path := writeTranscriptFixture(t, `{"type":"assistant","message":{"content":[{"type":"text","text":"`+
+		strings.Repeat("a", previewTailBytes+1000)+`"}]}}`)
+
+	messages, _, err := readTailMessages(path, "claude", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 || len([]rune(messages[0].text)) != previewTailBytes+1000 {
+		t.Fatalf("read %+v, want the oversized single message", messages)
+	}
+}
+
+// writeLargeTranscript writes turns of roughly size bytes each, ending in one
+// short, recognisable message.
+func writeLargeTranscript(t *testing.T, turns, size int) string {
+	t.Helper()
+	lines := make([]string, 0, turns+1)
+	for index := range turns {
+		text := strings.Repeat("x", size) + fmt.Sprintf(" message %d", index)
+		lines = append(lines, `{"type":"assistant","message":{"content":[{"type":"text","text":"`+text+`"}]}}`)
+	}
+	lines = append(lines, `{"type":"assistant","message":{"content":[{"type":"text","text":"the very last thing"}]}}`)
+	return writeTranscriptFixture(t, lines...)
+}
+
+// writeTranscriptFixture writes raw transcript lines somewhere the claude
+// reader can reach and returns the path, without dating the file.
+func writeTranscriptFixture(t *testing.T, lines ...string) string {
+	t.Helper()
+	dir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), appName, "profiles", "claude-personal", "claude", "projects", "-work-hub")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "fixture.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func statSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return -1
+	}
+	return info.Size()
 }

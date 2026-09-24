@@ -884,24 +884,27 @@ rather than quietly swapped for the current launch folder.
 ### The picker is two panes
 
 `R` and `H` open the same list, and both put the conversation under the cursor
-in a pane beside it — the list on the left, the session's opening exchange on
-the right, the way a file picker shows the file it is hovering. A title says
-what a conversation was called; it does not say whether it is the one being
-looked for, and two sessions in the same folder on the same afternoon are told
-apart by what was said in them.
+in a pane beside it — the list on the left, how the session ended on the right,
+the way a file picker shows the file it is hovering. A title says what a
+conversation was called; it does not say whether it is the one being looked for,
+and two sessions in the same folder on the same afternoon are told apart by what
+was said in them.
 
-What the pane reads is bounded twice, because it follows the cursor and the
-panel behind it already scans every transcript on every refresh. Only the
-opening turns are read, and only the first several hundred runes of each; a
-conversation that continues past what fits ends in `…`. The opening rather than
-the tail, because what a session was for is settled in its first exchanges,
-while reaching the tail of a six-megabyte transcript means reading all of it.
+**The pane shows the end of the conversation, not its beginning.** The opening of
+a session is often a pasted brief or a batch prompt that names the work only
+indirectly, while what was last being done is what tells one session from
+another now. Reading the tail has to be bounded the other way, though: a
+six-megabyte transcript cannot be read from the top on every cursor move, so the
+file is read backwards a window at a time until enough of the last things said
+have been collected, and the window widens only when the tail holds too little.
+A conversation whose earlier half is off screen says so with a `…` above the
+first turn shown, rather than starting mid-sentence as though that were the
+start.
 
 **No single turn may spend the whole pane on itself.** The read also caps each
-turn at a few rows, because a session opened with a pasted brief or a batch
-prompt has one enormous first message — and uncapped it filled every row, so the
-pane showed one message instead of a conversation. A turn the pane cuts ends in
-an ellipsis; the turns after it are what tell one session from another.
+turn at a few rows, because one pasted stack trace or brief is a turn too —
+uncapped it filled every row, so the pane showed one message instead of a
+conversation. A turn the pane cuts ends in an ellipsis.
 
 Under the title the pane names the account and the **conversation id** in full —
 the id `ai <profile> resume <id>` takes, which was previously nowhere to read —
