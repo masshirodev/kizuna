@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func searchProfiles() []Profile {
@@ -365,5 +366,70 @@ func TestSavingAProfileClearsTheFilterAndSelectsIt(t *testing.T) {
 	profile, ok := got.selectedProfile()
 	if !ok || profile.Name != "zed-work" {
 		t.Fatalf("selected = %+v, want the profile that was just saved", profile)
+	}
+}
+
+// Days are calendar days where the user is. West of UTC, cutting at midnight
+// UTC filed yesterday evening under today and showed it as a clock time.
+func TestFormatWhenComparesLocalCalendarDays(t *testing.T) {
+	zone, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		t.Skip("no timezone data")
+	}
+	saved := time.Local
+	time.Local = zone
+	defer func() { time.Local = saved }()
+	now := time.Date(2026, 9, 23, 14, 5, 0, 0, zone)
+	for _, tc := range []struct {
+		when time.Time
+		want string
+	}{
+		{time.Date(2026, 9, 23, 0, 30, 0, 0, zone), "00:30"},
+		{time.Date(2026, 9, 22, 22, 0, 0, 0, zone), "yest."},
+		{time.Date(2026, 9, 21, 23, 0, 0, 0, zone), "21 Sep"},
+	} {
+		if got := formatWhen(now, tc.when); got != tc.want {
+			t.Errorf("formatWhen(%v) = %q, want %q", tc.when, got, tc.want)
+		}
+	}
+}
+
+// Past the design's frame the board stops growing and sits in the middle of
+// the terminal; a box is still sized against the whole terminal, so a picker
+// on a tall terminal gets the height.
+func TestBoardIsCappedAndCentredWhileBoxesUseTheWholeTerminal(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := tuiModel{profiles: testProfiles(), width: 200, height: 60}
+	lines := strings.Split(m.View(), "\n")
+	if len(lines) != 60 {
+		t.Fatalf("view is %d rows, want 60", len(lines))
+	}
+	for _, line := range lines {
+		if lipgloss.Width(line) != 200 {
+			t.Fatalf("line is %d wide, want 200: %q", lipgloss.Width(line), line)
+		}
+	}
+	// A 196-wide area around a 146-wide board leaves 25 columns each side,
+	// inside the 2-column margin.
+	top := 1 + (58-boardMaxHeight)/2
+	if got := strings.Index(lines[top], " ai "); got != 2+25 {
+		t.Fatalf("board starts at column %d, want %d:\n%s", got, 27, strings.Join(lines, "\n"))
+	}
+	for _, line := range lines[:top] {
+		if strings.TrimSpace(line) != "" {
+			t.Fatalf("the board was not centred vertically:\n%s", strings.Join(lines, "\n"))
+		}
+	}
+
+	m.recent = recentTestSessions(t.TempDir())
+	m.mode = tuiRecent
+	rows := 0
+	for _, line := range strings.Split(m.View(), "\n") {
+		if strings.Contains(line, "│") {
+			rows++
+		}
+	}
+	if rows <= boardMaxHeight {
+		t.Fatalf("the picker is %d rows on a 60-row terminal, want it to use the height past the board's cap", rows)
 	}
 }

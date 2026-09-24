@@ -35,6 +35,14 @@ var (
 	colorTrack = lipgloss.AdaptiveColor{Light: "#E4E4E7", Dark: "#26262D"}
 	colorField = lipgloss.AdaptiveColor{Light: "#F4F4F5", Dark: "#121217"}
 	colorGhost = lipgloss.AdaptiveColor{Light: "#D4D4D8", Dark: "#2A2A31"}
+
+	// colorCanvas is the ground every cell is drawn on. The design is drawn on
+	// it rather than on whatever the terminal's own background happens to be,
+	// and every other tone was chosen against it; left to the terminal, a
+	// theme with a lighter or tinted background washes the faint tones out.
+	// colorGhostCanvas is the tint a selected row keeps behind a box.
+	colorCanvas      = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#0B0B0E"}
+	colorGhostCanvas = lipgloss.AdaptiveColor{Light: "#F4F4F5", Dark: "#101015"}
 )
 
 var (
@@ -215,12 +223,57 @@ func gauge(ink pen, percent, width int) string {
 // ghost fades a rendered screen to one flat tone. The cockpit behind a box is
 // context, not something to read, and in full colour it competes with the
 // question the box is asking.
+//
+// A row that was tinted keeps a fainter tint, so where the cursor was is still
+// visible behind the box.
 func ghost(screen string) string {
+	tinted := ""
+	if sgr := sgrOf(lipgloss.NewStyle().Background(colorSelected)); sgr != "" {
+		tinted = "\x1b[" + sgr + "m"
+	}
 	lines := strings.Split(screen, "\n")
 	for index, line := range lines {
-		lines[index] = ghostStyle.Render(ansi.Strip(line))
+		style := ghostStyle
+		if tinted != "" && strings.Contains(line, tinted) {
+			style = style.Background(colorGhostCanvas)
+		}
+		lines[index] = style.Render(ansi.Strip(line))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// paintCanvas lays the canvas under a finished screen: every line opens with
+// the canvas colours, and they are re-opened after every reset, since each
+// styled span closes its pen and would otherwise hand the rest of the line
+// back to the terminal's own colours. A span that sets its own background —
+// the selection tint, a chip — still wins inside itself.
+func paintCanvas(screen string) string {
+	sgr := sgrOf(lipgloss.NewStyle().Foreground(colorText).Background(colorCanvas))
+	if sgr == "" {
+		return screen
+	}
+	open := "\x1b[" + sgr + "m"
+	lines := strings.Split(screen, "\n")
+	for index, line := range lines {
+		lines[index] = open + strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+open) + "\x1b[0m"
+	}
+	return strings.Join(lines, "\n")
+}
+
+// sgrOf is the escape parameters a style opens with in the current colour
+// profile, or nothing on a terminal without colour, where every caller then
+// does nothing.
+func sgrOf(style lipgloss.Style) string {
+	sample := style.Render(" ")
+	start := strings.Index(sample, "\x1b[")
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(sample[start:], "m")
+	if end < 0 {
+		return ""
+	}
+	return sample[start+2 : start+end]
 }
 
 func renderHelp(entries []helpEntry) string {

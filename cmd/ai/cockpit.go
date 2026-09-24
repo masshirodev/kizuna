@@ -30,14 +30,48 @@ func (m tuiModel) View() string {
 	marginX := min(screenMarginX, max((width-1)/2, 0))
 	marginY := min(screenMarginY, max((height-chromeRows-1)/2, 0))
 
-	frame := frameLayout(width-2*marginX, height-2*marginY)
-	screen := m.cockpitView(frame)
-	if box := m.modalView(frame); box != "" {
+	// The board is drawn at most at the design's frame and centred in anything
+	// larger: past it a wider board only spreads the same columns further
+	// apart, and a taller one strands the status line and the keys far below
+	// the table. Boxes are sized against the whole terminal instead, because a
+	// picker or a conversation does turn more room into more to read.
+	full := frameLayout(width-2*marginX, height-2*marginY)
+	frame := frameLayout(min(full.width, boardMaxWidth), min(full.height, boardMaxHeight))
+	screen := centerIn(m.cockpitView(frame), frame, full)
+	if box := m.modalView(full); box != "" {
 		// The board behind a box is context, not something to act on: every key
 		// is the box's until it closes, so the board fades rather than competing.
-		screen = centerBox(ghost(screen), box, frame)
+		screen = centerBox(ghost(screen), box, full)
 	}
-	return withMargin(screen, width, marginX, marginY)
+	return paintCanvas(withMargin(screen, width, marginX, marginY))
+}
+
+// boardMaxWidth and boardMaxHeight are the frame the design is drawn at.
+const (
+	boardMaxWidth  = 146
+	boardMaxHeight = 40
+)
+
+// centerIn places a screen drawn at frame in the middle of the larger area,
+// padding it out to exactly the area's size.
+func centerIn(screen string, frame, area layout) string {
+	if frame.width == area.width && frame.height == area.height {
+		return screen
+	}
+	left := strings.Repeat(" ", (area.width-frame.width)/2)
+	top := (area.height - frame.height) / 2
+	blank := strings.Repeat(" ", area.width)
+	rows := make([]string, 0, area.height)
+	for range top {
+		rows = append(rows, blank)
+	}
+	for _, line := range strings.Split(screen, "\n") {
+		rows = append(rows, padLine(left+line, area.width))
+	}
+	for len(rows) < area.height {
+		rows = append(rows, blank)
+	}
+	return strings.Join(rows, "\n")
 }
 
 func (m tuiModel) cockpitView(frame layout) string {
@@ -126,10 +160,13 @@ func plural(count int, noun string) string {
 // bottomBarView carries five keys and the way to the rest. The old bar listed
 // fifteen and dropped them from the end to fit, which hid exactly the keys
 // nobody had learned; now every other key lives one space bar away.
+const barInset = 2
+
 func (m tuiModel) bottomBarView(frame layout) string {
 	if m.searching {
-		return spread(renderKeysFit([]helpEntry{{"type", "filter"}, {"↑↓", "choose"}, {"↵", "keep filter"}}, frame.width-12),
-			renderKeys(helpEntry{"esc", "clear"}), frame.width)
+		inner := max(frame.width-2*barInset, 8)
+		return strings.Repeat(" ", barInset) + spread(renderKeysFit([]helpEntry{{"type", "filter"}, {"↑↓", "choose"}, {"↵", "keep filter"}}, inner-12),
+			renderKeys(helpEntry{"esc", "clear"}), inner)
 	}
 	right := renderKeys(helpEntry{"space", "all actions"}, helpEntry{"?", "keys"})
 	entries := []helpEntry{{"↵", "run"}, {"R", "resume"}, {"H", "hand off"}, {"p", "args"}, {"/", "find"}}
@@ -140,8 +177,11 @@ func (m tuiModel) bottomBarView(frame layout) string {
 	if lipgloss.Width(right)+10 > frame.width {
 		right = ""
 	}
-	left := renderKeysFit(entries, max(frame.width-lipgloss.Width(right)-len(keyGap), 8))
-	return spread(left, right, frame.width)
+	// The bar is inset two cells at each end, lining its first key up with the
+	// board's rows rather than with the rule's edge.
+	inner := max(frame.width-2*barInset, 8)
+	left := renderKeysFit(entries, max(inner-lipgloss.Width(right)-len(keyGap), 8))
+	return strings.Repeat(" ", barInset) + spread(left, right, inner)
 }
 
 // ---- the board ------------------------------------------------------------
@@ -186,10 +226,13 @@ type boardColumns struct {
 
 const (
 	boardMaxGauge = 32
-	boardMinGauge = 6
-	boardAuth     = 8
-	boardLive     = 5
-	boardResetW   = 7
+	// boardNameWidth and boardProviderWidth are the design's account columns.
+	boardNameWidth     = 22
+	boardProviderWidth = 13
+	boardMinGauge      = 6
+	boardAuth          = 8
+	boardLive          = 5
+	boardResetW        = 7
 	// boardIndent is where the detail under a row starts: past the cursor bar
 	// and two more, so it reads as belonging to the row above.
 	boardIndent = 4
@@ -229,11 +272,12 @@ func boardLayout(width int, profiles []Profile) boardColumns {
 		longestName = max(longestName, lipgloss.Width(profile.Name))
 		longestProvider = max(longestProvider, lipgloss.Width(profile.Provider))
 	}
-	c := boardColumns{
-		name:     min(max(longestName+2, 12), 22),
-		provider: min(max(longestProvider+2, 8), 13),
-		reset:    true, auth: true, live: true,
-	}
+	// The design's widths are fixed, so the gauges line up at the same column
+	// whatever the names are. They give way to what the names actually need
+	// before anything else on the row is dropped.
+	c := boardColumns{name: boardNameWidth, provider: boardProviderWidth, reset: true, auth: true, live: true}
+	fitName := min(max(longestName+2, 10), boardNameWidth)
+	fitProvider := min(max(longestProvider+2, 8), boardProviderWidth)
 	for {
 		spare := width - c.fixed()
 		if gauge := min(spare/2, boardMaxGauge); gauge >= boardMinGauge {
@@ -246,6 +290,8 @@ func boardLayout(width int, profiles []Profile) boardColumns {
 		switch {
 		case spare >= 0:
 			return c
+		case c.name > fitName || c.provider > fitProvider:
+			c.name, c.provider = fitName, fitProvider
 		case c.reset:
 			c.reset = false
 		case c.live:
@@ -507,25 +553,12 @@ func (m tuiModel) expansion(profile Profile, width int, full bool) []string {
 // than set once around the whole line.
 func tintLine(line string, width int) string {
 	line = padLine(line, width)
-	sgr := selectedBackgroundSGR()
+	sgr := sgrOf(lipgloss.NewStyle().Background(colorSelected))
 	if sgr == "" {
 		return line
 	}
 	open := "\x1b[" + sgr + "m"
 	return open + strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+open) + "\x1b[0m"
-}
-
-// selectedBackgroundSGR is the escape parameters for colorSelected as a
-// background in the current colour profile, or nothing on a terminal without
-// colour — where the whole tint is then a no-op.
-func selectedBackgroundSGR() string {
-	sample := lipgloss.NewStyle().Background(colorSelected).Render(" ")
-	start := strings.Index(sample, "\x1b[")
-	end := strings.Index(sample, "m")
-	if start < 0 || end < start {
-		return ""
-	}
-	return sample[start+2 : end]
 }
 
 // launchSummary is the selected account's settings on one line, in the order
@@ -655,12 +688,15 @@ func formatWhen(now, when time.Time) string {
 	if when.IsZero() {
 		return "—"
 	}
-	local := when.Local()
-	today := now.Local().Truncate(24 * time.Hour)
-	switch day := local.Truncate(24 * time.Hour); {
-	case day.Equal(today):
+	// Days are compared as calendar dates in local time. Truncating to 24
+	// hours cuts at midnight UTC, which west of Greenwich files yesterday
+	// evening under today.
+	local, today := when.Local(), now.Local()
+	day := func(t time.Time) time.Time { return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local) }
+	switch day(local) {
+	case day(today):
 		return local.Format("15:04")
-	case day.Equal(today.AddDate(0, 0, -1)):
+	case day(today).AddDate(0, 0, -1):
 		return "yest."
 	default:
 		return local.Format("2 Jan")
@@ -705,6 +741,9 @@ func (m tuiModel) providerOf(name string) string {
 // content builder: lipgloss counts padding inside the width it is given, so a
 // line built to the full width is a line that wraps.
 const modalPadding = 4
+
+// modalBorder is the two columns a box's border adds outside its width.
+const modalBorder = 2
 
 const (
 	// modalInset is what a box gives back to the frame it is centred over,
@@ -788,7 +827,9 @@ func (m tuiModel) modalView(frame layout) string {
 	if status != "" && fullHeightModal(m.mode) {
 		rows = max(rows-statusRows, minBlockRows)
 	}
-	inner := max(width-modalPadding, 8)
+	// lipgloss sizes a bordered box by its inside, so the border's two columns
+	// come off the width here: a 140-wide box is 140 cells including the frame.
+	inner := max(width-modalBorder-modalPadding, 8)
 	content, style := []string(nil), modalStyle
 	switch m.mode {
 	case tuiForm:
@@ -826,7 +867,7 @@ func (m tuiModel) modalView(frame layout) string {
 	if status != "" {
 		content = append(content, "", status)
 	}
-	return style.Width(width).Render(strings.Join(content, "\n"))
+	return style.Width(width - modalBorder).Render(strings.Join(content, "\n"))
 }
 
 // statusRows is what a status costs a box: the line itself and the blank that
