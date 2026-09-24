@@ -11,7 +11,22 @@ way out always at the right.
 
 ## The board
 
-One fullscreen frame: a title bar, one table, a status line, and a key bar.
+One frame: a title bar, one table, a status line, and a key bar.
+
+**Every cell is drawn on the design's canvas** — `#0B0B0E` with `#E5E7EB` text
+in the dark theme — rather than on whatever the terminal's own background is.
+Every other tone was chosen against that canvas, and left to the terminal a
+lighter or tinted theme washes the faint ones out. Each styled span closes its
+colours when it ends, so the canvas is re-opened after every one of them; a span
+with its own background (the selection tint, a chip, the badge) still wins
+inside itself.
+
+**The board is at most 146 × 40, the frame the design is drawn at, and is
+centred in a larger terminal.** Past that width it would only spread the same
+columns further apart (the gauges stop growing at 32 cells), and past that
+height the status line and the keys would be stranded far below the table.
+Boxes are not capped by it: they size against the whole terminal, since a picker
+or a conversation does turn more room into more to read.
 
 - **The title bar** names the account with the most headroom and the one with
   the least — `most headroom claude-max 78% · lowest claude-personal 7%` —
@@ -62,8 +77,9 @@ the cursor in view.
 Everything else — the profile editor, the folder and argument prompts, the
 delete confirmation, the clone and share boxes, the pickers, the handoff wizard
 and the palette — opens as a box over the board. The board behind a box fades to
-one flat tone: every key is the box's until it closes, so the board is context
-rather than something to read.
+one flat tone, with a fainter tint left on the rows that were selected: every
+key is the box's until it closes, so the board is context rather than something
+to read.
 
 ## What a row says
 
@@ -258,7 +274,7 @@ history.
 ## Box sizing
 
 **A box is sized to the terminal, not to what it happens to be showing.** Every
-box grows in width with the window up to a ceiling of its own — the resume
+box grows in width with the window up to a ceiling of its own, border included — the resume
 picker at 140, the handoff wizard and the share box at 124, the palette at 120,
 the arguments prompt at 104, the editor at 92, and the boxes that ask one
 question at 88 — and gives back six columns to the board behind it. The width a
@@ -276,6 +292,12 @@ row being aimed at moved while it was being aimed at. A status line inside one
 of these boxes comes out of that height rather than being added to it, so a
 message about the last keypress does not push the box two rows taller either.
 The boxes that ask one question are still as tall as the question.
+
+`TestBoardMatchesTheDesignFrame` pins the board against the handoff: it draws
+the board with the mock's own sample data and checks the rows cell for cell, so
+a later pass that rounds a hand-set width (the 22- and 13-column account
+columns, the 32-cell gauges, the spaced key hints) fails rather than quietly
+redrawing the screen.
 
 ## Where it departs from the handoff
 
@@ -311,9 +333,6 @@ disagree, the repository won, and these are the places:
 
 ## What it does not do yet
 
-- **The ghosted board drops the selection tint.** Fading the board strips its
-  styling to one tone, so the selected row behind a box is not tinted; the mock
-  keeps a faint tint there.
 - **No light-theme review.** The three new tones (`colorTrack`, `colorField`,
   `colorGhost`) have light values, but only the dark theme was checked against
   the mock.

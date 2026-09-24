@@ -42,7 +42,7 @@ func (m tuiModel) formContent(width int) []string {
 		m.formLabel(formProviderField, "provider") + m.providerChips(), "",
 		m.formField(2, "command", m.form.command, valueWidth), "",
 		m.formField(3, "default args", m.form.defaultArgs, valueWidth),
-		strings.Repeat(" ", formLabelWidth+1) + dimStyle.Render(truncate("shell-style quotes group words; nothing is run through a shell", max(width-formLabelWidth-1, 8))), "",
+		strings.Repeat(" ", formLabelWidth) + dimStyle.Render(truncate("shell-style quotes group words; nothing is run through a shell", max(width-formLabelWidth, 8))), "",
 		m.formField(4, "note", m.form.notes, valueWidth), "",
 	}
 	lines = append(lines, m.launchesAs(width)...)
