@@ -79,6 +79,12 @@ type sessionPreviewMsg struct {
 	preview sessionPreview
 }
 
+// recentAllLoadedMsg carries every profile's recent sessions read as one union,
+// which is what a picker lists after it is switched to all profiles.
+type recentAllLoadedMsg struct {
+	records []recordedSession
+}
+
 type statusKind int
 
 const (
@@ -118,6 +124,16 @@ type tuiModel struct {
 	// processes, the other lists transcripts.
 	record     int
 	describing bool
+	// recentAll is every profile's recent sessions as one union, read when a
+	// picker is switched away from the selected profile. pickerAll is that
+	// switch; recentFilter and recentSearching are the picker's own search,
+	// kept apart from the profile list's filter so a query typed in one is
+	// never applied to the other.
+	recentAll       []recordedSession
+	recentAllLoaded bool
+	pickerAll       bool
+	recentFilter    string
+	recentSearching bool
 	// preview is the conversation shown beside the picker list, and previews is
 	// what has already been read while this picker has been open. The cache is
 	// what makes moving the cursor down and back free: a transcript re-read on
@@ -213,6 +229,58 @@ func (m *tuiModel) clampCursor() {
 	if visible := len(m.visibleProfiles()); m.cursor >= visible {
 		m.cursor = max(visible-1, 0)
 	}
+}
+
+// pickerSessions is the list a resume or handoff picker is choosing from: the
+// selected profile's own recent list, or every profile's when the picker has
+// been switched to all of them.
+func (m tuiModel) pickerSessions() []recordedSession {
+	if m.pickerAll {
+		return m.recentAll
+	}
+	return m.recent
+}
+
+// visibleRecent is the picker list after its own search is applied. The cursor
+// indexes this, not the unfiltered list, so an action can never land on a
+// session the query filtered out. The search covers what a row shows and what
+// it does not: the title, the folder, the account, and the conversation id.
+func (m tuiModel) visibleRecent() []recordedSession {
+	sessions := m.pickerSessions()
+	if m.recentFilter == "" {
+		return sessions
+	}
+	query := strings.ToLower(m.recentFilter)
+	matches := make([]recordedSession, 0, len(sessions))
+	for _, record := range sessions {
+		if strings.Contains(strings.ToLower(record.session.title), query) ||
+			strings.Contains(strings.ToLower(record.folder), query) ||
+			strings.Contains(strings.ToLower(record.session.id), query) ||
+			strings.Contains(strings.ToLower(record.profile), query) {
+			matches = append(matches, record)
+		}
+	}
+	return matches
+}
+
+// clampRecord keeps the picker cursor on a row that is still listed after a
+// search keystroke or a switch to another set of profiles.
+func (m *tuiModel) clampRecord() {
+	if visible := len(m.visibleRecent()); m.record >= visible {
+		m.record = max(visible-1, 0)
+	}
+}
+
+// profileForRecord resolves the account that recorded a conversation. The
+// record carries its profile when it came from the union reader; a record read
+// for one known profile falls back to the selection.
+func (m tuiModel) profileForRecord(record recordedSession) (Profile, bool) {
+	if record.profile != "" {
+		if profile := profileNamed(m.profiles, record.profile); profile.Name != "" {
+			return profile, true
+		}
+	}
+	return m.selectedProfile()
 }
 
 func (m *tuiModel) setStatus(kind statusKind, message string) {
@@ -426,11 +494,25 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The cursor may have moved on while the transcript was being read, and
 		// a preview shown beside the wrong row is worse than none: it describes
 		// a session that is not the one about to be resumed.
-		if profile, ok := m.selectedProfile(); ok && profile.Name == msg.profile &&
-			m.record >= 0 && m.record < len(m.recent) &&
-			m.recent[m.record].session.id == msg.preview.session {
+		visible := m.visibleRecent()
+		if m.record < 0 || m.record >= len(visible) || visible[m.record].session.id != msg.preview.session {
+			return m, nil
+		}
+		if profile, ok := m.profileForRecord(visible[m.record]); ok && profile.Name == msg.profile {
 			m.preview = msg.preview
 		}
+	case recentAllLoadedMsg:
+		m.recentAll, m.recentAllLoaded = msg.records, true
+		if m.mode != tuiRecent && m.mode != tuiHandoff {
+			return m, nil
+		}
+		// The cursor was indexing the selected profile's list; the union that
+		// just landed replaces it, so start from the top rather than a row
+		// number that means something else now.
+		m.record = 0
+		m.previews = nil
+		m.clearStatus()
+		return m, m.selectPreview()
 	case instancesDescribedMsg:
 		m.describing = false
 		if m.mode != tuiHijack && m.mode != tuiConfirmKill {
@@ -727,19 +809,29 @@ func (m tuiModel) updateHijack(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // and an account with nothing recorded yet, fall back to the provider's flow
 // rather than to an empty picker.
 //
-// The list is the selected profile's own and is reopened under that profile's
-// environment, which is the only way it can work: a session id lives inside the
-// profile that recorded it, so no account can resume another's conversation.
+// The list is the selected profile's own unless the picker has been switched to
+// every account, and each row is reopened under the profile that recorded it —
+// which is the only way it can work: a session id lives inside the profile that
+// recorded it, so no account can resume another's conversation.
 func (m *tuiModel) openRecent() tea.Cmd {
 	profile, ok := m.selectedProfile()
 	if !ok {
 		return nil
 	}
-	if len(m.recent) > 0 {
-		m.record = 0
+	m.record = 0
+	m.previews = nil
+	m.recentFilter, m.recentSearching = "", false
+	m.clearStatus()
+	if m.pickerAll {
 		m.mode = tuiRecent
-		m.previews = nil
-		m.clearStatus()
+		if !m.recentAllLoaded {
+			m.setStatus(statusNone, "reading every profile…")
+			return loadRecentAllCmd(m.profiles)
+		}
+		return m.selectPreview()
+	}
+	if len(m.recent) > 0 {
+		m.mode = tuiRecent
 		return m.selectPreview()
 	}
 	args, err := resumeArgs(profile.Provider)
@@ -753,8 +845,14 @@ func (m *tuiModel) openRecent() tea.Cmd {
 // updateRecent resumes a conversation read back off disk. The id and the folder
 // are both needed: the id names the conversation, and the folder is where the
 // provider looks for it, so the launch moves to the folder the session ran in
-// rather than to whatever folder the launcher is pointed at.
+// rather than to whatever folder the launcher is pointed at. The account is the
+// one that recorded the row, which is what makes the picker work when it is
+// listing several profiles at once.
 func (m tuiModel) updateRecent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.recentSearching {
+		return m.updateRecentSearch(msg)
+	}
+	visible := m.visibleRecent()
 	switch msg.String() {
 	case "up", "k":
 		if m.record > 0 {
@@ -762,17 +860,26 @@ func (m tuiModel) updateRecent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.selectPreview()
 		}
 	case "down", "j":
-		if m.record < len(m.recent)-1 {
+		if m.record < len(visible)-1 {
 			m.record++
 			return m, m.selectPreview()
 		}
+	case "/":
+		m.recentSearching = true
+		m.clearStatus()
+	case "a":
+		return m.toggleAllProfiles()
 	case "enter":
-		profile, ok := m.selectedProfile()
-		if !ok || m.record < 0 || m.record >= len(m.recent) {
+		if m.record < 0 || m.record >= len(visible) {
 			m.mode = tuiList
 			return m, nil
 		}
-		record := m.recent[m.record]
+		record := visible[m.record]
+		profile, ok := m.profileForRecord(record)
+		if !ok {
+			m.mode = tuiList
+			return m, nil
+		}
 		folder, err := recordedFolder(record, m.workingDir)
 		if err != nil {
 			// The picker stays open: the other rows are still resumable, and
@@ -800,6 +907,70 @@ func (m tuiModel) updateRecent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearStatus()
 	}
 	return m, nil
+}
+
+// updateRecentSearch narrows either picker's list as the query is typed. Enter
+// keeps the filter and hands the keys back to the list, matching the profile
+// list's own search, so a filter is a way to reach one session among many
+// rather than a mode to dismiss before acting.
+func (m tuiModel) updateRecentSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.recentSearching, m.recentFilter = false, ""
+		m.clampRecord()
+		return m, m.selectPreview()
+	case "enter":
+		m.recentSearching = false
+		return m, nil
+	case "up", "ctrl+p":
+		if m.record > 0 {
+			m.record--
+			return m, m.selectPreview()
+		}
+	case "down", "ctrl+n":
+		if m.record < len(m.visibleRecent())-1 {
+			m.record++
+			return m, m.selectPreview()
+		}
+	case "backspace", "ctrl+h":
+		if runes := []rune(m.recentFilter); len(runes) > 0 {
+			m.recentFilter = string(runes[:len(runes)-1])
+		}
+	case "ctrl+u":
+		m.recentFilter = ""
+	default:
+		if msg.Type != tea.KeyRunes {
+			return m, nil
+		}
+		m.recentFilter += string(msg.Runes)
+	}
+	m.clampRecord()
+	return m, m.selectPreview()
+}
+
+// toggleAllProfiles switches a picker between the selected account's sessions
+// and every account's. The union is read off the keypress, because it opens
+// every other profile's transcripts; the picker stays up and says so until it
+// lands.
+func (m tuiModel) toggleAllProfiles() (tea.Model, tea.Cmd) {
+	m.pickerAll = !m.pickerAll
+	m.record = 0
+	m.previews = nil
+	m.clearStatus()
+	if m.pickerAll && !m.recentAllLoaded {
+		m.setStatus(statusNone, "reading every profile…")
+		return m, loadRecentAllCmd(m.profiles)
+	}
+	return m, m.selectPreview()
+}
+
+// loadRecentAllCmd reads every profile's recent sessions as one union for a
+// picker that has been switched to all profiles.
+func loadRecentAllCmd(profiles []Profile) tea.Cmd {
+	profiles = append([]Profile(nil), profiles...)
+	return func() tea.Msg {
+		return recentAllLoadedMsg{records: allRecentSessions(profiles, allSessionLimit)}
+	}
 }
 
 // recordedFolder is where a recorded conversation has to be reopened. A
@@ -857,7 +1028,7 @@ func (m *tuiModel) openHandoff() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	if len(m.recent) == 0 {
+	if !m.pickerAll && len(m.recent) == 0 {
 		m.setStatus(statusErr, "nothing recorded for "+profile.Name+" to hand over")
 		return nil
 	}
@@ -865,7 +1036,12 @@ func (m *tuiModel) openHandoff() tea.Cmd {
 	m.record = 0
 	m.mode = tuiHandoff
 	m.previews = nil
+	m.recentFilter, m.recentSearching = "", false
 	m.clearStatus()
+	if m.pickerAll && !m.recentAllLoaded {
+		m.setStatus(statusNone, "reading every profile…")
+		return loadRecentAllCmd(m.profiles)
+	}
 	return m.selectPreview()
 }
 
@@ -874,14 +1050,19 @@ func (m *tuiModel) openHandoff() tea.Cmd {
 // started off the keypress. Nothing about a preview is worth making a cursor
 // move wait for the disk.
 func (m *tuiModel) selectPreview() tea.Cmd {
-	profile, ok := m.selectedProfile()
-	if !ok || m.record < 0 || m.record >= len(m.recent) {
+	visible := m.visibleRecent()
+	if m.record < 0 || m.record >= len(visible) {
 		m.preview = sessionPreview{}
 		return nil
 	}
-	record := m.recent[m.record]
+	record := visible[m.record]
 	if cached, read := m.previews[record.session.id]; read {
 		m.preview = cached
+		return nil
+	}
+	profile, ok := m.profileForRecord(record)
+	if !ok {
+		m.preview = sessionPreview{}
 		return nil
 	}
 	m.preview = sessionPreview{}
@@ -896,8 +1077,13 @@ func previewSessionCmd(profile Profile, record recordedSession) tea.Cmd {
 
 // updateHandoff picks the session that is leaving, then either asks where it
 // should go or, with auto-swap on, sends it to whichever account has the most
-// quota left.
+// quota left. The session's own account is the one the brief is built from, so
+// the picker can be listing several profiles at once.
 func (m tuiModel) updateHandoff(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.recentSearching {
+		return m.updateRecentSearch(msg)
+	}
+	visible := m.visibleRecent()
 	switch msg.String() {
 	case "up", "k":
 		if m.record > 0 {
@@ -905,23 +1091,33 @@ func (m tuiModel) updateHandoff(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.selectPreview()
 		}
 	case "down", "j":
-		if m.record < len(m.recent)-1 {
+		if m.record < len(visible)-1 {
 			m.record++
 			return m, m.selectPreview()
 		}
+	case "/":
+		m.recentSearching = true
+		m.clearStatus()
+	case "a":
+		return m.toggleAllProfiles()
 	case "enter":
-		profile, ok := m.selectedProfile()
-		if !ok || m.record < 0 || m.record >= len(m.recent) {
+		if m.record < 0 || m.record >= len(visible) {
 			m.mode = tuiList
 			return m, nil
 		}
-		destinations := handoffDestinations(m.profiles, profile, m.usage)
+		record := visible[m.record]
+		source, ok := m.profileForRecord(record)
+		if !ok {
+			m.mode = tuiList
+			return m, nil
+		}
+		destinations := handoffDestinations(m.profiles, source, m.usage)
 		if len(destinations) == 0 {
 			m.setStatus(statusErr, "no other profile can be opened with a brief")
 			m.mode = tuiList
 			return m, nil
 		}
-		m.handoff = handoffDraft{source: m.recent[m.record], destinations: destinations}
+		m.handoff = handoffDraft{source: record, destinations: destinations}
 		if m.autoSwap {
 			return m.startHandoff()
 		}
@@ -961,7 +1157,7 @@ func (m tuiModel) updateHandoffTo(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // process are different promises: the first can be undone by ignoring it, and
 // with auto-swap on this is the frame where the user sees where the work went.
 func (m tuiModel) startHandoff() (tea.Model, tea.Cmd) {
-	profile, ok := m.selectedProfile()
+	profile, ok := m.profileForRecord(m.handoff.source)
 	if !ok {
 		m.mode = tuiList
 		return m, nil
@@ -1010,7 +1206,7 @@ func (m tuiModel) updateHandoffBrief(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) launchHandoff() (tea.Model, tea.Cmd) {
-	source, ok := m.selectedProfile()
+	source, ok := m.profileForRecord(m.handoff.source)
 	if !ok || m.handoff.target >= len(m.handoff.destinations) {
 		m.mode = tuiList
 		return m, nil
@@ -2003,25 +2199,47 @@ const (
 	pickerListMax = 72
 )
 
-// recentPicker offers the conversations the panel behind it is showing. It
-// names the profile because the answer is only ever that profile's own history:
-// a session id lives inside the profile that recorded it, so the picker cannot
-// hand one account another's conversation even when both worked in the folder.
+// recentPicker offers the conversations the panel behind it is showing. It is
+// the selected account's history in the default mode and names it; switched to
+// all profiles it says so, because a row can now belong to any account and the
+// header is where the scope is decided. It is also where a search is typed.
 func (m tuiModel) recentPicker(width, rows int) []string {
 	profile, ok := m.selectedProfile()
 	if !ok {
 		return nil
 	}
-	lines := append([]string{headerTitleStyle.Render("Resume a " + profile.Name + " session"), ""},
-		m.pickerBody(profile, width, rows)...)
-	return append(lines, "", hintStyle.Render("Reopens the conversation by id, in the folder it ran in."))
+	title := "Resume a " + profile.Name + " session"
+	if m.pickerAll {
+		title = "Resume a session · all profiles"
+	}
+	lines := append([]string{m.pickerHeading(title), ""}, m.pickerBody(width, rows)...)
+	hint := "Reopens the conversation by id, in the folder it ran in."
+	if m.recentSearching {
+		hint = "Type to filter by title, folder, account, or id."
+	}
+	return append(lines, "", hintStyle.Render(hint))
+}
+
+// pickerHeading is the title strip of either picker: the title itself, or the
+// query being typed in its place while the search is open. A filter that is set
+// but no longer being typed is shown beside the title so the shortened list is
+// never a mystery.
+func (m tuiModel) pickerHeading(title string) string {
+	if m.recentSearching {
+		return helpKeyStyle.Render("/") + fieldValueStyle.Render(m.recentFilter) + cursorStyle.Render(" ")
+	}
+	if m.recentFilter != "" {
+		return headerTitleStyle.Render(title) + "  " +
+			helpKeyStyle.Render("/") + fieldValueStyle.Render(m.recentFilter)
+	}
+	return headerTitleStyle.Render(title)
 }
 
 // pickerBody is the list of sessions, with the chosen conversation read out
 // beside it when there is room for both. Below that width the preview folds away
 // rather than being squeezed, the same way the cockpit folds a column instead of
 // shrinking it: the list is what the keys act on, and it keeps the space.
-func (m tuiModel) pickerBody(profile Profile, width, rows int) []string {
+func (m tuiModel) pickerBody(width, rows int) []string {
 	content := max(width-modalPadding, 8)
 	if content < pickerListMin+dividerWidth+previewPaneMin {
 		return padToRows(windowRows(m.recentRows(content), m.record, rows), rows, -1)
@@ -2038,7 +2256,7 @@ func (m tuiModel) pickerBody(profile Profile, width, rows int) []string {
 	// it, and stepping from a long conversation to a two-message one collapses
 	// the list beside it as well.
 	return joinPanes(windowRows(m.recentRows(list), m.record, rows),
-		m.previewPane(profile, preview, rows), list, preview, rows)
+		m.previewPane(preview, rows), list, preview, rows)
 }
 
 // windowRows scrolls a list longer than the space it has, keeping the row under
@@ -2053,14 +2271,21 @@ func windowRows(rows []string, cursor, height int) []string {
 	return rows[start : start+height]
 }
 
-// previewPane is the conversation under the cursor, or nothing at all when the
-// cursor is not on one — which is the empty-list case the picker never opens in
-// but the renderer still has to survive.
-func (m tuiModel) previewPane(profile Profile, width, rows int) []string {
-	if m.record < 0 || m.record >= len(m.recent) {
+// previewPane is the conversation under the cursor, read under the account that
+// recorded it, or nothing at all when the cursor is not on one — which is the
+// empty-list case the picker never opens in but the renderer still has to
+// survive.
+func (m tuiModel) previewPane(width, rows int) []string {
+	visible := m.visibleRecent()
+	if m.record < 0 || m.record >= len(visible) {
 		return nil
 	}
-	return m.previewLines(profile, m.recent[m.record], width, rows)
+	record := visible[m.record]
+	profile, ok := m.profileForRecord(record)
+	if !ok {
+		return nil
+	}
+	return m.previewLines(profile, record, width, rows)
 }
 
 // joinPanes puts the two halves side by side at exactly rows lines, each padded
@@ -2085,21 +2310,26 @@ func joinPanes(left, right []string, leftWidth, rightWidth, rows int) []string {
 // recentRows renders the recent list with a cursor on it, in a column of the
 // given width. Unlike the instance pickers a row fits on one line, because a
 // transcript has no PID to name it by and the time already tells two of them
-// apart.
+// apart. When the picker is listing every profile the row also names the
+// account, since the id alone no longer says which one to reopen it under.
 func (m tuiModel) recentRows(column int) []string {
 	// The cursor bar takes two columns before the row starts. A row sized to the
 	// full width wraps, which turns one session into two lines and the list into
 	// nonsense.
 	rowWidth := max(column-2, 8)
-	rows := make([]string, 0, len(m.recent))
-	for index, record := range m.recent {
+	visible := m.visibleRecent()
+	if len(visible) == 0 && m.recentFilter != "" {
+		return []string{emptyStateStyle.Render("Nothing matches " + m.recentFilter)}
+	}
+	rows := make([]string, 0, len(visible))
+	for index, record := range visible {
 		selected := index == m.record
 		ink := selectedPen(selected)
 		bar := ink.render(lipgloss.NewStyle(), "  ")
 		if selected {
 			bar = ink.render(cursorBarStyle, "▌ ")
 		}
-		rows = append(rows, bar+m.recentRow(ink, record, rowWidth))
+		rows = append(rows, bar+m.recentRow(ink, record, rowWidth, m.pickerAll))
 	}
 	return rows
 }
@@ -2112,11 +2342,17 @@ func (m tuiModel) handoffPicker(width, rows int) []string {
 	if !ok {
 		return nil
 	}
-	lines := append([]string{headerTitleStyle.Render("Hand over a " + profile.Name + " session"), ""},
-		m.pickerBody(profile, width, rows)...)
+	title := "Hand over a " + profile.Name + " session"
+	if m.pickerAll {
+		title = "Hand over a session · all profiles"
+	}
+	lines := append([]string{m.pickerHeading(title), ""}, m.pickerBody(width, rows)...)
 	hint := "The conversation is read, reduced to a brief, and left where it is."
 	if m.autoSwap {
 		hint = "Auto-swap is on: this goes to whichever account has the most quota left."
+	}
+	if m.recentSearching {
+		hint = "Type to filter by title, folder, account, or id."
 	}
 	return append(lines, "", hintStyle.Render(hint))
 }
@@ -2221,7 +2457,7 @@ func (m tuiModel) closingLines(width, rows int) []string {
 	if len(m.handoff.closing) == 0 {
 		return padToRows([]string{unknownStyle.Render("nothing was said in this session")}, height, -1)
 	}
-	body := conversationLines(m.handoff.provider, m.handoff.closing, width)
+	body := conversationLines(m.handoff.provider, m.handoff.closing, width, briefTurnRows)
 	return padToRows(fitTail(body, height, m.handoff.earlier), height, -1)
 }
 
@@ -2356,6 +2592,8 @@ func (m tuiModel) helpEntries() []helpEntry {
 	switch {
 	case m.searching:
 		return []helpEntry{{"type", "filter"}, {"↑↓", "choose"}, {"↵", "keep filter"}, {"esc", "clear"}}
+	case m.recentSearching:
+		return []helpEntry{{"type", "filter"}, {"↑↓", "choose"}, {"↵", "keep filter"}, {"esc", "clear"}}
 	case m.mode == tuiForm:
 		return []helpEntry{
 			{"tab/↵", "next field"},
@@ -2372,9 +2610,9 @@ func (m tuiModel) helpEntries() []helpEntry {
 	case m.mode == tuiHijack:
 		return []helpEntry{{"↑↓/jk", "choose instance"}, {"↵", "open here"}, {"esc", "cancel"}}
 	case m.mode == tuiRecent:
-		return []helpEntry{{"↑↓/jk", "choose session"}, {"↵", "resume it there"}, {"esc", "cancel"}}
+		return []helpEntry{{"↑↓/jk", "choose session"}, {"/", "search"}, {"a", "all profiles"}, {"↵", "resume it there"}, {"esc", "cancel"}}
 	case m.mode == tuiHandoff:
-		return []helpEntry{{"↑↓/jk", "choose session"}, {"↵", "hand it over"}, {"esc", "cancel"}}
+		return []helpEntry{{"↑↓/jk", "choose session"}, {"/", "search"}, {"a", "all profiles"}, {"↵", "hand it over"}, {"esc", "cancel"}}
 	case m.mode == tuiHandoffTo:
 		return []helpEntry{{"↑↓/jk", "choose account"}, {"↵", "write the brief"}, {"a", "auto-swap"}, {"esc", "cancel"}}
 	case m.mode == tuiHandoffBrief:
