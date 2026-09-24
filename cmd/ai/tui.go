@@ -31,11 +31,10 @@ const (
 	tuiHandoffBrief
 	tuiParams
 	tuiClone
-	tuiShareFrom
-	tuiShareItems
+	tuiShare
 	tuiConfirmInstall
 	tuiConfirmSelfUpdate
-	tuiHelp
+	tuiPalette
 )
 
 type profileForm struct {
@@ -151,11 +150,15 @@ type tuiModel struct {
 	// share is a copy of MCP servers or skills being set up between two of
 	// them. Both are kept on the model rather than passed between modes so an
 	// escape out of the middle of one leaves nothing half-built behind.
-	clone    string
-	share    shareDraft
-	autoSwap bool
-	lineage  map[string]lineageLink
-	update   updateStatus
+	clone string
+	share shareDraft
+	// paletteFilter is what has been typed into the all-actions palette, and
+	// paletteRow the highlighted action among those it lets through.
+	paletteFilter string
+	paletteRow    int
+	autoSwap      bool
+	lineage       map[string]lineageLink
+	update        updateStatus
 	// install and source are what a pending confirmation is about: the vendor
 	// installer that would run, and the checkout ai would rebuild itself from.
 	// Both are resolved on the keypress so the box can name them before the
@@ -183,6 +186,9 @@ type tuiModel struct {
 type logEntry struct {
 	kind statusKind
 	text string
+	// at is when it happened, which the board's status line shows beside it:
+	// the last thing that happened is only useful if it is recent.
+	at time.Time
 }
 
 // logLimit is how many past messages the log panel keeps. It is short on
@@ -197,12 +203,13 @@ func (m tuiModel) clock() time.Time {
 	return m.now
 }
 
-// visibleProfiles is the list the cursor moves through. Everything that acts on
-// "the selected profile" goes through it, so a filtered list can never run the
-// account that merely happens to sit at the same index in the full one.
+// visibleProfiles is the list the cursor moves through, in the order the board
+// draws it. Everything that acts on "the selected profile" goes through it, so
+// a filtered or re-ranked list can never run the account that merely happens
+// to sit at the same index in another one.
 func (m tuiModel) visibleProfiles() []Profile {
 	if m.filter == "" {
-		return m.profiles
+		return boardOrder(m.profiles, m.usage)
 	}
 	query := strings.ToLower(m.filter)
 	matches := make([]Profile, 0, len(m.profiles))
@@ -212,7 +219,20 @@ func (m tuiModel) visibleProfiles() []Profile {
 			matches = append(matches, profile)
 		}
 	}
-	return matches
+	return boardOrder(matches, m.usage)
+}
+
+// followSelection puts the cursor back on the named profile after the board
+// has been re-ranked under it. The board sorts by headroom, so a quota refresh
+// can move every row; the cursor belongs to the account, not to the index.
+func (m *tuiModel) followSelection(name string) {
+	for index, profile := range m.visibleProfiles() {
+		if profile.Name == name {
+			m.cursor = index
+			return
+		}
+	}
+	m.clampCursor()
 }
 
 func (m tuiModel) selectedProfile() (Profile, bool) {
@@ -289,7 +309,7 @@ func (m *tuiModel) setStatus(kind statusKind, message string) {
 	if message == "" {
 		return
 	}
-	m.log = append([]logEntry{{kind: kind, text: message}}, m.log...)
+	m.log = append([]logEntry{{kind: kind, text: message, at: m.clock()}}, m.log...)
 	if len(m.log) > logLimit {
 		m.log = m.log[:logLimit]
 	}
@@ -431,16 +451,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateParams(msg)
 		case tuiClone:
 			return m.updateClone(msg)
-		case tuiShareFrom:
-			return m.updateShareFrom(msg)
-		case tuiShareItems:
-			return m.updateShareItems(msg)
+		case tuiShare:
+			return m.updateShare(msg)
 		case tuiConfirmInstall:
 			return m.updateInstall(msg)
 		case tuiConfirmSelfUpdate:
 			return m.updateSelfUpdate(msg)
-		case tuiHelp:
-			return m.updateHelp(msg)
+		case tuiPalette:
+			return m.updatePalette(msg)
 		}
 	case processFinishedMsg:
 		m.running = false
@@ -473,7 +491,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.recent, m.activity = msg.recent, msg.activity
 		}
 	case usageLoadedMsg:
+		selected, had := m.selectedProfile()
 		m.usage = msg
+		if had {
+			m.followSelection(selected.Name)
+		}
 	case updateCheckedMsg:
 		m.update = msg.status
 		if msg.forced {
@@ -546,9 +568,8 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.searching = true
 		m.clearStatus()
-	case "?":
-		m.mode = tuiHelp
-		m.clearStatus()
+	case "?", " ":
+		m.openPalette()
 	case "a":
 		m.mode = tuiForm
 		m.form = profileForm{name: "", provider: "codex", command: "codex", isNew: true}
@@ -575,7 +596,8 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.clearStatus()
 		}
 	case "r":
-		m.usage = nil
+		// The old figures stay up until the new ones land. The board is ranked
+		// by them, and blanking them would reshuffle every row twice.
 		return m, tea.Batch(loadUsageCmd(m.profiles), checkUpdateCmd(true), m.loadCockpitCmd())
 	case "x":
 		if hasSelection {
@@ -678,14 +700,6 @@ func (m tuiModel) updateSelfUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = tuiList
 		m.clearStatus()
 	}
-	return m, nil
-}
-
-// updateHelp closes on anything. A pane that only lists keys has nothing to do
-// with one, and needing to remember which key dismisses the key list would be
-// its own small joke.
-func (m tuiModel) updateHelp(tea.KeyMsg) (tea.Model, tea.Cmd) {
-	m.mode = tuiList
 	return m, nil
 }
 
@@ -869,6 +883,10 @@ func (m tuiModel) updateRecent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearStatus()
 	case "a":
 		return m.toggleAllProfiles()
+	case "H":
+		if m.record >= 0 && m.record < len(visible) {
+			return m.leaveWith(visible[m.record])
+		}
 	case "enter":
 		if m.record < 0 || m.record >= len(visible) {
 			m.mode = tuiList
@@ -1018,6 +1036,13 @@ type handoffDraft struct {
 	// provider names who the model half of those turns was, so the screen can
 	// label it the way the picker's preview does.
 	provider string
+	// prompts, notes and git are what the brief was written from, kept so the
+	// brief step can show what the file says without reading it back; size is
+	// how large the file came out.
+	prompts []string
+	notes   []string
+	git     gitState
+	size    int
 }
 
 // openHandoff starts a pass by asking which session is leaving. That question
@@ -1100,29 +1125,14 @@ func (m tuiModel) updateHandoff(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearStatus()
 	case "a":
 		return m.toggleAllProfiles()
+	case "A":
+		m.toggleAutoSwap()
 	case "enter":
 		if m.record < 0 || m.record >= len(visible) {
 			m.mode = tuiList
 			return m, nil
 		}
-		record := visible[m.record]
-		source, ok := m.profileForRecord(record)
-		if !ok {
-			m.mode = tuiList
-			return m, nil
-		}
-		destinations := handoffDestinations(m.profiles, source, m.usage)
-		if len(destinations) == 0 {
-			m.setStatus(statusErr, "no other profile can be opened with a brief")
-			m.mode = tuiList
-			return m, nil
-		}
-		m.handoff = handoffDraft{source: record, destinations: destinations}
-		if m.autoSwap {
-			return m.startHandoff()
-		}
-		m.mode = tuiHandoffTo
-		m.clearStatus()
+		return m.leaveWith(visible[m.record])
 	case "esc", "q":
 		m.mode = tuiList
 		m.clearStatus()
@@ -1130,8 +1140,40 @@ func (m tuiModel) updateHandoff(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// leaveWith settles the first step of a handoff on one conversation and moves
+// to the second, or, with auto-swap on, straight to the brief. The resume
+// picker reaches it too: the row you would have resumed is the row you are
+// handing over.
+func (m tuiModel) leaveWith(record recordedSession) (tea.Model, tea.Cmd) {
+	source, ok := m.profileForRecord(record)
+	if !ok {
+		m.mode = tuiList
+		return m, nil
+	}
+	destinations := handoffDestinations(m.profiles, source, m.usage)
+	if len(destinations) == 0 {
+		m.setStatus(statusErr, "no other profile can be opened with a brief")
+		m.mode = tuiList
+		return m, nil
+	}
+	m.handoff = handoffDraft{source: record, destinations: destinations}
+	if m.autoSwap {
+		return m.startHandoff()
+	}
+	m.mode = tuiHandoffTo
+	m.clearStatus()
+	return m, nil
+}
+
 func (m tuiModel) updateHandoffTo(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "left", "backspace":
+		// Back to the first step, on the same row: the choice being revisited
+		// is the destination's, not which conversation is leaving.
+		m.handoff = handoffDraft{}
+		m.mode = tuiHandoff
+		m.clearStatus()
+		return m, m.selectPreview()
 	case "up", "k":
 		if m.handoff.target > 0 {
 			m.handoff.target--
@@ -1174,7 +1216,8 @@ func (m tuiModel) startHandoff() (tea.Model, tea.Cmd) {
 		m.mode = tuiList
 		return m, nil
 	}
-	body := renderBrief(brief, collectGitState(folder), m.clock())
+	state := collectGitState(folder)
+	body := renderBrief(brief, state, m.clock())
 	path, err := writeBriefFile(brief, body)
 	if err != nil {
 		m.setStatus(statusErr, "could not write the brief: "+err.Error())
@@ -1184,6 +1227,8 @@ func (m tuiModel) startHandoff() (tea.Model, tea.Cmd) {
 	m.handoff.path = path
 	m.handoff.closing, m.handoff.earlier = brief.closing, brief.earlier
 	m.handoff.provider = profile.Provider
+	m.handoff.prompts, m.handoff.notes = brief.prompts, brief.notes
+	m.handoff.git, m.handoff.size = state, len(body)
 	m.mode = tuiHandoffBrief
 	m.clearStatus()
 	return m, nil
@@ -1191,6 +1236,11 @@ func (m tuiModel) startHandoff() (tea.Model, tea.Cmd) {
 
 func (m tuiModel) updateHandoffBrief(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "left", "backspace":
+		// The brief stays written; going back is for choosing another account,
+		// and writing it again for that one costs one more read.
+		m.mode = tuiHandoffTo
+		m.clearStatus()
 	case "e":
 		return m, m.execEditor(m.handoff.path)
 	case "enter":
@@ -1561,28 +1611,50 @@ func (m tuiModel) updateDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// formFields is how many fields the editor has: name, provider, command,
+// default arguments, and note.
+const formFields = 5
+
+// formProviderField is the one field that is chosen rather than typed.
+const formProviderField = 1
+
+// knownProviders are the providers the editor offers as chips, in the order it
+// draws them.
+var knownProviders = []string{"codex", "claude", "antigravity", "opencode", "deepseek"}
+
+// updateForm edits a profile. Enter saves from any field — the editor shows
+// what the launch will be as it is typed, so there is nothing left to confirm
+// by walking to the last field — and tab moves between them.
 func (m tuiModel) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.mode = tuiList
 		m.clearStatus()
 		return m, nil
-	case "tab", "down", "enter":
-		if m.form.field < 4 {
-			m.form.field++
-			return m, nil
-		}
+	case "enter":
 		if err := m.saveForm(); err != nil {
 			m.setStatus(statusErr, err.Error())
 			return m, nil
 		}
 		m.mode = tuiList
 		return m, tea.Batch(loadUsageCmd(m.profiles), m.loadCockpitCmd())
+	case "tab", "down":
+		m.form.field = (m.form.field + 1) % formFields
+		return m, nil
 	case "shift+tab", "up":
-		if m.form.field > 0 {
-			m.form.field--
+		m.form.field = (m.form.field + formFields - 1) % formFields
+		return m, nil
+	}
+	if m.form.field == formProviderField {
+		switch msg.String() {
+		case "left", "h":
+			m.cycleProvider(-1)
+		case "right", "l", " ":
+			m.cycleProvider(1)
 		}
 		return m, nil
+	}
+	switch msg.String() {
 	case "backspace", "ctrl+h":
 		value := m.formValue()
 		if runes := []rune(value); len(runes) > 0 {
@@ -1597,6 +1669,26 @@ func (m tuiModel) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setFormValue(m.formValue() + string(msg.Runes))
 	}
 	return m, nil
+}
+
+// cycleProvider moves the provider chip. A command still set to the old
+// provider's default follows it, since a claude profile launching codex is
+// never what switching the chip meant; a command typed by hand is left alone.
+func (m *tuiModel) cycleProvider(step int) {
+	index := -1
+	for position, provider := range knownProviders {
+		if provider == m.form.provider {
+			index = position
+		}
+	}
+	next := knownProviders[(index+step+len(knownProviders))%len(knownProviders)]
+	if index < 0 && step < 0 {
+		next = knownProviders[len(knownProviders)-1]
+	}
+	if m.form.command == "" || m.form.command == defaultCommand(m.form.provider) {
+		m.form.command = defaultCommand(next)
+	}
+	m.form.provider = next
 }
 
 func (m *tuiModel) formValue() string {
@@ -1940,325 +2032,6 @@ func authCell(profile Profile) string {
 	}
 }
 
-func (m tuiModel) formContent() []string {
-	heading := "New profile"
-	if !m.form.isNew {
-		heading = "Edit " + m.form.original
-	}
-	fields := []struct{ label, value string }{
-		{"Name", m.form.name},
-		{"Provider", m.form.provider},
-		{"Command", m.form.command},
-		{"Default args", m.form.defaultArgs},
-		{"Notes", m.form.notes},
-	}
-	lines := []string{headerTitleStyle.Render(heading), ""}
-	for index, field := range fields {
-		label, value := fieldLabelStyle.Render(pad(field.label, 12)), fieldValueStyle.Render(field.value)
-		if index == m.form.field {
-			label = fieldLabelActive.Render(pad(field.label, 12))
-			value += cursorStyle.Render(" ")
-		}
-		lines = append(lines, label+" "+value)
-	}
-	if m.form.field == 1 {
-		lines = append(lines, "", hintStyle.Render("known providers: codex · claude · antigravity · opencode · deepseek"))
-	} else if m.form.field == 3 {
-		lines = append(lines, "", hintStyle.Render("shell-style quotes are supported; arguments apply only when running"))
-	}
-	return lines
-}
-
-func (m tuiModel) folderContent() []string {
-	return []string{
-		headerTitleStyle.Render("Change launch folder"),
-		"",
-		fieldLabelActive.Render(pad("Folder", 12)) + " " + fieldValueStyle.Render(m.folderPath) + cursorStyle.Render(" "),
-		"",
-		hintStyle.Render("Relative paths use the current launch folder. ~ is supported."),
-	}
-}
-
-// paramsContent is the field and, under it, the sets there are to reuse:
-// pinned ones first, then the most recent. Each row names the account it last
-// went to, because the list is shared by every provider and a flag is only
-// meaningful to the CLI it was written for.
-func (m tuiModel) paramsContent(width, rows int) []string {
-	name := "profile"
-	if profile, ok := m.selectedProfile(); ok {
-		name = profile.Name
-	}
-	value := max(width-modalPadding, 8)
-	lines := []string{
-		headerTitleStyle.Render("Run " + name + " with arguments"),
-		"",
-		fieldLabelActive.Render(pad("Arguments", 12)) + " " + fieldValueStyle.Render(m.params) + cursorStyle.Render(" "),
-		"",
-	}
-	// The field, the blank under it, and the blank above the hint are what the
-	// list shares the box's rows with.
-	list, cursor := m.argumentRows(value)
-	lines = append(lines, windowRows(list, cursor, max(rows-3, 4))...)
-	return append(lines, "",
-		hintStyle.Render(truncate("Added after the profile default arguments. Shell-style quotes are supported.", value)))
-}
-
-// argumentRows renders both sections and reports which line the highlight is
-// on, so a list taller than the box can be windowed around it.
-//
-// The columns are as wide as what is in them rather than an even split of the
-// box, so on a wide terminal the account stays beside the set it belongs to
-// instead of drifting to the far edge. The arguments give way first when there
-// is not room for both, since the account is what tells two similar sets apart.
-func (m tuiModel) argumentRows(width int) ([]string, int) {
-	entries := m.arguments.entries()
-	if len(entries) == 0 {
-		return []string{hintStyle.Render(truncate(fmt.Sprintf("Arguments you run are kept here, the last %d of them — ctrl-p pins a set for good.", recentArgumentLimit), width))}, 0
-	}
-	argsWidth, profileWidth, providerWidth := 0, len("never run"), 0
-	for _, set := range entries {
-		argsWidth = max(argsWidth, lipgloss.Width(formatArguments(set.Args)))
-		profileWidth = max(profileWidth, lipgloss.Width(set.Profile))
-		providerWidth = max(providerWidth, lipgloss.Width(set.Provider))
-	}
-	profileWidth, providerWidth = min(profileWidth, 20), min(providerWidth, 12)
-	const bar, gap = 2, 2
-	argsWidth = max(min(argsWidth, width-bar-gap-profileWidth-1-providerWidth), 8)
-	var lines []string
-	cursor, row := 0, 0
-	section := func(title string, sets []argumentSet) {
-		lines = append(lines, sectionLabelStyle.Render(title))
-		if len(sets) == 0 {
-			lines = append(lines, dimStyle.Render("  none"))
-		}
-		for _, set := range sets {
-			selected := row == m.argumentRow
-			if selected {
-				cursor = len(lines)
-			}
-			ink := selectedPen(selected)
-			marker := ink.render(lipgloss.NewStyle(), "  ")
-			if selected {
-				marker = ink.render(cursorBarStyle, "▌ ")
-			}
-			// A set pinned straight from the field has never been run anywhere,
-			// and says so rather than borrowing whichever account was selected
-			// when it was pinned.
-			account := ink.render(dimStyle, pad("never run", profileWidth+1+providerWidth))
-			if set.Profile != "" {
-				account = ink.render(dimStyle, pad(truncate(set.Profile, profileWidth), profileWidth)+" ") +
-					ink.render(providerStyle(set.Provider), pad(truncate(set.Provider, providerWidth), providerWidth))
-			}
-			lines = append(lines, marker+
-				ink.render(fieldValueStyle, pad(truncate(formatArguments(set.Args), argsWidth), argsWidth+gap))+
-				account)
-			row++
-		}
-	}
-	section("PINNED", m.arguments.Pinned)
-	section("RECENT", m.arguments.Recent)
-	return lines, cursor
-}
-
-func (m tuiModel) installContent(width int) []string {
-	value := max(width-detailLabelWidth, 8)
-	return []string{
-		headerTitleStyle.Render("Install the " + m.install.provider + " CLI"),
-		"",
-		fieldLabelStyle.Render(pad("runs", detailLabelWidth)) + fieldValueStyle.Render(truncate(m.install.command(), value)),
-		fieldLabelStyle.Render(pad("provides", detailLabelWidth)) + fieldValueStyle.Render(truncate(defaultCommand(m.install.provider)+" on PATH", value)),
-		"",
-		confirmBodyStyle.Render("The script is downloaded before it is run, and runs in your"),
-		confirmBodyStyle.Render("own environment rather than a profile's isolated one."),
-		"",
-		hintStyle.Render("y installs · n cancels"),
-	}
-}
-
-func (m tuiModel) selfUpdateContent(width int) []string {
-	value := max(width-detailLabelWidth, 8)
-	lines := []string{
-		headerTitleStyle.Render("Update ai-session"),
-		"",
-		fieldLabelStyle.Render(pad("checkout", detailLabelWidth)) + fieldValueStyle.Render(truncate(shortenHome(m.source), value)),
-		fieldLabelStyle.Render(pad("status", detailLabelWidth)) + fieldValueStyle.Render(truncate(m.update.message(), value)),
-		"",
-	}
-	for _, step := range selfUpdateSteps(m.source) {
-		lines = append(lines, hintStyle.Render("› "+strings.Join(step, " ")))
-	}
-	return append(lines,
-		"",
-		confirmBodyStyle.Render("ai reopens itself on the rebuilt binary when this finishes."),
-		"",
-		hintStyle.Render("y updates · n cancels"))
-}
-
-// helpPane lists every key at once. The bottom bar drops entries from the end
-// to fit, so on a narrow terminal it is not the full answer, and the keys it
-// drops are exactly the ones a new user has not learned yet.
-func (m tuiModel) helpPane(width int) []string {
-	// The modal pads two cells on either side of what it is handed, and a line
-	// past that budget is wrapped rather than clipped — which for a key list
-	// puts a description on a row of its own under the wrong key.
-	content := max(width-4, 24)
-	columns := helpSections()
-	rendered := make([][]string, len(columns))
-	// Each column is only as wide as its own content, because an even split
-	// would cut the longer side to match a shorter one that did not need it.
-	widths := make([]int, len(columns))
-	rows := 0
-	for index, sections := range columns {
-		var lines []string
-		for position, section := range sections {
-			if position > 0 {
-				lines = append(lines, "")
-			}
-			lines = append(lines, sectionLabelStyle.Render(section.title))
-			for _, entry := range section.entries {
-				lines = append(lines, helpKeyStyle.Render(pad(entry.key, helpKeyColumn))+helpDescStyle.Render(entry.desc))
-			}
-		}
-		for _, line := range lines {
-			widths[index] = max(widths[index], lipgloss.Width(line))
-		}
-		rendered[index] = lines
-		rows = max(rows, len(lines))
-	}
-
-	pane := []string{headerTitleStyle.Render("Keys"), ""}
-	if widths[0]+helpColumnGap+widths[1] > content {
-		// Too narrow for two columns, so they stack. The cockpit behind this box
-		// folds rather than squeezes for the same reason: a key list cut to fit
-		// is missing the keys nobody has learned yet.
-		for index, lines := range rendered {
-			if index > 0 {
-				pane = append(pane, "")
-			}
-			for _, line := range lines {
-				pane = append(pane, padLine(line, content))
-			}
-		}
-		return append(pane, "", hintStyle.Render("any key closes"))
-	}
-	for row := range rows {
-		left, right := "", ""
-		if row < len(rendered[0]) {
-			left = rendered[0][row]
-		}
-		if row < len(rendered[1]) {
-			right = rendered[1][row]
-		}
-		pane = append(pane, padLine(pad(left, widths[0])+strings.Repeat(" ", helpColumnGap)+right, content))
-	}
-	return append(pane, "", hintStyle.Render("any key closes"))
-}
-
-func (m tuiModel) confirmContent(width int) []string {
-	profile, ok := m.selectedProfile()
-	if !ok {
-		return nil
-	}
-	switch m.mode {
-	case tuiHijack:
-		lines := append([]string{headerTitleStyle.Render("Open a running " + profile.Name + " session here"), ""},
-			m.instanceRows(width, fieldValueStyle)...)
-		return append(lines, "", hintStyle.Render("The original instance keeps running; this opens its conversation."))
-	case tuiConfirmKill:
-		lines := append([]string{dangerTextStyle.Render("Stop a " + profile.Name + " instance?"), ""},
-			m.instanceRows(width, dangerTextStyle)...)
-		return append(lines, "", confirmBodyStyle.Render("Enter stops the selected instance. a or y stops them all."))
-	default:
-		return []string{
-			dangerTextStyle.Render("Delete " + profile.Name + "?"),
-			"",
-			confirmBodyStyle.Render("Its isolated state directory and stored credentials"),
-			confirmBodyStyle.Render("are removed. This cannot be undone."),
-		}
-	}
-}
-
-// A picker splits into a list and a preview when the box is wide enough for
-// both halves to be read, and stays a plain list when it is not. The minimums
-// are what each half needs to say anything: a session row is a time, a title and
-// a folder side by side, and a preview much narrower than this wraps every
-// sentence into a column of single words.
-const (
-	pickerModalWidth = 150
-	pickerListMin    = 46
-	previewPaneMin   = 34
-	// pickerListShare is how much of a split picker the list takes. The list
-	// carries three fixed columns and the preview only wraps, so the half that
-	// cannot fold gets the larger share.
-	pickerListShare = 58
-	// pickerListMax is where the list stops taking that share: it is the width
-	// at which a row's folder reaches the cap recentRow already puts on it, so
-	// past here the share buys padding between the three columns and nothing
-	// else. Every column a wider terminal offers after that goes to the
-	// preview, which turns width into sentences that fit on one line.
-	pickerListMax = 72
-)
-
-// recentPicker offers the conversations the panel behind it is showing. It is
-// the selected account's history in the default mode and names it; switched to
-// all profiles it says so, because a row can now belong to any account and the
-// header is where the scope is decided. It is also where a search is typed.
-func (m tuiModel) recentPicker(width, rows int) []string {
-	profile, ok := m.selectedProfile()
-	if !ok {
-		return nil
-	}
-	title := "Resume a " + profile.Name + " session"
-	if m.pickerAll {
-		title = "Resume a session · all profiles"
-	}
-	lines := append([]string{m.pickerHeading(title), ""}, m.pickerBody(width, rows)...)
-	hint := "Reopens the conversation by id, in the folder it ran in."
-	if m.recentSearching {
-		hint = "Type to filter by title, folder, account, or id."
-	}
-	return append(lines, "", hintStyle.Render(hint))
-}
-
-// pickerHeading is the title strip of either picker: the title itself, or the
-// query being typed in its place while the search is open. A filter that is set
-// but no longer being typed is shown beside the title so the shortened list is
-// never a mystery.
-func (m tuiModel) pickerHeading(title string) string {
-	if m.recentSearching {
-		return helpKeyStyle.Render("/") + fieldValueStyle.Render(m.recentFilter) + cursorStyle.Render(" ")
-	}
-	if m.recentFilter != "" {
-		return headerTitleStyle.Render(title) + "  " +
-			helpKeyStyle.Render("/") + fieldValueStyle.Render(m.recentFilter)
-	}
-	return headerTitleStyle.Render(title)
-}
-
-// pickerBody is the list of sessions, with the chosen conversation read out
-// beside it when there is room for both. Below that width the preview folds away
-// rather than being squeezed, the same way the cockpit folds a column instead of
-// shrinking it: the list is what the keys act on, and it keeps the space.
-func (m tuiModel) pickerBody(width, rows int) []string {
-	content := max(width-modalPadding, 8)
-	if content < pickerListMin+dividerWidth+previewPaneMin {
-		return padToRows(windowRows(m.recentRows(content), m.record, rows), rows, -1)
-	}
-	columns := content - dividerWidth
-	// The list takes its share of the box, but never so much that the preview
-	// drops under the width it needs, and never past the width its own rows can
-	// use however wide the terminal is.
-	list := min(max(columns*pickerListShare/100, pickerListMin), columns-previewPaneMin, pickerListMax)
-	preview := columns - list
-	// Both halves are drawn at the height the frame allows, whatever is under the
-	// cursor. Settling on the content instead gives the box a different size for
-	// every row: the arrow key that moves the cursor also moves the rows around
-	// it, and stepping from a long conversation to a two-message one collapses
-	// the list beside it as well.
-	return joinPanes(windowRows(m.recentRows(list), m.record, rows),
-		m.previewPane(preview, rows), list, preview, rows)
-}
-
 // windowRows scrolls a list longer than the space it has, keeping the row under
 // the cursor in view. A picker that cannot show the row about to be acted on is
 // worse than a short list: the keys still work, and there is nothing on screen
@@ -2269,126 +2042,6 @@ func windowRows(rows []string, cursor, height int) []string {
 	}
 	start := min(max(cursor-height/2, 0), len(rows)-height)
 	return rows[start : start+height]
-}
-
-// previewPane is the conversation under the cursor, read under the account that
-// recorded it, or nothing at all when the cursor is not on one — which is the
-// empty-list case the picker never opens in but the renderer still has to
-// survive.
-func (m tuiModel) previewPane(width, rows int) []string {
-	visible := m.visibleRecent()
-	if m.record < 0 || m.record >= len(visible) {
-		return nil
-	}
-	record := visible[m.record]
-	profile, ok := m.profileForRecord(record)
-	if !ok {
-		return nil
-	}
-	return m.previewLines(profile, record, width, rows)
-}
-
-// joinPanes puts the two halves side by side at exactly rows lines, each padded
-// to its own width. The gutter is the cockpit's hairline, so a picker split in
-// two reads as the same kind of division as the frame behind it.
-func joinPanes(left, right []string, leftWidth, rightWidth, rows int) []string {
-	divider := " " + ruleStyle.Render("│") + " "
-	lines := make([]string, 0, rows)
-	for row := range rows {
-		first, second := "", ""
-		if row < len(left) {
-			first = left[row]
-		}
-		if row < len(right) {
-			second = right[row]
-		}
-		lines = append(lines, padLine(first, leftWidth)+divider+padLine(second, rightWidth))
-	}
-	return lines
-}
-
-// recentRows renders the recent list with a cursor on it, in a column of the
-// given width. Unlike the instance pickers a row fits on one line, because a
-// transcript has no PID to name it by and the time already tells two of them
-// apart. When the picker is listing every profile the row also names the
-// account, since the id alone no longer says which one to reopen it under.
-func (m tuiModel) recentRows(column int) []string {
-	// The cursor bar takes two columns before the row starts. A row sized to the
-	// full width wraps, which turns one session into two lines and the list into
-	// nonsense.
-	rowWidth := max(column-2, 8)
-	visible := m.visibleRecent()
-	if len(visible) == 0 && m.recentFilter != "" {
-		return []string{emptyStateStyle.Render("Nothing matches " + m.recentFilter)}
-	}
-	rows := make([]string, 0, len(visible))
-	for index, record := range visible {
-		selected := index == m.record
-		ink := selectedPen(selected)
-		bar := ink.render(lipgloss.NewStyle(), "  ")
-		if selected {
-			bar = ink.render(cursorBarStyle, "▌ ")
-		}
-		rows = append(rows, bar+m.recentRow(ink, record, rowWidth, m.pickerAll))
-	}
-	return rows
-}
-
-// handoffPicker asks which session is leaving. It is the resume picker's list
-// with a different verb on it, deliberately: the row you would have resumed is
-// the row you are handing over.
-func (m tuiModel) handoffPicker(width, rows int) []string {
-	profile, ok := m.selectedProfile()
-	if !ok {
-		return nil
-	}
-	title := "Hand over a " + profile.Name + " session"
-	if m.pickerAll {
-		title = "Hand over a session · all profiles"
-	}
-	lines := append([]string{m.pickerHeading(title), ""}, m.pickerBody(width, rows)...)
-	hint := "The conversation is read, reduced to a brief, and left where it is."
-	if m.autoSwap {
-		hint = "Auto-swap is on: this goes to whichever account has the most quota left."
-	}
-	if m.recentSearching {
-		hint = "Type to filter by title, folder, account, or id."
-	}
-	return append(lines, "", hintStyle.Render(hint))
-}
-
-// handoffToPicker asks where the work should go, most quota first. The figure
-// beside each account is the window that runs out soonest, because a weekly
-// allowance with room is no help at the moment the five-hour one is spent.
-func (m tuiModel) handoffToPicker(width int) []string {
-	lines := []string{headerTitleStyle.Render("Hand it to which account?"), ""}
-	valueWidth := max(width-modalPadding-2, 8)
-	for index, profile := range m.handoff.destinations {
-		selected := index == m.handoff.target
-		ink := selectedPen(selected)
-		bar := ink.render(lipgloss.NewStyle(), "  ")
-		if selected {
-			bar = ink.render(cursorBarStyle, "▌ ")
-		}
-		name := min(max(valueWidth-16, 8), 26)
-		lines = append(lines, bar+
-			ink.render(fieldValueStyle, pad(truncate(profile.Name, name), name))+
-			ink.render(providerStyle(profile.Provider), pad(truncate(profile.Provider, 12), 12))+
-			ink.render(quotaStyle(headroom(m.usage[profile.Name])), quotaLabel(headroom(m.usage[profile.Name]))))
-	}
-	return append(lines, "",
-		hintStyle.Render("Sorted by the quota window that runs out soonest."),
-		hintStyle.Render("a turns auto-swap on and stops asking this."))
-}
-
-// quotaLabel says what is left in the tightest window, or that nothing is
-// known. An unknown remainder reads as "—" rather than as a number, because a
-// missing quota cache is not the same answer as an empty quota.
-func quotaLabel(percent int) string {
-	if percent < 0 {
-		return "  —"
-	}
-	return fmt.Sprintf("%3d%%", percent)
 }
 
 func quotaStyle(percent int) lipgloss.Style {
@@ -2404,63 +2057,6 @@ func quotaStyle(percent int) lipgloss.Style {
 	}
 }
 
-// handoffBriefContent is the last frame before the work moves. With auto-swap
-// on it is the only frame, which is why it names the destination rather than
-// assuming the previous screen already did.
-//
-// Under the two facts is the end of the conversation being handed over, rather
-// than the head of the brief that was just written. The brief opens with the
-// same four lines every time — who the next agent is and what it is being
-// handed — and none of them answers the question this screen is actually
-// asking, which is whether this is the work that was meant to move. The last
-// few things that were said answer it at a glance.
-func (m tuiModel) handoffBriefContent(width, rows int) []string {
-	target := "somewhere"
-	if m.handoff.target < len(m.handoff.destinations) {
-		target = m.handoff.destinations[m.handoff.target].Name
-	}
-	value := max(width-modalPadding, 8)
-	title, titleStyle := m.handoff.source.session.title, fieldValueStyle
-	if title == "" {
-		title, titleStyle = "untitled session", unknownStyle
-	}
-	label := max(value-detailLabelWidth, 8)
-	lines := []string{
-		headerTitleStyle.Render("Hand this to " + target),
-		"",
-		fieldLabelStyle.Render(pad("session", detailLabelWidth)) + titleStyle.Render(truncate(title, label)),
-		fieldLabelStyle.Render(pad("brief", detailLabelWidth)) +
-			fieldValueStyle.Render(truncate(shortenHome(m.handoff.path), label)),
-		"",
-		sectionLabelStyle.Render("HOW IT ENDED"),
-		"",
-	}
-	lines = append(lines, m.closingLines(value, rows)...)
-	return append(lines, "",
-		confirmBodyStyle.Render("Nothing is written into either CLI's own state."),
-		hintStyle.Render("↵ opens "+target+" on it · e edits it first · esc keeps the file"))
-}
-
-// briefFacingRows is what handoffBriefContent spends on itself beyond what
-// modalRows has already set aside for a box's own chrome: the session and brief
-// lines with the blank and heading under them, and a footer of two lines rather
-// than one.
-const briefFacingRows = 6
-
-// closingLines is the tail of the outgoing conversation, cut to what is left of
-// the box and padded back out to it, so a short exchange leaves the box the size
-// a long one does. A session with nothing in it never reaches this screen —
-// buildBrief refuses one — but the renderer says so rather than showing a gap if
-// it ever does.
-func (m tuiModel) closingLines(width, rows int) []string {
-	height := max(rows-briefFacingRows, minBlockRows)
-	if len(m.handoff.closing) == 0 {
-		return padToRows([]string{unknownStyle.Render("nothing was said in this session")}, height, -1)
-	}
-	body := conversationLines(m.handoff.provider, m.handoff.closing, width, briefTurnRows)
-	return padToRows(fitTail(body, height, m.handoff.earlier), height, -1)
-}
-
 // statusIcon marks how a message landed. The log panel and the modal footer
 // share it so one glance means the same thing in both places.
 func statusIcon(kind statusKind) (string, lipgloss.Style) {
@@ -2472,25 +2068,6 @@ func statusIcon(kind statusKind) (string, lipgloss.Style) {
 	default:
 		return "•", statusInfoStyle
 	}
-}
-
-// instanceRows renders one running instance per two lines: what it is working
-// on, and where it was launched. selected styles the highlighted row, which
-// differs between the two pickers that share this list.
-func (m tuiModel) instanceRows(width int, selected lipgloss.Style) []string {
-	valueWidth := max(width-8, 8)
-	rows := make([]string, 0, len(m.instances)*2)
-	for index, instance := range m.instances {
-		label := fmt.Sprintf("Instance %d (PID %d)  %s", index+1, instance.pid, m.instanceTitle(instance))
-		label = truncate(label, valueWidth)
-		if index == m.instance {
-			rows = append(rows, cursorBarStyle.Render("▌ ")+selected.Render(label))
-		} else {
-			rows = append(rows, "  "+confirmBodyStyle.Render(label))
-		}
-		rows = append(rows, "    "+hintStyle.Render(truncate(shortenHome(instance.folder), valueWidth)))
-	}
-	return rows
 }
 
 // instanceTitle names the conversation an instance has open, or says why it
@@ -2524,134 +2101,6 @@ func shortenHome(path string) string {
 		return "~" + path[len(home):]
 	}
 	return path
-}
-
-const (
-	// helpKeyColumn fits the widest key label in the help pane, plus a space.
-	helpKeyColumn = 8
-	// helpColumnGap separates the two columns of keys.
-	helpColumnGap = 2
-	// helpModalWidth is wider than the prompts share, because the key list is
-	// two columns of text rather than one question. A terminal too narrow for
-	// that gets one column instead of a clipped two.
-	helpModalWidth = 110
-)
-
-// helpSection is one titled group of keys in the help pane. The grouping is by
-// what the key acts on — a conversation, a profile, a provider's CLI, ai itself
-// — because that is how someone looking for a key already thinks about it.
-type helpSection struct {
-	title   string
-	entries []helpEntry
-}
-
-// helpSections is two columns of sections, laid out side by side.
-func helpSections() [][]helpSection {
-	return [][]helpSection{
-		{
-			{"LAUNCH", []helpEntry{
-				{"↵", "run the selected profile"},
-				{"p", "run with extra, recent, or pinned arguments"},
-				{"R", "resume a recent conversation"},
-				{"h", "open a running session"},
-				{"H", "hand a session to another account"},
-				{"c", "change the launch folder"},
-			}},
-			{"PROFILES", []helpEntry{
-				{"↑↓ jk", "select"},
-				{"/", "filter by name or provider"},
-				{"a", "add"},
-				{"e", "edit"},
-				{"C", "clone its setup"},
-				{"x", "delete"},
-			}},
-		},
-		{
-			{"PROVIDER CLI", []helpEntry{
-				{"l", "log in"},
-				{"i", "install the CLI"},
-				{"u", "update the CLI"},
-				{"K", "stop a running instance"},
-			}},
-			{"FROM ANOTHER PROFILE", []helpEntry{
-				{"m", "install MCP servers"},
-				{"s", "install skills"},
-			}},
-			{"AI-SESSION", []helpEntry{
-				{"A", "auto-swap on handoff"},
-				{"U", "update ai-session itself"},
-				{"r", "refresh quotas and updates"},
-				{"?", "these keys"},
-				{"q", "quit"},
-			}},
-		},
-	}
-}
-
-func (m tuiModel) helpEntries() []helpEntry {
-	switch {
-	case m.searching:
-		return []helpEntry{{"type", "filter"}, {"↑↓", "choose"}, {"↵", "keep filter"}, {"esc", "clear"}}
-	case m.recentSearching:
-		return []helpEntry{{"type", "filter"}, {"↑↓", "choose"}, {"↵", "keep filter"}, {"esc", "clear"}}
-	case m.mode == tuiForm:
-		return []helpEntry{
-			{"tab/↵", "next field"},
-			{"↵", "save on last field"},
-			{"ctrl-u", "clear"},
-			{"esc", "cancel"},
-		}
-	case m.mode == tuiFolder:
-		return []helpEntry{{"↵", "set folder"}, {"ctrl-u", "clear"}, {"esc", "cancel"}}
-	case m.mode == tuiConfirmDelete:
-		return []helpEntry{{"y", "delete"}, {"n/esc", "keep"}}
-	case m.mode == tuiConfirmKill:
-		return []helpEntry{{"↑↓/jk", "choose instance"}, {"↵", "stop selected"}, {"a/y", "stop all"}, {"n/esc", "keep running"}}
-	case m.mode == tuiHijack:
-		return []helpEntry{{"↑↓/jk", "choose instance"}, {"↵", "open here"}, {"esc", "cancel"}}
-	case m.mode == tuiRecent:
-		return []helpEntry{{"↑↓/jk", "choose session"}, {"/", "search"}, {"a", "all profiles"}, {"↵", "resume it there"}, {"esc", "cancel"}}
-	case m.mode == tuiHandoff:
-		return []helpEntry{{"↑↓/jk", "choose session"}, {"/", "search"}, {"a", "all profiles"}, {"↵", "hand it over"}, {"esc", "cancel"}}
-	case m.mode == tuiHandoffTo:
-		return []helpEntry{{"↑↓/jk", "choose account"}, {"↵", "write the brief"}, {"a", "auto-swap"}, {"esc", "cancel"}}
-	case m.mode == tuiHandoffBrief:
-		return []helpEntry{{"↵", "open it there"}, {"e", "edit the brief"}, {"esc", "keep the brief"}}
-	case m.mode == tuiParams:
-		return []helpEntry{{"↵", "run"}, {"↑↓", "reuse a set"}, {"ctrl-p", "pin"}, {"ctrl-u", "clear"}, {"esc", "cancel"}}
-	case m.mode == tuiClone:
-		return []helpEntry{{"↵", "clone"}, {"ctrl-u", "clear"}, {"esc", "cancel"}}
-	case m.mode == tuiShareFrom:
-		return []helpEntry{{"↑↓/jk", "choose profile"}, {"↵", "see what it has"}, {"esc", "cancel"}}
-	case m.mode == tuiShareItems:
-		return []helpEntry{{"↑↓/jk", "move"}, {"space", "tick"}, {"a", "tick new"}, {"↵", "install"}, {"esc", "cancel"}}
-	case m.mode == tuiConfirmInstall:
-		return []helpEntry{{"y", "install"}, {"n/esc", "cancel"}}
-	case m.mode == tuiConfirmSelfUpdate:
-		return []helpEntry{{"y", "update"}, {"n/esc", "cancel"}}
-	case m.mode == tuiHelp:
-		return []helpEntry{{"any key", "close"}}
-	case len(m.profiles) == 0:
-		return []helpEntry{{"a", "add profile"}, {"q", "quit"}}
-	default:
-		return []helpEntry{
-			{"↵", "run"},
-			{"p", "args"},
-			{"R", "resume"},
-			{"h", "hijack"},
-			{"H", "handoff"},
-			{"l", "login"},
-			{"i", "install"},
-			{"u", "update"},
-			{"U", "update ai"},
-			{"c", "folder"},
-			{"r", "refresh"},
-			{"a e x", "add edit delete"},
-			{"C", "clone"},
-			{"m s", "mcp skills"},
-			{"K", "stop"},
-		}
-	}
 }
 
 func terminateProfile(profile Profile) error {
@@ -2817,8 +2266,9 @@ func (kind shareKind) read(profile Profile) ([]shareItem, error) {
 		return nil, err
 	}
 	items := make([]shareItem, 0, len(servers))
-	for _, server := range servers {
-		items = append(items, shareItem{name: server.Name, detail: server.transport() + " · " + server.endpoint()})
+	for index := range servers {
+		server := servers[index]
+		items = append(items, shareItem{name: server.Name, detail: server.endpoint(), server: &server})
 	}
 	return items, nil
 }
@@ -2840,7 +2290,19 @@ type shareDraft struct {
 	source  int
 	items   []shareItem
 	item    int
+	// focus is which pane the arrows move in: the lenders on the left, or what
+	// the chosen one has on the right.
+	focus int
+	// dry lists the other profiles with nothing of this kind to lend. They are
+	// named rather than left out, so an account that is missing from the list
+	// is visibly empty rather than overlooked.
+	dry []Profile
 }
+
+const (
+	shareFocusSources = iota
+	shareFocusItems
+)
 
 // shareSource is one profile that has something to lend, with how much of it.
 // The count is taken when the picker opens rather than when a row is drawn:
@@ -2860,6 +2322,9 @@ type shareItem struct {
 	// answer the picker was opened to get.
 	present bool
 	chosen  bool
+	// server is the MCP definition behind the row, kept so the box can say how
+	// it will be rewritten for the destination. Skills have none.
+	server *mcpServer
 }
 
 // shareSource is the profile lending, when one has been chosen. Both the
@@ -2904,9 +2369,28 @@ func (m *tuiModel) openShare(kind shareKind) {
 		m.setStatus(statusErr, "no other profile has a "+kind.noun()+" to lend")
 		return
 	}
-	m.share = shareDraft{kind: kind, sources: sources}
-	m.mode = tuiShareFrom
+	m.share = shareDraft{kind: kind, sources: sources, dry: dryProfiles(m.profiles, destination, sources)}
+	if err := m.loadShareItems(); err != nil {
+		m.setStatus(statusErr, err.Error())
+		return
+	}
+	m.mode = tuiShare
 	m.clearStatus()
+}
+
+// dryProfiles is every other profile that is not lending anything.
+func dryProfiles(profiles []Profile, destination Profile, sources []shareSource) []Profile {
+	lending := make(map[string]bool, len(sources))
+	for _, source := range sources {
+		lending[source.profile.Name] = true
+	}
+	var dry []Profile
+	for _, profile := range profiles {
+		if profile.Name != destination.Name && !lending[profile.Name] {
+			dry = append(dry, profile)
+		}
+	}
+	return dry
 }
 
 // shareSources lists the profiles with something of this kind to give. A
@@ -2925,30 +2409,6 @@ func shareSources(profiles []Profile, destination Profile, kind shareKind) []sha
 		sources = append(sources, shareSource{profile: profile, count: len(items)})
 	}
 	return sources
-}
-
-func (m tuiModel) updateShareFrom(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc", "q", "ctrl+c":
-		m.mode = tuiList
-		m.clearStatus()
-	case "up", "k":
-		if m.share.source > 0 {
-			m.share.source--
-		}
-	case "down", "j":
-		if m.share.source < len(m.share.sources)-1 {
-			m.share.source++
-		}
-	case "enter":
-		if err := m.loadShareItems(); err != nil {
-			m.setStatus(statusErr, err.Error())
-			return m, nil
-		}
-		m.mode = tuiShareItems
-		m.clearStatus()
-	}
-	return m, nil
 }
 
 // loadShareItems fills the multi-select from the chosen source, marking the
@@ -2981,20 +2441,54 @@ func (m *tuiModel) loadShareItems() error {
 	return nil
 }
 
-func (m tuiModel) updateShareItems(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+// updateShare drives the one box a copy happens in: lenders on the left, what
+// the chosen one has on the right. Moving through the lenders reads each one
+// as the cursor lands on it, so the right pane always answers for the row on
+// the left.
+func (m tuiModel) updateShare(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "ctrl+c":
+	case "esc", "ctrl+c", "q":
 		m.mode = tuiList
 		m.clearStatus()
+	case "tab":
+		// The other kind of thing to copy, into the same profile. It is a new
+		// question, so whatever was ticked for the old one is dropped.
+		kind := shareSkills
+		if m.share.kind == shareSkills {
+			kind = shareMCP
+		}
+		// With nothing of that kind to lend, openShare says so and this box
+		// stays on the kind it was showing.
+		m.openShare(kind)
+	case "left", "h":
+		m.share.focus = shareFocusSources
+	case "right", "l":
+		if len(m.share.items) > 0 {
+			m.share.focus = shareFocusItems
+		}
 	case "up", "k":
-		if m.share.item > 0 {
+		if m.share.focus == shareFocusSources {
+			if m.share.source > 0 {
+				m.share.source--
+				m.reloadShareItems()
+			}
+		} else if m.share.item > 0 {
 			m.share.item--
 		}
 	case "down", "j":
-		if m.share.item < len(m.share.items)-1 {
+		if m.share.focus == shareFocusSources {
+			if m.share.source < len(m.share.sources)-1 {
+				m.share.source++
+				m.reloadShareItems()
+			}
+		} else if m.share.item < len(m.share.items)-1 {
 			m.share.item++
 		}
 	case " ":
+		if m.share.focus == shareFocusSources {
+			m.share.focus = shareFocusItems
+			return m, nil
+		}
 		if m.share.item >= 0 && m.share.item < len(m.share.items) {
 			m.share.items[m.share.item].chosen = !m.share.items[m.share.item].chosen
 		}
@@ -3005,9 +2499,23 @@ func (m tuiModel) updateShareItems(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// replaced a definition nobody looked at.
 		m.toggleAllShareItems()
 	case "enter":
+		if len(m.share.chosenNames()) == 0 && m.share.focus == shareFocusSources {
+			m.share.focus = shareFocusItems
+			return m, nil
+		}
 		return m.applyShare()
 	}
 	return m, nil
+}
+
+// reloadShareItems reads the lender the cursor just moved to.
+func (m *tuiModel) reloadShareItems() {
+	if err := m.loadShareItems(); err != nil {
+		m.share.items = nil
+		m.setStatus(statusErr, err.Error())
+		return
+	}
+	m.clearStatus()
 }
 
 func (m *tuiModel) toggleAllShareItems() {
@@ -3110,111 +2618,4 @@ func (m *tuiModel) saveClone() error {
 	}
 	m.setStatus(statusOK, "cloned "+source.Name+" into "+name+" — log in with l")
 	return nil
-}
-
-// cloneContent asks for the name and says what the new profile will and will
-// not have. The second half matters more than the first: "clone" reads as a
-// duplicate account, and this one is a duplicate setup.
-func (m tuiModel) cloneContent(width int) []string {
-	source, ok := m.selectedProfile()
-	if !ok {
-		return nil
-	}
-	value := max(width-modalPadding, 8)
-	what := "settings, MCP servers, and skills"
-	if len(profileConfigPaths(source.Provider)) == 0 {
-		what = "launch settings"
-	}
-	return []string{
-		headerTitleStyle.Render("Clone " + source.Name),
-		"",
-		fieldLabelActive.Render(pad("name", detailLabelWidth)) +
-			fieldValueStyle.Render(truncate(m.clone, max(value-detailLabelWidth-1, 4))) + cursorStyle.Render(" "),
-		"",
-		confirmBodyStyle.Render(truncate("Copies its "+what+".", value)),
-		hintStyle.Render(truncate("Credentials do not come with it — the clone starts logged out.", value)),
-		hintStyle.Render(truncate("Moving an account instead: ai profile export, then import.", value)),
-	}
-}
-
-// shareFromPicker asks which profile is lending. Every row here has at least
-// one thing to give, so the count beside it is a promise rather than a label.
-func (m tuiModel) shareFromPicker(width int) []string {
-	destination, ok := m.selectedProfile()
-	if !ok {
-		return nil
-	}
-	noun := m.share.kind.noun()
-	lines := []string{headerTitleStyle.Render("Install " + noun + "s into " + destination.Name), ""}
-	valueWidth := max(width-modalPadding-2, 8)
-	for index, source := range m.share.sources {
-		ink := selectedPen(index == m.share.source)
-		bar := ink.render(lipgloss.NewStyle(), "  ")
-		if index == m.share.source {
-			bar = ink.render(cursorBarStyle, "▌ ")
-		}
-		name := min(max(valueWidth-26, 8), 26)
-		lines = append(lines, bar+
-			ink.render(fieldValueStyle, pad(truncate(source.profile.Name, name), name))+
-			ink.render(providerStyle(source.profile.Provider), pad(truncate(source.profile.Provider, 12), 12))+
-			ink.render(dimStyle, truncate(plural(source.count, noun), max(valueWidth-name-12, 4))))
-	}
-	return append(lines, "", hintStyle.Render("Copying is one way: nothing is taken from "+destination.Name+"."))
-}
-
-// shareItemsPicker is the multi-select. A row the destination already has is
-// shown as installed and left unticked, so replacing one is something you do on
-// purpose to a row you looked at.
-func (m tuiModel) shareItemsPicker(width, rows int) []string {
-	destination, ok := m.selectedProfile()
-	if !ok {
-		return nil
-	}
-	source, chosen := m.shareSource()
-	if !chosen {
-		return nil
-	}
-	lines := []string{
-		headerTitleStyle.Render(source.Name + " → " + destination.Name),
-		"",
-	}
-	content := max(width-modalPadding, 8)
-	// Padded to the frame like the other list boxes: a profile with four skills
-	// and one with forty are then the same box, and the keys under it stay put.
-	lines = append(lines, padToRows(windowRows(m.shareItemRows(content), m.share.item, rows), rows, -1)...)
-	ticked := len(m.share.chosenNames())
-	footer := hintStyle.Render("space ticks a row · a ticks every new one · ↵ installs")
-	if ticked > 0 {
-		footer = fieldValueStyle.Render(plural(ticked, m.share.kind.noun())+" ticked") +
-			hintStyle.Render(" · ↵ installs · space unticks")
-	}
-	return append(lines, "", footer)
-}
-
-func (m tuiModel) shareItemRows(column int) []string {
-	const tickWidth = 4
-	nameWidth := min(max(column/3, 10), 24)
-	rows := make([]string, 0, len(m.share.items))
-	for index, item := range m.share.items {
-		ink := selectedPen(index == m.share.item)
-		bar := ink.render(lipgloss.NewStyle(), "  ")
-		if index == m.share.item {
-			bar = ink.render(cursorBarStyle, "▌ ")
-		}
-		tick, tickStyle := "[ ]", dimStyle
-		if item.chosen {
-			tick, tickStyle = "[x]", liveStyle
-		}
-		marker := ""
-		if item.present {
-			marker = " installed"
-		}
-		detail := max(column-2-tickWidth-nameWidth-lipgloss.Width(marker)-1, 4)
-		rows = append(rows, bar+
-			ink.render(tickStyle, pad(tick, tickWidth))+
-			ink.render(fieldValueStyle, pad(truncate(item.name, nameWidth), nameWidth))+" "+
-			ink.render(dimStyle, pad(truncate(item.detail, detail), detail))+
-			ink.render(updateStyle, marker))
-	}
-	return rows
 }

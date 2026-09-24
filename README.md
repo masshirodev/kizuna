@@ -37,8 +37,9 @@ ai                             # or open the TUI
 
 - **Isolated accounts.** Any number of profiles per provider. Claude, Codex, and
   OpenCode profiles can each run in several terminals at once.
-- **A TUI cockpit.** It shows every profile with its login state, remaining
-  5-hour and weekly quota, recent activity, and running instances.
+- **A TUI cockpit.** One table of every profile, sorted by quota headroom, with
+  a gauge per window, its login state, and what it is running; the selected
+  account expands in place to show recent work.
 - **Resume anything.** `R` reopens any recent conversation in the folder it ran
   in. `h` attaches to one that is still running.
 - **Hand off when quota runs out.** `H` turns a conversation into a short brief
@@ -48,7 +49,8 @@ ai                             # or open the TUI
 - **Portable.** Export a profile as an `age`-encrypted bundle and import it
   on another machine.
 
-Press `?` in the TUI to see every key.
+Press `space` (or `?`) in the TUI for every action, with what each would act
+on right now.
 
 ## Documentation
 

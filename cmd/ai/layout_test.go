@@ -7,25 +7,35 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func TestFrameLayoutFoldsColumnsRatherThanShrinkingThem(t *testing.T) {
-	wide := frameLayout(149, 34)
-	if wide.columns != 3 || wide.list != wideListColumn || wide.live != liveColumnWidth {
-		t.Fatalf("wide frame = %+v, want three columns", wide)
+// The board gives its gauges whatever the fixed columns leave, up to a length
+// past which a longer bar says nothing more, and drops them — keeping the
+// figures — once they would be too short to read.
+func TestBoardLayoutShrinksGaugesBeforeDroppingColumns(t *testing.T) {
+	profiles := []Profile{{Name: "claude-personal", Provider: "claude"}, {Name: "antigravity-personal", Provider: "antigravity"}}
+	wide := boardLayout(146, profiles)
+	if wide.gauge != boardMaxGauge || !wide.reset || !wide.auth || !wide.live {
+		t.Fatalf("wide board = %+v, want full gauges and every column", wide)
 	}
-	if got := wide.list + wide.detail + wide.live + 2*dividerWidth; got != 149 {
-		t.Fatalf("three columns and their gutters cover %d of 149", got)
+	medium := boardLayout(110, profiles)
+	if medium.gauge <= boardMinGauge || medium.gauge >= boardMaxGauge {
+		t.Fatalf("medium board = %+v, want gauges shortened but kept", medium)
 	}
-
-	medium := frameLayout(100, 30)
-	if medium.columns != 2 || medium.live != 0 {
-		t.Fatalf("medium frame = %+v, want the live column folded away", medium)
+	narrow := boardLayout(70, profiles)
+	if narrow.gauge != 0 {
+		t.Fatalf("narrow board = %+v, want the gauges dropped", narrow)
 	}
-	if got := medium.list + medium.detail + dividerWidth; got != 100 {
-		t.Fatalf("two columns and their gutter cover %d of 100", got)
-	}
-
-	if narrow := frameLayout(70, 24); narrow.columns != 1 || narrow.list != 70 {
-		t.Fatalf("narrow frame = %+v, want a single full-width column", narrow)
+	for _, width := range []int{146, 110, 70, 50} {
+		c := boardLayout(width, profiles)
+		used := 2 + c.name + c.provider + 2*c.cell() + 4
+		if c.auth {
+			used += boardAuth
+		}
+		if c.live {
+			used += boardLive
+		}
+		if used > width && width >= 60 {
+			t.Fatalf("board at %d uses %d columns: %+v", width, used, c)
+		}
 	}
 }
 
@@ -36,70 +46,6 @@ func TestFrameLayoutAssumesASizeWhenTheTerminalIsSilent(t *testing.T) {
 	}
 	if frame.body != assumedHeight-chromeRows {
 		t.Fatalf("body = %d, want the height less the bars and rules", frame.body)
-	}
-}
-
-func TestFitColumnDropsTheMostExpendableBlockFirst(t *testing.T) {
-	blocks := []block{
-		textBlock(dropNever, "PROFILES", "one", "two"),
-		textBlock(dropAuth, "AUTH", "yes"),
-		textBlock(dropRecent, "RECENT", "a session"),
-		textBlock(dropActivity, "ACTIVITY", "▁▂▃"),
-	}
-	// Room for the required block, one gap, and one optional block.
-	lines := strings.Join(fitColumn(blocks, 6, 20), "\n")
-	if !strings.Contains(lines, "PROFILES") || !strings.Contains(lines, "AUTH") {
-		t.Fatalf("fitColumn dropped a block it had room for:\n%s", lines)
-	}
-	if strings.Contains(lines, "ACTIVITY") || strings.Contains(lines, "RECENT") {
-		t.Fatalf("fitColumn kept blocks past the row budget:\n%s", lines)
-	}
-}
-
-// A heading with nothing under it reads as a rendering fault, so the last block
-// is dropped whole rather than cut below its heading.
-func TestFitColumnDropsABlockItCannotShowAtAll(t *testing.T) {
-	blocks := []block{
-		textBlock(dropNever, "PROFILES", "one"),
-		textBlock(dropNever, "QUOTA", "5H", "7D"),
-	}
-	lines := strings.Join(fitColumn(blocks, 4, 20), "\n")
-	if strings.Contains(lines, "QUOTA") {
-		t.Fatalf("a block was left with only its heading:\n%s", lines)
-	}
-}
-
-// Dropping a long panel to reclaim a single row would trade the panel for a
-// screen of blank lines, so a block with room to spare is clipped instead.
-func TestFitColumnClipsALongBlockRatherThanLosingIt(t *testing.T) {
-	long := textBlock(dropNever, "RUNNING", "a", "b", "c", "d", "e", "f")
-	blocks := []block{textBlock(dropNever, "PROFILES", "one"), long}
-	lines := strings.Join(fitColumn(blocks, 9, 20), "\n")
-	if !strings.Contains(lines, "RUNNING") || !strings.Contains(lines, "e") {
-		t.Fatalf("a long block was dropped to save one row:\n%s", lines)
-	}
-}
-
-func TestFitColumnPinsTheFooterBelowTheFlexPoint(t *testing.T) {
-	blocks := []block{
-		textBlock(dropNever, "PROFILES", "one"),
-		flexBlock(),
-		textBlock(dropNever, "FOLDER"),
-	}
-	lines := fitColumn(blocks, 8, 20)
-	if len(lines) != 8 {
-		t.Fatalf("column is %d rows, want 8", len(lines))
-	}
-	if strings.TrimSpace(lines[7]) != "FOLDER" {
-		t.Fatalf("footer is not pinned to the bottom row: %q", lines[7])
-	}
-	if strings.TrimSpace(lines[3]) != "" {
-		t.Fatalf("spare rows did not land at the flex point: %q", lines[3])
-	}
-	for _, line := range lines {
-		if lipgloss.Width(line) != 20 {
-			t.Fatalf("line is %d columns wide: %q", lipgloss.Width(line), line)
-		}
 	}
 }
 

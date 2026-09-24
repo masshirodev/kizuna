@@ -288,3 +288,36 @@ func TestCodexEnvKeysSurviveMergeWithoutOtherTables(t *testing.T) {
 		t.Fatalf("re-read headers = %+v", servers[0].Headers)
 	}
 }
+
+// The share box shows how each server is rewritten for the destination before
+// the copy, from the same splits the writers use.
+func TestMCPTranslationNotesDescribeTheRewrite(t *testing.T) {
+	http := mcpServer{Name: "lattice", URL: "https://apps.example/mcp", Headers: map[string]string{
+		"Authorization": "Bearer ${LATTICE_TOKEN}",
+		"X-Team":        "${TEAM_ID}",
+	}}
+	notes := strings.Join(mcpTranslationNotes(http, "claude", "codex"), "\n")
+	for _, want := range []string{"Authorization: Bearer LATTICE_TOKEN → bearer_token_env_var", "X-Team → env_http_headers"} {
+		if !strings.Contains(notes, want) {
+			t.Fatalf("codex notes are missing %q:\n%s", want, notes)
+		}
+	}
+
+	stdio := mcpServer{Name: "github", Command: "npx", Env: map[string]string{"GITHUB_TOKEN": "${GITHUB_TOKEN}", "LEVEL": "debug"}}
+	if notes := mcpTranslationNotes(stdio, "claude", "codex"); len(notes) != 1 || notes[0] != "GITHUB_TOKEN passed through → env_vars" {
+		t.Fatalf("stdio notes = %q", notes)
+	}
+
+	if notes := mcpTranslationNotes(http, "claude", "opencode"); len(notes) != 2 || !strings.Contains(strings.Join(notes, "\n"), "Bearer ${LATTICE_TOKEN} → Bearer {env:LATTICE_TOKEN}") {
+		t.Fatalf("opencode notes = %q", notes)
+	}
+	if http.Headers["X-Team"] != "${TEAM_ID}" {
+		t.Fatal("describing the rewrite changed the server it describes")
+	}
+	if notes := mcpTranslationNotes(http, "claude", "antigravity"); len(notes) != 0 {
+		t.Fatalf("a copy between two CLIs with one spelling has notes: %q", notes)
+	}
+	if notes := mcpTranslationNotes(http, "claude", "claude"); len(notes) != 0 {
+		t.Fatalf("a copy within one provider has notes: %q", notes)
+	}
+}

@@ -35,13 +35,14 @@ func TestViewListsProfilesWithHelp(t *testing.T) {
 	profiles[1].DefaultArgs = []string{"--search"}
 	profiles[1].Notes = "work subscription"
 	m := wideModel(profiles)
-	m.cursor = 1
 	m.usage = map[string]usageRemaining{"codex-work": {
 		FiveHour: usageWindow{Percent: 56, Known: true},
 		Weekly:   usageWindow{Percent: 73, Known: true},
 	}}
+	m.followSelection("codex-work")
 	view := m.View()
-	for _, want := range []string{"PROFILES", "2 profiles", "claude-personal", "codex-work", "5H", "7D", "56%", "73%", "launch", "codex --search", "work subscription", "run", "login", "quit"} {
+	for _, want := range []string{"ACCOUNT", "claude-personal", "codex-work", "5-HOUR LEFT", "7-DAY LEFT", "56%", "73%",
+		"codex --search", "work subscription", "↵ run", "R resume", "H hand off", "space all actions", "? keys"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view is missing %q:\n%s", want, view)
 		}
@@ -67,7 +68,7 @@ func TestViewShowsAuthenticationColumn(t *testing.T) {
 	if !strings.Contains(view, "AUTH") {
 		t.Fatalf("missing AUTH column header:\n%s", view)
 	}
-	if strings.Count(view, "● yes") != 1 || strings.Count(view, "○ no") != 1 || strings.Count(view, "● key") != 1 {
+	if strings.Count(view, "● ok") != 1 || strings.Count(view, "○ login") != 1 || strings.Count(view, "● key") != 1 {
 		t.Fatalf("auth column does not distinguish the three auth sources:\n%s", view)
 	}
 	if strings.Contains(view, "sk-test") {
@@ -79,12 +80,15 @@ func TestViewShowsSelectedModelWhenKnown(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", root)
 	writeProfileFile(t, root, `{"model":"opus"}`, "claude-personal", "claude", "settings.json")
-	view := wideModel(testProfiles()).View()
-	if !strings.Contains(view, "model") || !strings.Contains(view, "opus") {
+	m := wideModel(testProfiles())
+	if view := m.View(); !strings.Contains(view, "model opus") {
 		t.Fatalf("selected profile does not name its model:\n%s", view)
 	}
-	if !strings.Contains(view, "—") {
-		t.Fatalf("a profile with no discoverable model should show a dash:\n%s", view)
+	// A profile with no discoverable model says nothing about one, rather than
+	// naming a model it cannot vouch for.
+	m.cursor = 1
+	if view := m.View(); strings.Contains(view, "model ") {
+		t.Fatalf("a profile with no discoverable model named one:\n%s", view)
 	}
 }
 
@@ -124,14 +128,11 @@ func TestViewMarksRunningProfiles(t *testing.T) {
 	m.cursor = 1
 	loaded, _ := m.Update(m.loadCockpitCmd()().(cockpitLoadedMsg))
 	view := loaded.(tuiModel).View()
-	if !strings.Contains(view, "▶ running") {
+	if !strings.Contains(view, "▶ 1") {
 		t.Fatalf("the locked profile is not marked as running:\n%s", view)
 	}
-	if !strings.Contains(view, "RUNNING · 1 TOTAL") {
-		t.Fatalf("the live panel does not account for the running instance:\n%s", view)
-	}
-	if !strings.Contains(view, "1 instance") {
-		t.Fatalf("the title bar does not carry the instance count:\n%s", view)
+	if !strings.Contains(view, "RUNNING HERE") || strings.Contains(view, "nothing running") {
+		t.Fatalf("the expanded row does not account for the running instance:\n%s", view)
 	}
 }
 
@@ -152,11 +153,11 @@ func TestViewCountsConcurrentProfileInstances(t *testing.T) {
 	m := wideModel([]Profile{profile})
 	loaded, _ := m.Update(m.loadCockpitCmd()().(cockpitLoadedMsg))
 	view := loaded.(tuiModel).View()
-	if !strings.Contains(view, "▶ 2 running") {
+	if !strings.Contains(view, "▶ 2") {
 		t.Fatalf("concurrent instance count missing:\n%s", view)
 	}
-	if !strings.Contains(view, "RUNNING · 2 TOTAL") {
-		t.Fatalf("the live panel lists neither instance:\n%s", view)
+	if strings.Count(view, "▶ ") < 3 {
+		t.Fatalf("the expanded row does not list both instances:\n%s", view)
 	}
 }
 
@@ -273,7 +274,7 @@ func TestChangeFolderUsesRelativeDirectory(t *testing.T) {
 func TestViewEmptyStateInvitesFirstProfile(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	view := wideModel(nil).View()
-	if !strings.Contains(view, "No profiles yet") || !strings.Contains(view, "add profile") {
+	if !strings.Contains(view, "No profiles yet") || !strings.Contains(view, "add a profile") {
 		t.Fatalf("unhelpful empty state:\n%s", view)
 	}
 	if strings.Contains(view, "delete") {
@@ -288,7 +289,8 @@ func TestViewFormShowsFieldsAndError(t *testing.T) {
 	m.form = profileForm{name: "codex-work", provider: "codex", command: "codex", defaultArgs: "--search", notes: "work", field: 1, original: "codex-work"}
 	m.setStatus(statusErr, "already exists")
 	view := m.View()
-	for _, want := range []string{"Edit codex-work", "Name", "Provider", "Command", "Default args", "Notes", "--search", "work", "known providers", "✗ already exists"} {
+	for _, want := range []string{"EDIT PROFILE", "codex-work", "name", "provider", "command", "default args", "note",
+		"--search", "work", "LAUNCHES AS", "codex --search", "CODEX_HOME", "esc discard", "✗ already exists"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("form view is missing %q:\n%s", want, view)
 		}
@@ -396,7 +398,7 @@ func TestViewConfirmDeleteNamesProfile(t *testing.T) {
 	m := wideModel(testProfiles())
 	m.cursor, m.mode = 1, tuiConfirmDelete
 	view := m.View()
-	if !strings.Contains(view, "Delete codex-work?") || !strings.Contains(view, "cannot be undone") {
+	if !strings.Contains(view, "DELETE CODEX-WORK") || !strings.Contains(view, "cannot be undone") {
 		t.Fatalf("confirmation is unclear:\n%s", view)
 	}
 	if !strings.Contains(view, "keep") {
@@ -404,37 +406,24 @@ func TestViewConfirmDeleteNamesProfile(t *testing.T) {
 	}
 }
 
-func TestTitleBarNamesSelectedProfile(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	m := wideModel(testProfiles())
-	m.cursor = 1
-	frame := frameLayout(m.width, m.height)
-	if bar := m.topBarView(frame); !strings.Contains(bar, "codex-work") || !strings.Contains(bar, "2 profiles") {
-		t.Fatalf("title bar does not name the selected profile:\n%s", bar)
-	}
-	m.cursor = 0
-	if bar := m.topBarView(frame); !strings.Contains(bar, "claude-personal") {
-		t.Fatalf("title bar did not follow the cursor:\n%s", bar)
-	}
-}
-
-// The count is the field that must survive a narrow terminal. The launch folder
-// and the update notice are dropped first, in that order, rather than being
-// clipped into something unreadable.
-func TestTitleBarDropsDetailBeforeTheCount(t *testing.T) {
+// The title bar names the extremes and the launch folder. On a narrow terminal
+// the folder and the update notice are dropped rather than clipped into
+// something unreadable, and the bar never overflows.
+func TestTitleBarDropsTheFolderRatherThanOverflowing(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	m := tuiModel{profiles: testProfiles(), width: 46, height: 24, cursor: 1}
 	m.workingDir = "/home/someone/a/very/long/working/directory/name"
 	m.update = updateStatus{Known: true, Behind: 3}
 	bar := m.topBarView(frameLayout(m.width, m.height))
-	if !strings.Contains(bar, "2 profiles") {
-		t.Fatalf("title bar lost the count:\n%s", bar)
-	}
 	if strings.Contains(bar, "working/directory") {
 		t.Fatalf("title bar kept a folder it had no room for:\n%s", bar)
 	}
 	if lipgloss.Width(bar) > 46 {
 		t.Fatalf("title bar overflows the terminal (%d):\n%s", lipgloss.Width(bar), bar)
+	}
+	m.width = 140
+	if bar := m.topBarView(frameLayout(m.width, m.height)); !strings.Contains(bar, "working/directory/name") {
+		t.Fatalf("a wide title bar dropped the launch folder:\n%s", bar)
 	}
 }
 
@@ -451,7 +440,7 @@ func TestViewOffersUpdateOnlyWhenOneIsAvailable(t *testing.T) {
 	m := wideModel(testProfiles())
 
 	m.update = updateStatus{Known: true, Behind: 3}
-	if view := m.View(); !strings.Contains(view, "↑ 3 commits behind main") {
+	if view := m.View(); !strings.Contains(view, "↑ 3 behind main  U") {
 		t.Fatalf("available update is not offered:\n%s", view)
 	}
 	m.update = updateStatus{Known: true}
@@ -583,7 +572,7 @@ func TestHijackPickerNamesSessionAndFolder(t *testing.T) {
 		},
 	}
 	view := m.View()
-	for _, want := range []string{"Open a running codex-work session here", "Instance 1 (PID 11)", "Edit contacts", "/work/lattice", "Instance 2 (PID 12)", "Server status card", "open here"} {
+	for _, want := range []string{"OPEN A RUNNING SESSION HERE   codex-work", "Instance 1 (PID 11)", "Edit contacts", "/work/lattice", "Instance 2 (PID 12)", "Server status card", "open here"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("hijack picker is missing %q:\n%s", want, view)
 		}
@@ -601,7 +590,7 @@ func TestKillPickerNamesSessions(t *testing.T) {
 		instances: []profileInstance{{pid: 11, folder: "/work/lattice", session: instanceSession{id: "aaa", title: "Edit contacts"}}},
 	}
 	view := m.View()
-	for _, want := range []string{"Stop a codex-work instance?", "Instance 1 (PID 11)", "Edit contacts", "/work/lattice"} {
+	for _, want := range []string{"STOP AN INSTANCE   codex-work", "Instance 1 (PID 11)", "Edit contacts", "/work/lattice"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("kill picker is missing %q:\n%s", want, view)
 		}
@@ -672,7 +661,7 @@ func TestParamsPromptCollectsArgumentsAndReportsQuoteErrors(t *testing.T) {
 	if got.params != `--model "gpt 5` {
 		t.Fatalf("typed arguments = %q", got.params)
 	}
-	if view := got.View(); !strings.Contains(view, "Run codex-work with arguments") || !strings.Contains(view, "--model") {
+	if view := got.View(); !strings.Contains(view, "RUN WITH ARGUMENTS   codex-work") || !strings.Contains(view, "--model") {
 		t.Fatalf("argument prompt does not show what was typed:\n%s", view)
 	}
 
@@ -849,56 +838,86 @@ func press(t *testing.T, m tuiModel, key string) tuiModel {
 	return updated.(tuiModel)
 }
 
-// The bottom bar drops entries from the end to fit, and the keys it drops are
-// exactly the ones a new user has not learned yet. The pane is where they are.
-func TestHelpPaneListsTheKeysTheBottomBarCannotFit(t *testing.T) {
+// The bottom bar carries five keys; the palette is where the rest are, grouped
+// by what they act on and with what each would act on right now beside it.
+func TestPaletteListsEveryActionGroupedByWhatItActsOn(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	m := press(t, wideModel(testProfiles()), "?")
-	if m.mode != tuiHelp {
-		t.Fatalf("mode = %v, want the help pane", m.mode)
-	}
-	view := m.View()
-	for _, want := range []string{"Keys", "LAUNCH", "PROFILES", "PROVIDER CLI", "AI-SESSION",
-		"install the CLI", "update ai-session itself", "filter by name or provider", "any key closes"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("help pane is missing %q:\n%s", want, view)
+	for _, key := range []string{"?", " "} {
+		m := press(t, wideModel(testProfiles()), key)
+		if m.mode != tuiPalette {
+			t.Fatalf("%q opened mode %v, want the palette", key, m.mode)
+		}
+		view := m.View()
+		for _, want := range []string{"CONVERSATION", "PROFILE", "PROVIDER CLI", "AI-SESSION",
+			"install the CLI", "update ai-session", "hand off to another account", "acting on", "esc close"} {
+			if !strings.Contains(view, want) {
+				t.Fatalf("palette is missing %q:\n%s", want, view)
+			}
 		}
 	}
 }
 
-// Every key the pane advertises has to be one updateList actually answers,
-// otherwise the pane is documentation that drifts from the program.
-func TestHelpPaneOnlyAdvertisesKeysTheListHandles(t *testing.T) {
+// Every action the palette offers has to be one updateList actually answers,
+// otherwise the palette is documentation that drifts from the program.
+func TestPaletteOnlyOffersKeysTheListHandles(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	handled := map[string]bool{"↵": true, "↑↓ jk": true}
-	for _, column := range helpSections() {
-		for _, section := range column {
-			for _, entry := range section.entries {
-				if handled[entry.key] {
-					continue
-				}
-				if len([]rune(entry.key)) != 1 {
-					t.Fatalf("help pane lists an unexplained key %q", entry.key)
-				}
+	for _, column := range paletteColumns() {
+		for _, group := range column {
+			for _, action := range group.actions {
 				base := wideModel(testProfiles())
-				updated, cmd := base.updateList(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(entry.key)})
+				updated, cmd := base.updateList(pressedKey(action.press))
 				got := updated.(tuiModel)
 				// Answering means one of: opening something, saying why not, or
 				// handing back work to run.
-				if cmd == nil && got.mode == base.mode && got.status == "" && got.searching == base.searching {
-					t.Errorf("key %q (%s) does nothing in the list", entry.key, entry.desc)
+				if cmd == nil && got.mode == base.mode && got.status == "" && got.searching == base.searching &&
+					got.autoSwap == base.autoSwap {
+					t.Errorf("action %q (%s) does nothing in the list", action.key, action.desc)
 				}
 			}
 		}
 	}
 }
 
-func TestHelpPaneClosesOnAnyKey(t *testing.T) {
+// Typing a key into the palette and pressing Enter does what that key does on
+// the board, and typing words narrows the list by what the actions do.
+func TestPaletteRunsTheActionTypedIntoIt(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	m := press(t, wideModel(testProfiles()), "?")
-	updated, _ := m.updateHelp(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")})
+	m := press(t, wideModel(testProfiles()), " ")
+	for _, key := range []string{"c"} {
+		updated, _ := m.updatePalette(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+		m = updated.(tuiModel)
+	}
+	updated, _ := m.updatePalette(tea.KeyMsg{Type: tea.KeyEnter})
+	if got := updated.(tuiModel); got.mode != tuiFolder {
+		t.Fatalf("c then enter opened mode %v, want the folder prompt", got.mode)
+	}
+
+	m = press(t, wideModel(testProfiles()), " ")
+	for _, key := range "mcp" {
+		updated, _ := m.updatePalette(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		m = updated.(tuiModel)
+	}
+	matches := m.paletteMatches()
+	if len(matches) != 1 || matches[0].key != "m" {
+		t.Fatalf("filtering by \"mcp\" left %+v", matches)
+	}
+	updated, _ = m.updatePalette(tea.KeyMsg{Type: tea.KeyEsc})
 	if updated.(tuiModel).mode != tuiList {
-		t.Fatal("the help pane survived a keypress")
+		t.Fatal("esc did not close the palette")
+	}
+}
+
+func TestPaletteFoldsToOneColumnRatherThanClipping(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := tuiModel{profiles: testProfiles(), width: 70, height: 50}
+	view := press(t, m, "?").View()
+	for _, want := range []string{"find", "refresh quotas and updates", "stop an instance"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("narrow palette lost %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "│ l      log in") {
+		t.Fatalf("narrow palette kept two columns:\n%s", view)
 	}
 }
 
@@ -913,7 +932,7 @@ func TestInstallPromptNamesTheCommandItWillRun(t *testing.T) {
 		t.Fatalf("mode = %v, want the install confirmation", m.mode)
 	}
 	view := m.View()
-	for _, want := range []string{"Install the codex CLI", "curl -fsSL https://chatgpt.com/codex/install.sh | sh", "codex on PATH"} {
+	for _, want := range []string{"INSTALL THE CODEX CLI", "curl -fsSL https://chatgpt.com/codex/install.sh | sh", "codex on PATH"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("install prompt is missing %q:\n%s", want, view)
 		}
@@ -945,7 +964,7 @@ func TestSelfUpdatePromptNamesTheCheckoutAndItsSteps(t *testing.T) {
 		t.Fatalf("mode = %v, source = %q", m.mode, m.source)
 	}
 	view := m.View()
-	for _, want := range []string{"Update ai-session", "git pull --ff-only", "2 commits behind main", "reopens itself"} {
+	for _, want := range []string{"UPDATE AI-SESSION", "git pull --ff-only", "2 commits behind main", "reopens itself"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("self-update prompt is missing %q:\n%s", want, view)
 		}
@@ -1008,20 +1027,6 @@ func TestDetailPanelSaysWhetherTheProviderCLIIsInstalled(t *testing.T) {
 
 // A key list clipped to fit is missing exactly the keys nobody has learned yet,
 // so a terminal too narrow for two columns gets one.
-func TestHelpPaneFoldsToOneColumnRatherThanClipping(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	m := tuiModel{profiles: testProfiles(), width: 70, height: 40}
-	view := press(t, m, "?").View()
-	for _, want := range []string{"filter by name or provider", "refresh quotas and updates", "stop a running instance"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("narrow help pane lost %q:\n%s", want, view)
-		}
-	}
-	if strings.Contains(view, "select    l") {
-		t.Fatalf("narrow help pane kept two columns:\n%s", view)
-	}
-}
-
 // recentTestSessions is a profile's history as the panel would have read it.
 func recentTestSessions(folder string) []recordedSession {
 	when := time.Date(2026, 9, 4, 11, 30, 0, 0, time.Local)
@@ -1041,7 +1046,7 @@ func TestResumePickerOffersTheRecordedSessions(t *testing.T) {
 		t.Fatalf("mode = %v, want the resume picker", m.mode)
 	}
 	view := m.View()
-	for _, want := range []string{"Resume a codex-work session", "Edit contacts", "Server status card", "/gone/hub", "resume it there"} {
+	for _, want := range []string{"RESUME", "this account", "Edit contacts", "Server status card", "/gone/hub", "↵ resume in", "H hand this off instead"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("resume picker is missing %q:\n%s", want, view)
 		}
@@ -1152,7 +1157,7 @@ func TestHandoffPickerShowsTheConversationBesideTheList(t *testing.T) {
 	m.mode = tuiHandoff
 	m.preview = sessionPreview{session: "aaa", messages: []handoffMessage{{fromUser: true, text: "rename the contact form"}}}
 	view := m.View()
-	for _, want := range []string{"Hand over a codex-work session", "PREVIEW", "rename the contact form"} {
+	for _, want := range []string{"HAND OFF", "● leaving", "PREVIEW", "rename the contact form"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("the handoff picker is missing %q:\n%s", want, view)
 		}
@@ -1266,7 +1271,7 @@ func TestHandoffBriefShowsHowTheConversationEnded(t *testing.T) {
 		},
 	}
 	view := m.View()
-	for _, want := range []string{"Hand this to codex-work", "Widen the modals", "HOW IT ENDED",
+	for _, want := range []string{"● brief", "codex-work", "Widen the modals", "open codex-work on the brief", "HOW IT ENDED",
 		"now make the picker taller", "the body settles at the height of the taller half"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("the handoff brief is missing %q:\n%s", want, view)
@@ -1287,7 +1292,7 @@ func TestHandoffBriefMarksAConversationItOnlyShowsTheEndOf(t *testing.T) {
 		earlier:      true,
 		closing:      []handoffMessage{{fromUser: true, text: "and now ship it"}},
 	}
-	lines := m.closingLines(60, modalRows(frameLayout(m.width, m.height)))
+	lines := m.endedLines(60, modalRows(frameLayout(m.width, m.height)))[1:]
 	if len(lines) == 0 || lines[0] != previewCutMarker {
 		t.Fatalf("closing lines = %q, want the cut marker above what is left", lines)
 	}
@@ -1466,7 +1471,7 @@ func TestResumePickerTogglesToEveryProfile(t *testing.T) {
 		t.Fatal("a did not switch the picker to all profiles")
 	}
 	view := m.View()
-	for _, want := range []string{"all profiles", "Claude personal work", "claude-personal"} {
+	for _, want := range []string{" all accounts ", "ACCOUNT", "Claude personal work", "claude-personal"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("the all-profiles picker is missing %q:\n%s", want, view)
 		}
@@ -1477,21 +1482,45 @@ func TestResumePickerTogglesToEveryProfile(t *testing.T) {
 	}
 }
 
-// Rows carry the conversation id, and the preview names it in full, so the id
-// `ai <profile> resume <id>` takes can be read before it is needed.
-func TestResumePickerRowsCarryTheConversationID(t *testing.T) {
+// The preview names the conversation id in full, so the id
+// `ai <profile> resume <id>` takes can be read before it is needed. The rows
+// leave it out: at a glance a row is when, what, and where, and the search
+// still matches the id.
+func TestResumePickerPreviewNamesTheConversationID(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	m := wideModel(testProfiles())
 	m.cursor = 1
 	m.recent = recentTestSessions(t.TempDir())
 	m.mode = tuiRecent
 	view := m.View()
-	for _, want := range []string{"aaa", "bbb"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("the picker rows are missing the id %q:\n%s", want, view)
-		}
-	}
 	if !strings.Contains(view, "id aaa") {
 		t.Fatalf("the preview does not name the conversation id:\n%s", view)
+	}
+}
+
+// The provider is chosen from chips rather than typed, and a command still set
+// to the old provider's default follows the chip; one typed by hand does not.
+func TestProfileEditorCyclesTheProviderChips(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.mode = tuiForm
+	m.form = profileForm{name: "new", provider: "codex", command: "codex", isNew: true, field: formProviderField}
+	updated, _ := m.updateForm(tea.KeyMsg{Type: tea.KeyRight})
+	m = updated.(tuiModel)
+	if m.form.provider != "claude" || m.form.command != "claude" {
+		t.Fatalf("→ gave provider %q command %q, want claude with its default command", m.form.provider, m.form.command)
+	}
+	updated, _ = m.updateForm(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	if got := updated.(tuiModel); got.form.provider != "claude" {
+		t.Fatalf("typing on the provider field changed it to %q", got.form.provider)
+	}
+	m.form.command = "/opt/my-claude"
+	updated, _ = m.updateForm(tea.KeyMsg{Type: tea.KeyLeft})
+	m = updated.(tuiModel)
+	if m.form.provider != "codex" || m.form.command != "/opt/my-claude" {
+		t.Fatalf("← gave provider %q command %q, want codex and the typed command kept", m.form.provider, m.form.command)
+	}
+	if view := m.View(); !strings.Contains(view, "LAUNCHES AS") || !strings.Contains(view, "/opt/my-claude") {
+		t.Fatalf("the editor does not show what it launches:\n%s", view)
 	}
 }
