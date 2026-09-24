@@ -29,34 +29,35 @@ func TestSharePickerCopiesTheTickedServers(t *testing.T) {
 
 	updated, _ := m.updateList(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
 	got := updated.(tuiModel)
-	if got.mode != tuiShareFrom {
-		t.Fatalf("m did not open the source picker, mode = %v (%s)", got.mode, got.status)
+	if got.mode != tuiShare {
+		t.Fatalf("m did not open the share box, mode = %v (%s)", got.mode, got.status)
 	}
 	if len(got.share.sources) != 1 || got.share.sources[0].profile.Name != "max" || got.share.sources[0].count != 2 {
 		t.Fatalf("sources = %+v, want only the profile with servers to lend", got.share.sources)
 	}
-	if view := got.View(); !strings.Contains(view, "Install MCP servers into spare") || !strings.Contains(view, "2 MCP servers") {
-		t.Fatalf("the source picker does not say what it offers:\n%s", view)
+	// The lender and what it has are one box: the items are read as it opens.
+	if len(got.share.items) != 2 {
+		t.Fatalf("the box opened without the lender's servers: %+v", got.share.items)
+	}
+	if view := got.View(); !strings.Contains(view, "INSTALL MCP SERVERS  into  spare") ||
+		!strings.Contains(view, "SERVERS IN max") || !strings.Contains(view, "https://ctx.example/mcp") {
+		t.Fatalf("the share box does not say what it offers:\n%s", view)
 	}
 
-	updated, _ = got.updateShareFrom(tea.KeyMsg{Type: tea.KeyEnter})
-	got = updated.(tuiModel)
-	if got.mode != tuiShareItems || len(got.share.items) != 2 {
-		t.Fatalf("choosing a source did not open the list, mode = %v items = %+v", got.mode, got.share.items)
+	// Enter on the lenders moves to the list rather than applying nothing.
+	updated, _ = got.updateShare(tea.KeyMsg{Type: tea.KeyEnter})
+	if got = updated.(tuiModel); got.mode != tuiShare || got.share.focus != shareFocusItems {
+		t.Fatalf("enter on the lenders did not move to the list, mode = %v focus = %d", got.mode, got.share.focus)
 	}
-	if view := got.View(); !strings.Contains(view, "max → spare") || !strings.Contains(view, "https://ctx.example/mcp") {
-		t.Fatalf("the multi-select does not describe its rows:\n%s", view)
-	}
-
 	// Nothing ticked is refused rather than read as "all of them".
-	updated, _ = got.updateShareItems(tea.KeyMsg{Type: tea.KeyEnter})
-	if got = updated.(tuiModel); got.mode != tuiShareItems || got.statusKind != statusErr {
+	updated, _ = got.updateShare(tea.KeyMsg{Type: tea.KeyEnter})
+	if got = updated.(tuiModel); got.mode != tuiShare || got.statusKind != statusErr {
 		t.Fatalf("an empty selection was applied anyway, mode = %v status = %q", got.mode, got.status)
 	}
 
-	updated, _ = got.updateShareItems(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune(" ")})
+	updated, _ = got.updateShare(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune(" ")})
 	got = updated.(tuiModel)
-	updated, _ = got.updateShareItems(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = got.updateShare(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(tuiModel)
 	if got.mode != tuiList || got.statusKind != statusOK {
 		t.Fatalf("applying the copy failed: mode = %v status = %q", got.mode, got.status)
@@ -79,12 +80,9 @@ func TestSharePickerTicksEverythingExceptWhatIsAlreadyInstalled(t *testing.T) {
 		"spare", "claude", ".claude.json")
 	m := shareModel(t, root, []Profile{claudeProfile("max"), claudeProfile("spare")}, 1)
 	m.openShare(shareMCP)
-	if err := m.loadShareItems(); err != nil {
-		t.Fatal(err)
-	}
-	m.mode = tuiShareItems
+	m.share.focus = shareFocusItems
 
-	updated, _ := m.updateShareItems(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	updated, _ := m.updateShare(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
 	got := updated.(tuiModel)
 	for _, item := range got.share.items {
 		if item.present && item.chosen {
@@ -100,9 +98,9 @@ func TestSharePickerTicksEverythingExceptWhatIsAlreadyInstalled(t *testing.T) {
 
 	// It is still possible to replace one, by ticking that row on its own.
 	got.share.item = 1
-	updated, _ = got.updateShareItems(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune(" ")})
+	updated, _ = got.updateShare(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune(" ")})
 	got = updated.(tuiModel)
-	updated, _ = got.updateShareItems(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = got.updateShare(tea.KeyMsg{Type: tea.KeyEnter})
 	if got = updated.(tuiModel); got.statusKind != statusOK {
 		t.Fatalf("replacing a ticked row failed: %q", got.status)
 	}
@@ -144,7 +142,7 @@ func TestCloneKeyAddsTheProfileAndSelectsIt(t *testing.T) {
 	if got.mode != tuiClone {
 		t.Fatalf("C did not open the clone prompt, mode = %v", got.mode)
 	}
-	if view := got.View(); !strings.Contains(view, "Clone max") || !strings.Contains(view, "Credentials do not come with it") {
+	if view := got.View(); !strings.Contains(view, "CLONE   max") || !strings.Contains(view, "Credentials do not come with it") {
 		t.Fatalf("the clone prompt does not say what it copies:\n%s", view)
 	}
 
@@ -220,4 +218,38 @@ func mustLoadConfig(t *testing.T, path string) Config {
 		t.Fatal(err)
 	}
 	return cfg
+}
+
+// The share box is one box: ← and → move between the lenders and their items,
+// moving through the lenders reads each as the cursor lands on it, and tab
+// asks the same question about the other kind of thing.
+func TestShareBoxMovesBetweenPanesAndKinds(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	writeProfileFile(t, root, `{"mcpServers":{"ctx":{"type":"http","url":"https://ctx.example/mcp"}}}`, "alpha", "claude", ".claude.json")
+	writeProfileFile(t, root, `{"mcpServers":{"one":{"type":"http","url":"https://one.example"},"two":{"type":"http","url":"https://two.example"}}}`,
+		"beta", "claude", ".claude.json")
+	writeProfileFile(t, root, `{"userID":"x"}`, "spare", "claude", ".claude.json")
+	m := shareModel(t, root, []Profile{claudeProfile("alpha"), claudeProfile("beta"), claudeProfile("spare")}, 2)
+	m.openShare(shareMCP)
+	if m.mode != tuiShare || len(m.share.items) != 1 {
+		t.Fatalf("share box opened in mode %v with items %+v", m.mode, m.share.items)
+	}
+	updated, _ := m.updateShare(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(tuiModel)
+	if len(m.share.items) != 2 || m.share.items[0].name != "one" {
+		t.Fatalf("moving to the next lender did not read it: %+v", m.share.items)
+	}
+	updated, _ = m.updateShare(tea.KeyMsg{Type: tea.KeyRight})
+	m = updated.(tuiModel)
+	updated, _ = m.updateShare(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(tuiModel)
+	if m.share.focus != shareFocusItems || m.share.item != 1 || m.share.source != 1 {
+		t.Fatalf("→ then ↓ moved focus %d item %d source %d", m.share.focus, m.share.item, m.share.source)
+	}
+	updated, _ = m.updateShare(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(tuiModel)
+	if m.mode != tuiShare || m.share.kind != shareMCP || m.statusKind != statusErr {
+		t.Fatalf("tab with no skills to lend left kind %v mode %v status %q", m.share.kind, m.mode, m.status)
+	}
 }

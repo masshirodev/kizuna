@@ -6,16 +6,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// The cockpit is drawn at a fixed shape and folds columns away rather than
-// letting them shrink past readability. The widths come from the design, which
-// is 149 columns wide with a 40-column profile list and a 38-column live panel.
 const (
-	threeColumnWidth = 118
-	twoColumnWidth   = 78
-	wideListColumn   = 40
-	narrowListColumn = 36
-	liveColumnWidth  = 38
-
 	// A terminal that has not reported its size yet still has to render one
 	// frame. These are the sizes assumed until the first tea.WindowSizeMsg.
 	assumedWidth  = 100
@@ -25,7 +16,7 @@ const (
 	// bottom bar, and the bottom bar itself.
 	chromeRows = 4
 
-	// dividerWidth is the gutter between columns: a hairline with a space on
+	// dividerWidth is the gutter between two panes: a hairline with a space on
 	// each side, so a full-width cell never touches the rule beside it.
 	dividerWidth = 3
 
@@ -38,17 +29,13 @@ const (
 	screenMarginY = 1
 )
 
-// layout is the cockpit's geometry for one terminal size. A zero right or
-// middle width means that column is folded into the one before it rather than
-// squeezed, which keeps every remaining column wide enough to read.
+// layout is the cockpit's geometry for one terminal size. The board is one
+// table rather than columns, so all it needs is the frame and the rows left
+// for the body between the bars.
 type layout struct {
-	width   int
-	height  int
-	body    int
-	columns int
-	list    int
-	detail  int
-	live    int
+	width  int
+	height int
+	body   int
 }
 
 func frameLayout(width, height int) layout {
@@ -58,135 +45,7 @@ func frameLayout(width, height int) layout {
 	if height <= 0 {
 		height = assumedHeight
 	}
-	frame := layout{width: width, height: height, body: max(height-chromeRows, 1)}
-	switch {
-	case width >= threeColumnWidth:
-		frame.columns = 3
-		frame.list = wideListColumn
-		frame.live = liveColumnWidth
-		frame.detail = width - frame.list - frame.live - 2*dividerWidth
-	case width >= twoColumnWidth:
-		frame.columns = 2
-		frame.list = narrowListColumn
-		frame.detail = width - frame.list - dividerWidth
-	default:
-		frame.columns = 1
-		frame.list = width
-	}
-	return frame
-}
-
-// Blocks are dropped highest first when a column is shorter than its content.
-// The order is what a glance can most afford to lose: the activity histogram is
-// decoration, the log repeats the status line, and the recent list is history,
-// while the profile table and the live instances are the reason for the screen.
-const (
-	dropNever = iota
-	dropAuth
-	dropRecent
-	dropLog
-	dropActivity
-)
-
-// block is one labelled section of a column.
-type block struct {
-	lines []string
-	drop  int
-	// flex absorbs the rows no block claimed, which is what pins the folder
-	// footer to the bottom of the profile column.
-	flex bool
-}
-
-func textBlock(drop int, lines ...string) block {
-	return block{lines: lines, drop: drop}
-}
-
-func flexBlock() block {
-	return block{flex: true}
-}
-
-// fitColumn renders blocks top to bottom in exactly rows lines of exactly width
-// columns, separated by a blank line. Content that does not fit costs whole
-// blocks rather than being clipped mid-section: half a histogram reads as a
-// rendering fault, while a missing one reads as a small terminal.
-func fitColumn(blocks []block, rows, width int) []string {
-	blocks = dropToFit(blocks, rows)
-	blocks = truncateToFit(blocks, rows)
-	lines := make([]string, 0, rows)
-	flexAt := -1
-	for index, current := range blocks {
-		if current.flex {
-			flexAt = len(lines)
-			continue
-		}
-		if len(lines) > 0 && index > 0 {
-			lines = append(lines, "")
-		}
-		lines = append(lines, current.lines...)
-	}
-	lines = padToRows(lines, rows, flexAt)
-	for index, line := range lines {
-		lines[index] = padLine(line, width)
-	}
-	return lines
-}
-
-// dropToFit removes optional blocks, most droppable first, until the column
-// fits. A column that still overflows with nothing left to drop is clipped by
-// fitColumn, which is the narrow-terminal case rather than the normal one.
-func dropToFit(blocks []block, rows int) []block {
-	blocks = append([]block(nil), blocks...)
-	for blockRows(blocks) > rows {
-		victim, priority := -1, dropNever
-		for index, current := range blocks {
-			if current.drop > priority {
-				victim, priority = index, current.drop
-			}
-		}
-		if victim < 0 {
-			break
-		}
-		blocks = append(blocks[:victim], blocks[victim+1:]...)
-	}
-	return blocks
-}
-
-// minBlockRows is the least a block can be cut to and still say something: its
-// heading and one line under it.
-const minBlockRows = 2
-
-// truncateToFit settles the last block once every optional one is already gone.
-// A block that would be cut below its heading is dropped whole — a QUOTA label
-// with nothing under it reads as a rendering fault. A block with room to spare
-// is left to be clipped instead, because dropping a twelve-line panel to
-// reclaim one row trades the panel for eleven blank lines.
-func truncateToFit(blocks []block, rows int) []block {
-	for len(blocks) > 1 {
-		over := blockRows(blocks) - rows
-		if over <= 0 {
-			break
-		}
-		if last := blocks[len(blocks)-1]; len(last.lines)-over >= minBlockRows {
-			break
-		}
-		blocks = blocks[:len(blocks)-1]
-	}
-	return blocks
-}
-
-func blockRows(blocks []block) int {
-	total, drawn := 0, 0
-	for _, current := range blocks {
-		if current.flex {
-			continue
-		}
-		if drawn > 0 {
-			total++
-		}
-		total += len(current.lines)
-		drawn++
-	}
-	return total
+	return layout{width: width, height: height, body: max(height-chromeRows, 1)}
 }
 
 // padToRows grows or clips a column to exactly rows lines, inserting the spare

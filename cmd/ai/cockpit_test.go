@@ -103,9 +103,9 @@ func TestSearchEnterKeepsTheFilterAndReturnsTheKeys(t *testing.T) {
 	}
 }
 
-// A single status line loses the reason a launch failed the moment the next key
-// is pressed, which is exactly when the user goes looking for it.
-func TestLogKeepsRecentMessagesNewestFirst(t *testing.T) {
+// The log shrank to one status line on the board: the last thing that
+// happened and when. The history behind it is still kept, newest first.
+func TestStatusLineShowsTheLatestMessageAndWhenItHappened(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	m := wideModel(testProfiles())
 	m.setStatus(statusOK, "stopped codex-work")
@@ -113,11 +113,14 @@ func TestLogKeepsRecentMessagesNewestFirst(t *testing.T) {
 	if len(m.log) != 2 || m.log[0].text != "opencode-go is already running" {
 		t.Fatalf("log = %+v, want the newest message first", m.log)
 	}
+	m.now = time.Date(2026, 8, 29, 9, 41, 0, 0, time.Local)
+	m.log[0].at = m.now
 	view := m.View()
-	for _, want := range []string{"LOG", "✓ stopped codex-work", "✗ opencode-go is already running"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("log panel is missing %q:\n%s", want, view)
-		}
+	if !strings.Contains(view, "✗ opencode-go is already running   09:41") {
+		t.Fatalf("status line does not show the newest message with its time:\n%s", view)
+	}
+	if strings.Contains(view, "stopped codex-work") {
+		t.Fatalf("the board showed an older message beside the newest:\n%s", view)
 	}
 }
 
@@ -131,33 +134,66 @@ func TestLogStaysBounded(t *testing.T) {
 	}
 }
 
-// The quota bars are the reason the detail column exists; a percentage with no
-// reset time cannot tell a window about to refill from one that has to last.
-func TestQuotaMetersCarryPercentAndReset(t *testing.T) {
+// The gauges are the reason the board exists; a percentage with no reset time
+// cannot tell a window about to refill from one that has to last.
+func TestBoardGaugesCarryPercentAndReset(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.Local)
 	m := wideModel(testProfiles())
-	m.cursor, m.now = 1, now
+	m.now = now
 	m.usage = map[string]usageRemaining{"codex-work": {
 		FiveHour: usageWindow{Percent: 18, Known: true, Resets: now.Add(2 * time.Hour)},
 		Weekly:   usageWindow{Percent: 55, Known: true, Resets: now.Add(72 * time.Hour)},
 	}}
 	view := m.View()
-	for _, want := range []string{"QUOTA", "18%", "55%", "resets 14:00", "resets", "█", "░"} {
+	for _, want := range []string{"5-HOUR LEFT", "7-DAY LEFT", "18%", "55%", "14:00", "━"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("quota block is missing %q:\n%s", want, view)
+			t.Fatalf("board is missing %q:\n%s", want, view)
 		}
+	}
+}
+
+// The board is ranked by headroom, and the cursor belongs to the account: a
+// quota refresh that reorders the rows must not move the selection to another
+// profile.
+func TestBoardRanksByHeadroomAndTheCursorFollowsTheAccount(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	profiles := append(testProfiles(), Profile{Name: "gemini", Provider: "antigravity", Command: "agy"}, Profile{Name: "codex-alt", Provider: "codex", Command: "codex"})
+	m := wideModel(sortedProfiles(profiles))
+	m.followSelection("claude-personal")
+	updated, _ := m.Update(usageLoadedMsg{
+		"codex-work":      {FiveHour: usageWindow{Percent: 90, Known: true}},
+		"claude-personal": {FiveHour: usageWindow{Percent: 40, Known: true}},
+		"codex-alt":       {FiveHour: usageWindow{Percent: 5, Known: true}},
+	})
+	m = updated.(tuiModel)
+	var order []string
+	for _, profile := range m.visibleProfiles() {
+		order = append(order, profile.Name)
+	}
+	if strings.Join(order, " ") != "codex-work claude-personal codex-alt gemini" {
+		t.Fatalf("board order = %v, want most headroom first and the unrated last", order)
+	}
+	if selected, _ := m.selectedProfile(); selected.Name != "claude-personal" {
+		t.Fatalf("the cursor moved to %q when the board was re-ranked", selected.Name)
+	}
+	view := m.View()
+	if !strings.Contains(view, "most headroom codex-work 90%") || !strings.Contains(view, "lowest codex-alt 5%") {
+		t.Fatalf("the title bar does not name the extremes:\n%s", view)
+	}
+	if !strings.Contains(view, "NO LOCAL QUOTA CACHE") || !strings.Contains(view, "· not reported") {
+		t.Fatalf("an account with no quota cache is not listed apart:\n%s", view)
 	}
 }
 
 func TestQuotaSaysWhenItHasNothingToShow(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	m := wideModel(testProfiles())
-	if view := m.View(); !strings.Contains(view, "quota cache") {
-		t.Fatalf("a quota that has not loaded should say so:\n%s", view)
+	if view := m.View(); !strings.Contains(view, "…") || strings.Contains(view, "—") {
+		t.Fatalf("a quota that has not loaded should read as pending, not as missing:\n%s", view)
 	}
 	m.usage = map[string]usageRemaining{}
-	if view := m.View(); !strings.Contains(view, "no quota recorded") {
+	if view := m.View(); !strings.Contains(view, "—") {
 		t.Fatalf("a profile with no quota should say so:\n%s", view)
 	}
 }
@@ -172,7 +208,7 @@ func TestRecentSessionsPanelDatesAndPlacesEachSession(t *testing.T) {
 		{folder: "/work/hub", when: now.Add(-26 * time.Hour)},
 	}
 	view := m.View()
-	for _, want := range []string{"RECENT SESSIONS", "14:00", "refactor the tui view layer", "/work/lattice", "yest.", "untitled session"} {
+	for _, want := range []string{"RECENT", "14:00", "refactor the tui view layer", "/work/lattice", "yest.", "untitled session", "R resume"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("recent panel is missing %q:\n%s", want, view)
 		}
@@ -189,9 +225,12 @@ func TestLivePanelNamesEveryRunningInstanceAcrossProfiles(t *testing.T) {
 		{profile: "claude-personal", pid: 47001, folder: "/work/hub", started: now.Add(-72 * time.Minute), session: instanceSession{id: "b", title: "draft the release notes"}},
 	}
 	view := m.View()
-	for _, want := range []string{"RUNNING · 2 TOTAL", "PID 48213", "refactor the tui view layer", "26m", "claude-personal", "1h12m"} {
+	// The selected account lists its own under RUNNING HERE; every other
+	// account carries its instances nested under its row.
+	for _, want := range []string{"RUNNING HERE", "PID 48213", "refactor the tui view layer", "26m",
+		"└ ▶ draft the release notes", "PID 47001", "1h12m", "▶ 1"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("live panel is missing %q:\n%s", want, view)
+			t.Fatalf("board is missing %q:\n%s", want, view)
 		}
 	}
 }

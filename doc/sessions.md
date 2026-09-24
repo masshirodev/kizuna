@@ -5,7 +5,8 @@ has to move to another account. Back to the [README](../README.md).
 
 ## Resuming
 
-`R` offers the conversations `RECENT SESSIONS` has already read off disk, and
+`R` offers the conversations the selected account's `RECENT` list has already
+read off disk, and
 reopens the chosen one by id in the folder it ran in. Both halves matter: the id
 names the conversation, and every provider looks for that id under the folder it
 belongs to, so resuming from anywhere else reaches a different conversation or
@@ -157,11 +158,30 @@ merged OpenCode session works like any other.
 It reads the outgoing conversation, reduces it to a brief, and starts another
 account on that brief in the same folder.
 
-Which session is leaving is chosen from the same two-pane picker `R` uses (see
-[The picker is two panes](#the-picker-is-two-panes)), so the conversation about
-to be reduced to a brief is readable before it is — and searchable, and
-switchable to every account. A handoff started from the all-profiles mode is
-built from the account that recorded the chosen row, and offered to the others.
+It is a four-step wizard, with a stepper across the top of the box saying where
+you are — `leaving`, `going to`, `brief`, `open`. `←` goes back a step, and
+`esc` leaves.
+
+1. **Leaving** — which session is moving, chosen from the same two-pane picker
+   `R` uses (see [The picker is two panes](#the-picker-is-two-panes)), so the
+   conversation about to be reduced to a brief is readable before it is — and
+   searchable, and switchable to every account. `H` pressed inside the resume
+   picker hands off the row under the cursor and skips this step: the row you
+   would have resumed is the row you are handing over. A handoff started from
+   the all-accounts mode is built from the account that recorded the chosen
+   row, and offered to the others.
+2. **Going to** — the leaving account and how its conversation ended on the
+   left; on the right the destinations, ranked, each with a gauge for the window
+   that runs out first and a note saying which window that is (`limited by 7d`,
+   or `5h nearly out` when it is nearly spent). Accounts whose CLI cannot be
+   opened on a prompt are listed under `CAN'T TAKE A BRIEF` rather than left
+   out. A `WHAT MOVES` line says what goes and what stays.
+3. **Brief** — the route with both accounts' figures, the conversation's title,
+   and the brief as it was written beside how the conversation ended: what was
+   asked (the first three, then a count), where it was left, and the repository
+   (branch, files changed, `+`/`−` lines, the first few changed paths). The
+   file's size and a rough token count sit beside its path.
+4. **Open** — `↵` on the brief step launches the destination on it.
 
 Nothing is copied into either CLI's state directory. The conversation stays
 where it was recorded; what moves is a markdown file under
@@ -192,14 +212,14 @@ agent *can* read it, but does not have to. On this machine a 1140 KB transcript
 There is no model anywhere in that path, and that is forced rather than chosen:
 the premise is that you are out of quota, so the outgoing CLI cannot summarise
 itself, and asking the incoming one to summarise means reading the transcript —
-the cost being avoided. Extraction is mechanical. Press `e` at the confirmation
+the cost being avoided. Extraction is mechanical. Press `e` on the brief step
 to edit the brief before it goes; you know what mattered.
 
-The confirmation itself shows **how the conversation ended** — the last turns as
-they were actually said, under `HOW IT ENDED`, with the same speaker labels the
-resume picker uses. That is deliberately not the head of the brief that was just
-written, which opens with the same four lines every time and answers a different
-question than this screen asks. The question here is whether this is the work you
+The brief step shows **how the conversation ended** beside the brief — the last
+turns as they were actually said, under `HOW IT ENDED`, with the same speaker
+labels the resume picker uses. The brief's own opening is not shown there: it is
+the same four lines every time and answers a different question than this step
+asks. The question here is whether this is the work you
 meant to move, and the last thing said answers it at a glance. A conversation
 longer than the box says so with a `…` above what is shown, rather than starting
 mid-sentence as though that were the beginning.
@@ -208,8 +228,9 @@ Destinations are ranked by the quota window that runs out soonest, since a
 weekly allowance with room is no help at the moment the five-hour one is spent.
 An account whose quota is unknown sorts below a measured one.
 
-A handoff is recorded in `~/.config/ai/lineage.json`, and `RECENT SESSIONS`
-marks the source row with `→ <account>`. The chain reads forwards only: a
+A handoff is recorded in `~/.config/ai/lineage.json`, and the recent lists —
+under the expanded account and in the pickers — mark the source row with
+`→ <account>`. The chain reads forwards only: a
 handoff is a baton pass, not a fork, so there is never a newer branch on the
 other side to reconcile.
 

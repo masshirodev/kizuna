@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Adaptive colours keep the TUI readable on both light and dark terminals.
@@ -25,6 +26,15 @@ var (
 	colorDim      = lipgloss.AdaptiveColor{Light: "#A1A1AA", Dark: "#3F3F46"}
 	colorSelected = lipgloss.AdaptiveColor{Light: "#EDE9FE", Dark: "#181826"}
 	colorInverse  = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#0B0B0E"}
+
+	// The gauge board adds three more. colorTrack is the unfilled run of a
+	// gauge, which has to read as "the rest of the window" without competing
+	// with the filled part; colorField is the well an input field sits in when
+	// it is not the one being typed into; colorGhost is what the cockpit fades
+	// to behind a box, so the question in front is the only thing in colour.
+	colorTrack = lipgloss.AdaptiveColor{Light: "#E4E4E7", Dark: "#26262D"}
+	colorField = lipgloss.AdaptiveColor{Light: "#F4F4F5", Dark: "#121217"}
+	colorGhost = lipgloss.AdaptiveColor{Light: "#D4D4D8", Dark: "#2A2A31"}
 )
 
 var (
@@ -143,6 +153,74 @@ func selectedPen(selected bool) pen {
 type helpEntry struct {
 	key  string
 	desc string
+}
+
+// keyGap spaces key hints apart. The gauge board separates them with space
+// rather than dots, so a hint reads as a key and a verb, not as a list.
+const keyGap = "   "
+
+// renderKeys lays out key hints the way every box and the cockpit's own bar
+// do: key in accent, verb muted, spaced.
+func renderKeys(entries ...helpEntry) string {
+	parts := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		parts = append(parts, helpKeyStyle.Render(entry.key)+" "+helpDescStyle.Render(entry.desc))
+	}
+	return strings.Join(parts, keyGap)
+}
+
+// renderKeysFit drops whole hints from the end until the row fits, for the
+// same reason renderHelpFit does.
+func renderKeysFit(entries []helpEntry, width int) string {
+	for len(entries) > 1 {
+		if rendered := renderKeys(entries...); lipgloss.Width(rendered) <= width {
+			return rendered
+		}
+		entries = entries[:len(entries)-1]
+	}
+	return truncate(renderKeys(entries...), width)
+}
+
+// boxFooter is the last line of every box: what the keys do on the left and
+// the way out on the right, always in the same place.
+func boxFooter(width int, cancel helpEntry, entries ...helpEntry) string {
+	right := renderKeys(cancel)
+	return spread(renderKeysFit(entries, max(width-lipgloss.Width(right)-2, 8)), right, width)
+}
+
+// boxTitle is the uppercase accent heading every box opens with.
+func boxTitle(title string) string {
+	return boxTitleStyle.Render(strings.ToUpper(title))
+}
+
+var (
+	boxTitleStyle       = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
+	boxDangerTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(colorDanger)
+	ghostStyle          = lipgloss.NewStyle().Foreground(colorGhost)
+	trackStyle          = lipgloss.NewStyle().Foreground(colorTrack)
+)
+
+// gauge draws what is left of a quota window as a thin bar: the filled run in
+// the colour of how much is left, the rest as a faint track. Width zero draws
+// nothing, which is how a narrow board drops its bars and keeps the figures.
+func gauge(ink pen, percent, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	filled := min(max(percent*width/100, 0), width)
+	style := quotaStyle(percent)
+	return ink.render(style, strings.Repeat("━", filled)) + ink.render(trackStyle, strings.Repeat("━", width-filled))
+}
+
+// ghost fades a rendered screen to one flat tone. The cockpit behind a box is
+// context, not something to read, and in full colour it competes with the
+// question the box is asking.
+func ghost(screen string) string {
+	lines := strings.Split(screen, "\n")
+	for index, line := range lines {
+		lines[index] = ghostStyle.Render(ansi.Strip(line))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func renderHelp(entries []helpEntry) string {

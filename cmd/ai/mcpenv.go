@@ -1,7 +1,9 @@
 package main
 
 import (
+	"maps"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -142,4 +144,75 @@ func envSpellingFor(provider string) envSpelling {
 	default:
 		return envShell
 	}
+}
+
+// mcpTranslationNotes says, one line per change, what a copy does to a server
+// on its way from one provider's configuration to another's. It reads the same
+// splits the writers use, so the box that shows these before the copy cannot
+// describe a rewrite the copy then does not make. A copy that changes nothing
+// has no notes.
+func mcpTranslationNotes(server mcpServer, fromProvider, toProvider string) []string {
+	if fromProvider == toProvider {
+		return nil
+	}
+	var notes []string
+	if toProvider == "codex" {
+		if server.transport() == mcpStdio {
+			_, forwarded := splitCodexEnv(server.Env)
+			for _, name := range forwarded {
+				notes = append(notes, name+" passed through → env_vars")
+			}
+			return notes
+		}
+		_, sourced, bearer := splitCodexHeaders(server.Headers)
+		if bearer != "" {
+			notes = append(notes, "Authorization: Bearer "+bearer+" → bearer_token_env_var")
+		}
+		names := make([]string, 0, len(sourced))
+		for name := range sourced {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			notes = append(notes, name+" → env_http_headers")
+		}
+		return notes
+	}
+	// Every other destination keeps the shape and only respells references,
+	// so the notes are the values that come out spelled differently.
+	before := mcpServerValues(server)
+	after := mcpServerValues(translateMCPServer(cloneMCPServer(server), fromProvider, toProvider))
+	for index := range before {
+		if before[index] != after[index] {
+			notes = append(notes, before[index]+" → "+after[index])
+		}
+	}
+	return notes
+}
+
+// mcpServerValues lists every value translateMCPServer may rewrite, in a fixed
+// order, so a translated copy can be compared with the original field by field.
+func mcpServerValues(server mcpServer) []string {
+	values := []string{server.URL, server.Command}
+	values = append(values, server.Args...)
+	for _, table := range []map[string]string{server.Headers, server.Env} {
+		keys := make([]string, 0, len(table))
+		for key := range table {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			values = append(values, table[key])
+		}
+	}
+	return values
+}
+
+// cloneMCPServer copies a server deeply enough for translateMCPServer, which
+// rewrites its slice and maps in place.
+func cloneMCPServer(server mcpServer) mcpServer {
+	server.Args = append([]string(nil), server.Args...)
+	server.Headers = maps.Clone(server.Headers)
+	server.Env = maps.Clone(server.Env)
+	return server
 }

@@ -84,6 +84,8 @@ func TestAutoSwapSkipsTheDestinationQuestionOnly(t *testing.T) {
 	base.workingDir = root
 	base.recent = []recordedSession{{session: instanceSession{id: "aaa"}, folder: root}}
 	base.usage = map[string]usageRemaining{"codex-work": {FiveHour: usageWindow{Percent: 80, Known: true}}}
+	// The board ranks by headroom, so the account is chosen by name.
+	base.followSelection("claude-personal")
 
 	asked, _ := base.updateHandoff(tea.KeyMsg{Type: tea.KeyEnter})
 	if got := asked.(tuiModel); got.mode != tuiHandoffTo {

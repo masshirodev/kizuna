@@ -2,16 +2,17 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
-// The cockpit fills the alt screen with one frame: a title bar, three columns —
-// the accounts, the selected account, and what is running right now — and a key
-// bar. Everything else the TUI does is drawn as a modal over that frame, so
-// changing mode never moves what is behind it.
+// The cockpit fills the alt screen with one frame: a title bar, the gauge board
+// — every account as one row of a table sorted by headroom, with the selected
+// one expanded in place — and a key bar. Everything else the TUI does is drawn
+// as a box over that frame, so changing mode never moves what is behind it.
 func (m tuiModel) View() string {
 	width, height := m.width, m.height
 	if width <= 0 {
@@ -21,19 +22,20 @@ func (m tuiModel) View() string {
 		height = assumedHeight
 	}
 	// The cockpit has its own floor it will not shrink below — chromeRows
-	// plus at least one body row, and at least one column of list — so a
-	// terminal at or near that floor has no room left for a margin without
-	// breaking the "the view exactly fills the terminal" contract every size
-	// has to satisfy (TestViewFillsTheTerminalExactly covers sizes down to
-	// 1x5). The margin shrinks toward zero there rather than being reserved
-	// unconditionally.
+	// plus at least one body row — so a terminal at or near that floor has no
+	// room left for a margin without breaking the "the view exactly fills the
+	// terminal" contract every size has to satisfy (TestViewFillsTheTerminalExactly
+	// covers sizes down to 1x5). The margin shrinks toward zero there rather
+	// than being reserved unconditionally.
 	marginX := min(screenMarginX, max((width-1)/2, 0))
 	marginY := min(screenMarginY, max((height-chromeRows-1)/2, 0))
 
 	frame := frameLayout(width-2*marginX, height-2*marginY)
 	screen := m.cockpitView(frame)
 	if box := m.modalView(frame); box != "" {
-		screen = centerBox(screen, box, frame)
+		// The board behind a box is context, not something to act on: every key
+		// is the box's until it closes, so the board fades rather than competing.
+		screen = centerBox(ghost(screen), box, frame)
 	}
 	return withMargin(screen, width, marginX, marginY)
 }
@@ -41,88 +43,73 @@ func (m tuiModel) View() string {
 func (m tuiModel) cockpitView(frame layout) string {
 	rows := make([]string, 0, frame.height)
 	rows = append(rows, padLine(m.topBarView(frame), frame.width), rule(frame.width))
-	rows = append(rows, m.bodyView(frame)...)
+	rows = append(rows, m.boardView(frame)...)
 	rows = append(rows, rule(frame.width), padLine(m.bottomBarView(frame), frame.width))
 	return strings.Join(rows, "\n")
 }
 
-// bodyView folds columns away rather than shrinking them. A profile table
-// squeezed to eight characters is not a narrower cockpit, it is an unreadable
-// one, so the live panel merges into the detail column first and the detail
-// column stacks under the list after that.
-func (m tuiModel) bodyView(frame layout) []string {
-	switch frame.columns {
-	case 3:
-		list := append(m.listBlocks(frame.list), m.folderFooter(frame.list)...)
-		return joinColumns(
-			fitColumn(list, frame.body, frame.list),
-			fitColumn(m.detailBlocks(frame.detail), frame.body, frame.detail),
-			fitColumn(m.liveBlocks(frame.live), frame.body, frame.live),
-		)
-	case 2:
-		list := append(m.listBlocks(frame.list), m.folderFooter(frame.list)...)
-		detail := append(m.detailBlocks(frame.detail), m.liveBlocks(frame.detail)...)
-		return joinColumns(
-			fitColumn(list, frame.body, frame.list),
-			fitColumn(detail, frame.body, frame.detail),
-		)
-	default:
-		// Stacked, the folder belongs at the end of the whole column rather than
-		// between the accounts and the account under the cursor.
-		stacked := append(m.listBlocks(frame.list), m.detailBlocks(frame.list)...)
-		stacked = append(stacked, m.liveBlocks(frame.list)...)
-		return fitColumn(append(stacked, m.folderFooter(frame.list)...), frame.body, frame.list)
-	}
-}
-
-func joinColumns(columns ...[]string) []string {
-	rows := 0
-	for _, column := range columns {
-		rows = max(rows, len(column))
-	}
-	divider := " " + ruleStyle.Render("│") + " "
-	lines := make([]string, rows)
-	for row := range lines {
-		parts := make([]string, 0, len(columns))
-		for _, column := range columns {
-			if row < len(column) {
-				parts = append(parts, column[row])
+// topBarView answers the question the board exists for — which account has the
+// most room, and which is nearly spent — before the eye reaches the table. The
+// launch folder and any pending update sit on the right, where they apply to
+// the whole screen rather than to a row.
+func (m tuiModel) topBarView(frame layout) string {
+	left := appBadgeStyle.Render("ai")
+	if most, least, ok := m.headroomExtremes(); ok {
+		left += "  " + sectionLabelStyle.Render("most headroom ") + m.extremeLabel(most)
+		if least.Name != most.Name {
+			candidate := left + separatorStyle.Render("   ·   ") + sectionLabelStyle.Render("lowest ") + m.extremeLabel(least)
+			if lipgloss.Width(candidate) < frame.width {
+				left = candidate
 			}
 		}
-		lines[row] = strings.Join(parts, divider)
-	}
-	return lines
-}
-
-// topBarView names the account in play and the state that applies to the whole
-// screen. The update notice lives here rather than on a line of its own, so a
-// build that is behind is visible without costing a row of the body.
-func (m tuiModel) topBarView(frame layout) string {
-	left := appBadgeStyle.Render("ai") + " " + sectionLabelStyle.Render("profiles")
-	if profile, ok := m.selectedProfile(); ok {
-		left += separatorStyle.Render(" › ") + headerProfileStyle.Render(profile.Name)
-		if running := m.runningCount(profile.Name); running > 0 {
-			left += separatorStyle.Render(" › ") + liveStyle.Render(plural(running, "instance"))
-		}
+	} else if len(m.profiles) == 0 {
+		left += "  " + sectionLabelStyle.Render("no profiles")
 	}
 
-	count := plural(len(m.profiles), "profile")
-	if len(m.profiles) == 0 {
-		count = "no profiles"
-	}
-	right := headerCountStyle.Render(count)
-	if folder := shortenHome(m.workingDir); folder != "" {
-		if candidate := right + separatorStyle.Render(" · ") + headerCountStyle.Render(folder); fitsBeside(left, candidate, frame.width) {
-			right = candidate
-		}
+	right := ""
+	if folder := shortenHome(m.workingDir); m.workingDir != "" && fitsBeside(left, mutedStyle.Render(folder), frame.width) {
+		right = mutedStyle.Render(folder)
 	}
 	if m.update.available() {
-		notice := updateStyle.Render("↑ " + plural(m.update.Behind, "commit") + " behind " + updateBranch + " · U")
-		if candidate := right + separatorStyle.Render(" · ") + notice; fitsBeside(left, candidate, frame.width) {
+		notice := updateStyle.Render("↑ " + fmt.Sprint(m.update.Behind) + " behind " + updateBranch + "  U")
+		candidate := notice
+		if right != "" {
+			candidate = right + separatorStyle.Render("  ·  ") + notice
+		}
+		if fitsBeside(left, candidate, frame.width) {
 			right = candidate
 		}
 	}
 	return spread(left, right, frame.width)
+}
+
+var mutedStyle = lipgloss.NewStyle().Foreground(colorMuted)
+
+func (m tuiModel) extremeLabel(profile Profile) string {
+	percent := headroom(m.usage[profile.Name])
+	return providerStyle(profile.Provider).Bold(true).Render(profile.Name) + " " + quotaStyle(percent).Render(fmt.Sprintf("%d%%", percent))
+}
+
+// headroomExtremes is the account with the most quota left and the one with
+// the least, among those whose quota is actually known. An unknown remainder
+// is neither, so a board with nothing measured names nothing.
+func (m tuiModel) headroomExtremes() (Profile, Profile, bool) {
+	var most, least Profile
+	found := false
+	for _, profile := range m.profiles {
+		percent := headroom(m.usage[profile.Name])
+		if percent < 0 {
+			continue
+		}
+		if !found || percent > headroom(m.usage[most.Name]) {
+			most = profile
+		}
+		if !found || percent < headroom(m.usage[least.Name]) {
+			least = profile
+		}
+		found = true
+	}
+	return most, least, found
 }
 
 func fitsBeside(left, right string, width int) bool {
@@ -136,136 +123,414 @@ func plural(count int, noun string) string {
 	return fmt.Sprintf("%d %ss", count, noun)
 }
 
-// listBlocks draws the accounts column: the scannable table, the authentication
-// each profile has, and the launch folder pinned to the bottom. Auth is its own
-// block rather than another table column because at forty characters the table
-// can carry either auth or the two quota figures, and the quota is what changes
-// hour to hour.
-func (m tuiModel) listBlocks(width int) []block {
-	visible := m.visibleProfiles()
-	blocks := []block{textBlock(dropNever, m.profileTableLines(visible, width)...)}
-	if len(visible) > 0 {
-		blocks = append(blocks, textBlock(dropAuth, m.authLines(visible, width)...))
-	}
-	return blocks
-}
-
-// folderFooter is pinned to the bottom of its column by the flex before it. The
-// launch folder is the one piece of state a launch silently depends on, so it
-// sits where the eye lands last rather than scrolling off with the panels above.
-func (m tuiModel) folderFooter(width int) []block {
-	return []block{flexBlock(), textBlock(dropNever, m.folderLines(width)...)}
-}
-
-func (m tuiModel) profileTableLines(visible []Profile, width int) []string {
-	heading := sectionLabelStyle.Render("PROFILES")
+// bottomBarView carries five keys and the way to the rest. The old bar listed
+// fifteen and dropped them from the end to fit, which hid exactly the keys
+// nobody had learned; now every other key lives one space bar away.
+func (m tuiModel) bottomBarView(frame layout) string {
 	if m.searching {
-		heading = helpKeyStyle.Render("/") + fieldValueStyle.Render(m.filter) + cursorStyle.Render(" ")
+		return spread(renderKeysFit([]helpEntry{{"type", "filter"}, {"↑↓", "choose"}, {"↵", "keep filter"}}, frame.width-12),
+			renderKeys(helpEntry{"esc", "clear"}), frame.width)
 	}
-	width = tableWidth(width)
-	nameWidth, providerWidth := listColumns(width, m.profiles)
-	header := spread(heading, columnHeaderStyle.Render(pad("5H", usageWidth)+" "+pad("7D", usageWidth)), width)
-	lines := []string{header}
+	right := renderKeys(helpEntry{"space", "all actions"}, helpEntry{"?", "keys"})
+	entries := []helpEntry{{"↵", "run"}, {"R", "resume"}, {"H", "hand off"}, {"p", "args"}, {"/", "find"}}
+	if len(m.profiles) == 0 {
+		right = renderKeys(helpEntry{"q", "quit"})
+		entries = []helpEntry{{"a", "add a profile"}}
+	}
+	if lipgloss.Width(right)+10 > frame.width {
+		right = ""
+	}
+	left := renderKeysFit(entries, max(frame.width-lipgloss.Width(right)-len(keyGap), 8))
+	return spread(left, right, frame.width)
+}
 
+// ---- the board ------------------------------------------------------------
+
+// reportsQuota is whether a provider's CLI keeps a quota cache this launcher
+// reads. The ones that do are ranked by it; the ones that do not have no
+// number to rank by and are listed apart, rather than sorted last as if they
+// were empty.
+func reportsQuota(provider string) bool {
+	return provider == "codex" || provider == "claude"
+}
+
+// boardOrder is the order the board lists accounts in, and so the order the
+// cursor moves through: the accounts with a quota, most headroom first, then
+// the ones without. Within a tie the incoming order (by name) is kept.
+func boardOrder(profiles []Profile, usage map[string]usageRemaining) []Profile {
+	var rated, unrated []Profile
+	for _, profile := range profiles {
+		if reportsQuota(profile.Provider) {
+			rated = append(rated, profile)
+		} else {
+			unrated = append(unrated, profile)
+		}
+	}
+	sort.SliceStable(rated, func(i, j int) bool {
+		return headroom(usage[rated[i].Name]) > headroom(usage[rated[j].Name])
+	})
+	return append(rated, unrated...)
+}
+
+// boardColumns is the board's geometry at one width. Gauges take whatever the
+// fixed columns leave, up to a length past which a longer bar says nothing
+// more; below a usable length they go and the figures stay.
+type boardColumns struct {
+	name     int
+	provider int
+	gauge    int
+	reset    bool
+	auth     bool
+	live     bool
+}
+
+const (
+	boardMaxGauge = 32
+	boardMinGauge = 6
+	boardAuth     = 8
+	boardLive     = 5
+	boardResetW   = 7
+	// boardIndent is where the detail under a row starts: past the cursor bar
+	// and two more, so it reads as belonging to the row above.
+	boardIndent = 4
+)
+
+// cell is one quota window: gauge, figure, and when it rolls over.
+func (c boardColumns) cell() int {
+	width := usageWidth
+	if c.gauge > 0 {
+		width += c.gauge + 1
+	}
+	if c.reset {
+		width += 1 + boardResetW
+	}
+	return width
+}
+
+// fixed is everything but the gauges, with room for the space each gauge
+// would need before its figure.
+func (c boardColumns) fixed() int {
+	width := 2 + c.name + c.provider + 2*(1+usageWidth) + 4
+	if c.reset {
+		width += 2 * (1 + boardResetW)
+	}
+	if c.auth {
+		width += boardAuth
+	}
+	if c.live {
+		width += boardLive
+	}
+	return width
+}
+
+func boardLayout(width int, profiles []Profile) boardColumns {
+	longestName, longestProvider := 0, 0
+	for _, profile := range profiles {
+		longestName = max(longestName, lipgloss.Width(profile.Name))
+		longestProvider = max(longestProvider, lipgloss.Width(profile.Provider))
+	}
+	c := boardColumns{
+		name:     min(max(longestName+2, 12), 22),
+		provider: min(max(longestProvider+2, 8), 13),
+		reset:    true, auth: true, live: true,
+	}
+	for {
+		spare := width - c.fixed()
+		if gauge := min(spare/2, boardMaxGauge); gauge >= boardMinGauge {
+			c.gauge = gauge
+			return c
+		}
+		// Things go in the order a glance misses them least: the reset time
+		// first, since the figure beside it is the useful half; then the live
+		// count, which the expanded row repeats; then auth; then name width.
+		switch {
+		case spare >= 0:
+			return c
+		case c.reset:
+			c.reset = false
+		case c.live:
+			c.live = false
+		case c.auth:
+			c.auth = false
+		case c.name > 10:
+			c.name = max(c.name+spare, 10)
+		default:
+			return c
+		}
+	}
+}
+
+// boardView is the body of the cockpit: the table, and the status line pinned
+// to its bottom. A table taller than the body loses the detail under the
+// selected row before it loses rows, and then scrolls to keep the cursor in
+// view.
+func (m tuiModel) boardView(frame layout) []string {
+	visible := m.visibleProfiles()
+	columns := boardLayout(frame.width, m.profiles)
+	status := m.boardStatus(frame.width)
+	rows := frame.body
+	if status != "" && rows > 2 {
+		rows--
+	}
+
+	lines, cursor := m.boardLines(visible, columns, frame.width, true)
+	if len(lines) > rows {
+		lines, cursor = m.boardLines(visible, columns, frame.width, false)
+	}
+	lines = windowRows(lines, cursor, rows)
+	lines = padToRows(lines, rows, -1)
+	if status != "" && frame.body > 2 {
+		lines = append(lines, status)
+	}
+	for index, line := range lines {
+		lines[index] = padLine(line, frame.width)
+	}
+	return lines[:min(len(lines), frame.body)]
+}
+
+// boardLines draws the table and reports which line the cursor is on. full
+// asks for the selected row's whole expansion; without it the row keeps only
+// the one line saying how it launches.
+func (m tuiModel) boardLines(visible []Profile, c boardColumns, width int, full bool) ([]string, int) {
+	lines := []string{m.boardHeader(c, width), ""}
 	if len(visible) == 0 {
 		if len(m.profiles) == 0 {
-			return append(lines, emptyStateStyle.Render("No profiles yet — press a."))
+			return append(lines, emptyStateStyle.Render("No profiles yet — press a.")), 0
 		}
-		return append(lines, emptyStateStyle.Render("Nothing matches "+m.filter))
+		return append(lines, emptyStateStyle.Render("Nothing matches "+m.filter)), 0
 	}
+	cursor := 0
+	unratedHeading := false
 	for index, profile := range visible {
+		if !reportsQuota(profile.Provider) && !unratedHeading {
+			unratedHeading = true
+			if index > 0 {
+				lines = append(lines, "")
+			}
+			lines = append(lines, "  "+sectionLabelStyle.Render("NO LOCAL QUOTA CACHE")+
+				dimStyle.Render(truncate("   these providers keep none this launcher reads", max(width-24, 1))))
+		}
 		selected := index == m.cursor
-		ink := selectedPen(selected)
-		bar, name := ink.render(lipgloss.NewStyle(), "  "), nameStyle
 		if selected {
-			bar, name = ink.render(cursorBarStyle, "▌ "), nameActiveStyle
+			cursor = len(lines)
 		}
-		left := bar +
-			ink.render(name, pad(truncate(profile.Name, nameWidth), nameWidth)) + " " +
-			ink.render(providerStyle(profile.Provider), pad(truncate(profile.Provider, providerWidth), providerWidth))
-		right := m.usageCellWith(ink, profile, fiveHourWindow) + " " + m.usageCellWith(ink, profile, weeklyWindow)
-		gap := max(width-lipgloss.Width(left)-lipgloss.Width(right), 1)
-		lines = append(lines, left+ink.render(lipgloss.NewStyle(), strings.Repeat(" ", gap))+right)
+		lines = append(lines, m.boardRow(profile, selected, c, width))
+		if selected {
+			lines = append(lines, m.expansion(profile, width, full)...)
+		} else {
+			lines = append(lines, m.nestedInstances(profile, width)...)
+		}
+	}
+	return lines, cursor
+}
+
+func (m tuiModel) boardHeader(c boardColumns, width int) string {
+	heading := sectionLabelStyle.Render("ACCOUNT")
+	switch {
+	case m.searching:
+		heading = helpKeyStyle.Render("/") + fieldValueStyle.Render(m.filter) + cursorStyle.Render(" ")
+	case m.filter != "":
+		heading += "  " + helpKeyStyle.Render("/") + fieldValueStyle.Render(m.filter)
+	}
+	line := "  " + pad(heading, c.name+c.provider) +
+		columnHeaderStyle.Render(pad(boardWindowLabel(c, "5-HOUR LEFT", "5H"), c.cell()+2)+
+			pad(boardWindowLabel(c, "7-DAY LEFT", "7D"), c.cell()+2))
+	if c.auth {
+		line += columnHeaderStyle.Render(pad("AUTH", boardAuth))
+	}
+	if c.live {
+		line += columnHeaderStyle.Render("LIVE")
+	}
+	return truncate(line, width)
+}
+
+func boardWindowLabel(c boardColumns, long, short string) string {
+	if c.cell() >= len(long) {
+		return long
+	}
+	return short
+}
+
+// boardRow is one account: who it is, what each window has left, whether it
+// can log in, and how many instances it is running.
+func (m tuiModel) boardRow(profile Profile, selected bool, c boardColumns, width int) string {
+	ink := selectedPen(selected)
+	bar, name := ink.render(lipgloss.NewStyle(), "  "), nameStyle
+	if selected {
+		bar, name = ink.render(cursorBarStyle, "▌ "), nameActiveStyle
+	}
+	line := bar +
+		ink.render(name, pad(truncate(profile.Name, c.name-1), c.name)) +
+		ink.render(providerStyle(profile.Provider), pad(truncate(profile.Provider, c.provider-1), c.provider))
+	cells := 2*c.cell() + 4
+	if reportsQuota(profile.Provider) {
+		usage, known := m.usage[profile.Name]
+		line += m.windowCell(ink, usage.FiveHour, known, c) + ink.render(lipgloss.NewStyle(), "  ") +
+			m.windowCell(ink, usage.Weekly, known, c) + ink.render(lipgloss.NewStyle(), "  ")
+	} else {
+		line += ink.render(dimStyle, pad(truncate("· not reported", cells-2), cells))
+	}
+	if c.auth {
+		line += ink.render(lipgloss.NewStyle(), boardAuthCell(ink, profile))
+	}
+	if c.live {
+		if running := m.runningCount(profile.Name); running > 0 {
+			line += ink.render(liveStyle, fmt.Sprintf("▶ %d", running))
+		}
+	}
+	return padStyled(ink, line, width)
+}
+
+// padStyled pads a row out to the width in the row's own background, so a
+// selected row is tinted edge to edge rather than only as far as its text.
+func padStyled(ink pen, line string, width int) string {
+	if gap := width - lipgloss.Width(line); gap > 0 {
+		return line + ink.render(lipgloss.NewStyle(), strings.Repeat(" ", gap))
+	}
+	return padLine(line, width)
+}
+
+// windowCell is one quota window on the board. The figure is what is left, so
+// the gauge fills as the account gains headroom rather than as it is spent.
+func (m tuiModel) windowCell(ink pen, window usageWindow, known bool, c boardColumns) string {
+	cell := ""
+	switch {
+	case m.usage == nil:
+		cell = ink.render(unknownStyle, pad("…", c.cell()))
+		return cell
+	case !known || !window.Known:
+		if c.gauge > 0 {
+			cell = ink.render(trackStyle, strings.Repeat("━", c.gauge)) + ink.render(lipgloss.NewStyle(), " ")
+		}
+		return cell + ink.render(unknownStyle, pad("—", c.cell()-lipgloss.Width(cell)))
+	}
+	if c.gauge > 0 {
+		cell = gauge(ink, window.Percent, c.gauge) + ink.render(lipgloss.NewStyle(), " ")
+	}
+	cell += ink.render(usageStyle(window), pad(fmt.Sprintf("%d%%", window.Percent), usageWidth))
+	if c.reset {
+		cell += ink.render(dimStyle, " "+pad(truncate(resetAt(m.clock(), window.Resets), boardResetW), boardResetW))
+	}
+	return cell
+}
+
+// resetAt is formatReset without its verb: on the board the column heading
+// already says what the time is.
+func resetAt(now, resets time.Time) string {
+	return strings.TrimPrefix(formatReset(now, resets), "resets ")
+}
+
+// boardAuthCell says whether the account can be launched as it is.
+func boardAuthCell(ink pen, profile Profile) string {
+	switch profileAuthState(profile) {
+	case authPresent:
+		return ink.render(authPresentStyle, pad("● ok", boardAuth))
+	case authAPIKey:
+		return ink.render(authKeyStyle, pad("● key", boardAuth))
+	case authMissing:
+		return ink.render(authMissingStyle, pad("○ login", boardAuth))
+	default:
+		return ink.render(authUnknownStyle, pad("· ?", boardAuth))
+	}
+}
+
+// nestedInstances hangs what an unselected account is running under its row,
+// so the live panel's answer sits beside the account it belongs to.
+func (m tuiModel) nestedInstances(profile Profile, width int) []string {
+	var lines []string
+	for _, instance := range m.live {
+		if instance.profile != profile.Name {
+			continue
+		}
+		title := m.instanceTitle(instance)
+		detail := fmt.Sprintf("   PID %d · %s · %s", instance.pid, shortenHome(instance.folder), formatUptime(instance.uptime(m.clock())))
+		line := dimStyle.Render("      └ ") + liveStyle.Render("▶ ") + fieldValueStyle.Render(title) + dimStyle.Render(detail)
+		lines = append(lines, truncateStyled(line, width))
 	}
 	return lines
 }
 
-// tableWidth caps how far the accounts table is stretched. In one-column mode
-// the list gets the whole terminal, and a table spread across it puts the
-// provider adrift in the middle of a line of whitespace.
-func tableWidth(width int) int {
-	return min(width, wideListColumn+4)
-}
-
-// listColumns splits the accounts column between the name and the provider,
-// with the two quota cells taking a fixed share. The name is what identifies an
-// account, so it gets whatever the provider does not need.
-func listColumns(width int, profiles []Profile) (int, int) {
-	provider := 6
-	for _, profile := range profiles {
-		provider = max(provider, lipgloss.Width(profile.Provider))
+// truncateStyled cuts a styled line to the width without splitting an escape.
+func truncateStyled(line string, width int) string {
+	if lipgloss.Width(line) <= width {
+		return line
 	}
-	provider = min(provider, 11)
-	// Past a point a longer name column is only whitespace: profile names are
-	// short, and the quota cells read better against the column's right edge
-	// than pushed out by a name box nobody fills.
-	name := min(max(width-provider-2*usageWidth-5, 6), 26)
-	return name, provider
+	return padLine(line, width)
 }
 
-func (m tuiModel) authLines(visible []Profile, width int) []string {
-	width = tableWidth(width)
-	nameWidth := max(width-authWidth-1, 6)
-	lines := []string{sectionLabelStyle.Render("AUTH")}
-	for _, profile := range visible {
-		lines = append(lines, fieldLabelStyle.Render(pad(truncate(profile.Name, nameWidth), nameWidth))+" "+authCell(profile))
+// expansion is everything about the account under the cursor, drawn in place
+// under its row rather than in a column of its own: how it launches, what it
+// is running, how busy it has been, and what it was last working on.
+func (m tuiModel) expansion(profile Profile, width int, full bool) []string {
+	ink := selectedPen(true)
+	indent := strings.Repeat(" ", boardIndent)
+	inner := max(width-boardIndent, 8)
+	lines := []string{ink.render(lipgloss.NewStyle(), indent) + ink.render(modelStyle, truncate(m.launchSummary(profile), inner))}
+	if full {
+		lines = append(lines, "")
+		leftWidth := min(60, inner*44/100)
+		stacked := inner-leftWidth-3 < 40
+		recentWidth := inner - leftWidth - 3
+		if stacked {
+			recentWidth = inner
+		}
+		left, right := m.expansionRunning(profile), m.expansionRecent(profile, recentWidth)
+		if stacked {
+			// Too narrow for the two side by side: the recent list goes under
+			// what is running rather than being squeezed beside it.
+			for _, line := range append(append(left, ""), right...) {
+				lines = append(lines, indent+truncateStyled(line, inner))
+			}
+		} else {
+			rightWidth := inner - leftWidth - 3
+			for row := range max(len(left), len(right)) {
+				first, second := "", ""
+				if row < len(left) {
+					first = left[row]
+				}
+				if row < len(right) {
+					second = right[row]
+				}
+				lines = append(lines, indent+padLine(first, leftWidth)+"   "+padLine(second, rightWidth))
+			}
+		}
+		lines = append(lines, "")
+	}
+	for index, line := range lines {
+		lines[index] = tintLine(line, width)
 	}
 	return lines
 }
 
-func (m tuiModel) folderLines(width int) []string {
-	folder := shortenHome(m.workingDir)
-	if folder == "" {
-		folder = "—"
+// tintLine lays the selection tint under a line built from its own styles.
+// Each span closes its pen, so the tint is re-opened after every reset rather
+// than set once around the whole line.
+func tintLine(line string, width int) string {
+	line = padLine(line, width)
+	sgr := selectedBackgroundSGR()
+	if sgr == "" {
+		return line
 	}
-	swap, swapStyle := "off", unknownStyle
-	if m.autoSwap {
-		swap, swapStyle = "on", liveStyle
-	}
-	return []string{
-		sectionLabelStyle.Render("FOLDER") + " " + fieldValueStyle.Render(truncate(folder, max(width-7, 1))),
-		strings.Repeat(" ", 7) + dimStyle.Render("press ") + helpKeyStyle.Render("c") + dimStyle.Render(" to change"),
-		sectionLabelStyle.Render("SWAP") + "   " + swapStyle.Render(swap) +
-			dimStyle.Render("  press ") + helpKeyStyle.Render("A"),
-	}
+	open := "\x1b[" + sgr + "m"
+	return open + strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+open) + "\x1b[0m"
 }
 
-// detailBlocks draws everything about the account under the cursor: how it
-// launches, what quota it has left, how busy it has been, and what it was last
-// working on.
-func (m tuiModel) detailBlocks(width int) []block {
-	profile, ok := m.selectedProfile()
-	if !ok {
-		return []block{textBlock(dropNever, emptyStateStyle.Render("Nothing selected."))}
+// selectedBackgroundSGR is the escape parameters for colorSelected as a
+// background in the current colour profile, or nothing on a terminal without
+// colour — where the whole tint is then a no-op.
+func selectedBackgroundSGR() string {
+	sample := lipgloss.NewStyle().Background(colorSelected).Render(" ")
+	start := strings.Index(sample, "\x1b[")
+	end := strings.Index(sample, "m")
+	if start < 0 || end < start {
+		return ""
 	}
-	blocks := []block{textBlock(dropNever, m.headlineLines(profile, width)...)}
-	blocks = append(blocks, textBlock(dropNever, m.quotaLines(profile, width)...))
-	if activity := m.activityLines(width); len(activity) > 0 {
-		blocks = append(blocks, textBlock(dropActivity, activity...))
-	}
-	return append(blocks, textBlock(dropRecent, m.recentLines(width)...))
+	return sample[start+2 : end]
 }
 
-func (m tuiModel) headlineLines(profile Profile, width int) []string {
-	title := detailNameStyle.Render(profile.Name) + "  " + providerBadgeStyle(profile.Provider).Render(strings.ToUpper(profile.Provider))
-	if running := m.runningCount(profile.Name); running > 0 {
-		badge := "▶ running"
-		if running > 1 {
-			badge = fmt.Sprintf("▶ %d running", running)
-		}
-		title += "  " + liveStyle.Render(badge)
-	}
-
+// launchSummary is the selected account's settings on one line, in the order
+// a launch uses them.
+func (m tuiModel) launchSummary(profile Profile) string {
 	indicator := profile.Indicator
 	switch {
 	case indicator == tmuxIndicator:
@@ -273,28 +538,95 @@ func (m tuiModel) headlineLines(profile Profile, width int) []string {
 	case supportsNativeStatusLine(profile.Provider):
 		indicator = "own status line"
 	case indicator == "":
-		indicator = "none"
+		indicator = "no indicator"
 	}
-	fields := [][2]string{
-		{"launch", formatArguments(append([]string{profile.Command}, profile.DefaultArgs...))},
-		{"cli", cliField(profile)},
-		{"model", profileModel(profile)},
-		{"indicator", indicator},
-		{"note", profile.Notes},
+	parts := []string{formatArguments(append([]string{profile.Command}, profile.DefaultArgs...)), cliField(profile)}
+	if model := profileModel(profile); model != "" {
+		parts = append(parts, "model "+model)
 	}
-	lines := []string{title, ""}
-	for _, field := range fields {
-		value, style := field[1], fieldValueStyle
-		if value == "" {
-			value, style = "—", unknownStyle
+	parts = append(parts, indicator)
+	if profile.Notes != "" {
+		parts = append(parts, profile.Notes)
+	}
+	return strings.Join(parts, "  ·  ")
+}
+
+func (m tuiModel) expansionRunning(profile Profile) []string {
+	lines := []string{sectionLabelStyle.Render("RUNNING HERE")}
+	running := 0
+	for _, instance := range m.live {
+		if instance.profile != profile.Name {
+			continue
 		}
-		lines = append(lines, fieldLabelStyle.Render(pad(field[0], detailLabelWidth))+
-			style.Render(truncate(value, max(width-detailLabelWidth, 1))))
+		running++
+		lines = append(lines,
+			liveStyle.Render("▶ ")+fieldValueStyle.Render(m.instanceTitle(instance)),
+			dimStyle.Render(fmt.Sprintf("  PID %d · %s · %s", instance.pid, shortenHome(instance.folder), formatUptime(instance.uptime(m.clock())))))
+	}
+	if running == 0 {
+		lines = append(lines, unknownStyle.Render(m.pending("nothing running")))
+	}
+	// The histogram is labelled by what it counts, not as quota: no provider
+	// records what a limit cost at a given hour, so this measures the one thing
+	// that is actually on disk — sessions touched per hour.
+	if m.activity.known() {
+		spark := dimStyle.Render("24h ") + providerStyle(profile.Provider).Render(sparkline(m.activity.counts[:]))
+		if !m.activity.peak.IsZero() {
+			spark += dimStyle.Render("  peak " + m.activity.peak.Local().Format("15:04"))
+		}
+		lines = append(lines, "", spark)
 	}
 	return lines
 }
 
-const detailLabelWidth = 12
+// expansionRecentRows is how many conversations the expanded row lists. The
+// resume picker is where the rest are; this is what the account was last on.
+const expansionRecentRows = 4
+
+func (m tuiModel) expansionRecent(profile Profile, width int) []string {
+	lines := []string{sectionLabelStyle.Render("RECENT")}
+	if len(m.recent) == 0 {
+		lines = append(lines, unknownStyle.Render(m.pending("no recorded sessions")))
+	}
+	for index, record := range m.recent {
+		if index == expansionRecentRows {
+			break
+		}
+		title, style := record.session.title, fieldValueStyle
+		if title == "" {
+			title, style = "untitled session", unknownStyle
+		}
+		// The folder gives way before the title does: the title is what says
+		// which conversation this is, the folder only where.
+		folder := min(22, max(width-8-40, 10))
+		titleWidth := min(38, max(width-8-folder, 10))
+		line := dimStyle.Render(pad(formatWhen(m.clock(), record.activity()), 8)) +
+			style.Render(pad(truncate(title, titleWidth-2), titleWidth)) +
+			dimStyle.Render(truncate(shortenHome(record.folder), folder))
+		// A session that was handed over carries where it went, reading forwards
+		// because that is the only direction a pass has.
+		if link, passed := m.lineage[record.session.id]; passed && record.session.id != "" {
+			line += liveStyle.Render("  → " + link.TargetProfile)
+		}
+		lines = append(lines, line)
+	}
+	return append(lines, "", renderKeys(helpEntry{"R", "resume"}, helpEntry{"H", "hand off"}, helpEntry{"h", "open live"}))
+}
+
+// boardStatus is what the log shrank to: the last thing that happened, and
+// when. A modal's own status is shown in the modal instead.
+func (m tuiModel) boardStatus(width int) string {
+	if len(m.log) == 0 {
+		return ""
+	}
+	entry := m.log[0]
+	icon, style := statusIcon(entry.kind)
+	when := ""
+	if !entry.at.IsZero() {
+		when = "   " + dimStyle.Render(entry.at.Local().Format("15:04"))
+	}
+	return "  " + style.Render(icon) + " " + statusInfoStyle.Render(truncate(entry.text, max(width-12, 4))) + when
+}
 
 // cliField says where the command a launch would run actually is. A profile can
 // be fully configured and logged in and still fail at launch because the
@@ -310,135 +642,11 @@ func cliField(profile Profile) string {
 	return "not installed"
 }
 
-func (m tuiModel) quotaLines(profile Profile, width int) []string {
-	usage, known := m.usage[profile.Name]
-	lines := []string{sectionLabelStyle.Render("QUOTA")}
-	if m.usage == nil {
-		return append(lines, unknownStyle.Render("reading the provider's own quota cache…"))
-	}
-	if !known || !usage.known() {
-		return append(lines, unknownStyle.Render("no quota recorded for this profile"))
-	}
-	return append(lines,
-		m.meterLine("5H", usage.FiveHour, width),
-		m.meterLine("7D", usage.Weekly, width))
-}
-
-// meterLine draws one quota window as a bar, a percentage, and when it rolls
-// over. The percentage is what is left, so the bar fills as the account gets
-// more headroom rather than as it is spent.
-func (m tuiModel) meterLine(label string, window usageWindow, width int) string {
-	if !window.Known {
-		return fieldLabelStyle.Render(pad(label, 4)) + unknownStyle.Render("—")
-	}
-	reset := formatReset(m.clock(), window.Resets)
-	bar := max(width-4-usageWidth-2-lipgloss.Width(reset)-1, 6)
-	filled := min(max(window.Percent*bar/100, 0), bar)
-	style := usageStyle(window)
-	line := fieldLabelStyle.Render(pad(label, 4)) +
-		style.Render(strings.Repeat("█", filled)+strings.Repeat("░", bar-filled)) +
-		" " + style.Render(pad(fmt.Sprintf("%d%%", window.Percent), usageWidth))
-	if reset != "" {
-		line += " " + dimStyle.Render(reset)
-	}
-	return line
-}
+const detailLabelWidth = 12
 
 func usageStyle(window usageWindow) lipgloss.Style {
-	switch {
-	case window.Percent <= 10:
-		return usageCriticalStyle
-	case window.Percent <= 25:
-		return usageWarningStyle
-	default:
-		return usageGoodStyle
-	}
+	return quotaStyle(window.Percent)
 }
-
-// activityLines draws sessions touched per hour over the last day. It is
-// labelled ACTIVITY and not quota on purpose: no provider records what a limit
-// cost at a given hour, so this counts the one thing that is actually on disk.
-func (m tuiModel) activityLines(width int) []string {
-	if !m.activity.known() || width < activityHours+8 {
-		return nil
-	}
-	line := dimStyle.Render(pad("24h", 4)) + sectionLabelStyle.Render(sparkline(m.activity.counts[:]))
-	if !m.activity.peak.IsZero() {
-		line += "  " + dimStyle.Render("peak "+m.activity.peak.Local().Format("15:04"))
-	}
-	return []string{sectionLabelStyle.Render("ACTIVITY"), line}
-}
-
-func (m tuiModel) recentLines(width int) []string {
-	lines := []string{sectionLabelStyle.Render("RECENT SESSIONS")}
-	if len(m.recent) == 0 {
-		return append(lines, unknownStyle.Render(m.pending("no recorded sessions")))
-	}
-	for _, record := range m.recent {
-		lines = append(lines, m.recentRow(pen{}, record, width, false))
-	}
-	return append(lines, dimStyle.Render("press ")+helpKeyStyle.Render("R")+dimStyle.Render(" to resume, ")+
-		helpKeyStyle.Render("H")+dimStyle.Render(" to hand over"))
-}
-
-// recentRow lays one recorded conversation out as when, what, and where. The
-// panel and the resume picker share it, so the row a key is pressed on is
-// exactly the row that was read. showProfile adds the account the session
-// belongs to, which the picker needs once it can list every profile at once;
-// the id is shown when the row is wide enough to carry it, and in full in the
-// preview beside the list.
-func (m tuiModel) recentRow(ink pen, record recordedSession, width int, showProfile bool) string {
-	prefix := ink.render(dimStyle, pad(formatWhen(m.clock(), record.activity()), recentTimeWidth))
-	if showProfile {
-		name := record.profile
-		if name == "" {
-			if profile, ok := m.profileForRecord(record); ok {
-				name = profile.Name
-			}
-		}
-		if name == "" {
-			name = "?"
-		}
-		prefix += " " + ink.render(providerStyle(m.providerOf(name)), pad(truncate(name, recentProfileWidth), recentProfileWidth))
-	}
-	folderWidth := min(max(width/4, 8), 20)
-	idWidth := 0
-	if width >= recentIDMinWidth {
-		idWidth = recentIDWidth
-	}
-	trailing := ink.render(dimStyle, pad(truncate(shortenHome(record.folder), folderWidth), folderWidth))
-	if idWidth > 0 {
-		trailing += " " + ink.render(dimStyle, pad(truncate(record.session.id, idWidth), idWidth))
-	}
-	title, style := record.session.title, fieldValueStyle
-	if title == "" {
-		title, style = "untitled session", unknownStyle
-	}
-	// A session that was handed over carries where it went. The chain reads
-	// forwards because that is the only direction a baton pass has: the row is
-	// where the work started, not where it is now.
-	marker := ""
-	if link, passed := m.lineage[record.session.id]; passed && record.session.id != "" {
-		marker = " → " + link.TargetProfile
-	}
-	cell := max(width-lipgloss.Width(prefix)-lipgloss.Width(trailing)-2, 8)
-	shown := truncate(title, max(cell-lipgloss.Width(marker), 6))
-	return prefix + " " + ink.render(style, shown) + ink.render(liveStyle, marker) +
-		ink.render(dimStyle, strings.Repeat(" ", max(cell-lipgloss.Width(shown)-lipgloss.Width(marker), 0))) +
-		" " + trailing
-}
-
-const (
-	recentTimeWidth = 6
-	// recentProfileWidth is the account column the picker adds when it lists
-	// every profile: wide enough to tell a name apart by its head, narrow enough
-	// not to crowd the title.
-	recentProfileWidth = 12
-	// recentIDWidth is the conversation-id column, drawn only when the row is
-	// wide enough for it to sit beside the folder without squeezing the title.
-	recentIDWidth    = 10
-	recentIDMinWidth = 58
-)
 
 // formatWhen dates a past session in the shortest form that still separates it
 // from the others on screen: a clock time today, a word yesterday, a date
@@ -457,42 +665,6 @@ func formatWhen(now, when time.Time) string {
 	default:
 		return local.Format("2 Jan")
 	}
-}
-
-// liveBlocks answers the question the profile table cannot: not which accounts
-// exist, but which of them are running something right now, and where.
-func (m tuiModel) liveBlocks(width int) []block {
-	return []block{
-		textBlock(dropNever, m.runningLines(width)...),
-		textBlock(dropLog, m.logLines(width)...),
-	}
-}
-
-func (m tuiModel) runningLines(width int) []string {
-	heading := "RUNNING"
-	if len(m.live) > 0 {
-		heading = fmt.Sprintf("RUNNING · %d TOTAL", len(m.live))
-	}
-	lines := []string{sectionLabelStyle.Render(heading)}
-	if len(m.live) == 0 {
-		return append(lines, unknownStyle.Render(m.pending("nothing running")))
-	}
-	selected, _ := m.selectedProfile()
-	for index, instance := range m.live {
-		if index > 0 {
-			lines = append(lines, "")
-		}
-		bar := "  "
-		if instance.profile == selected.Name {
-			bar = cursorBarStyle.Render("▌ ")
-		}
-		lines = append(lines,
-			bar+providerStyle(m.providerOf(instance.profile)).Render(truncate(instance.profile, max(width-14, 4)))+
-				separatorStyle.Render(" · ")+dimStyle.Render(fmt.Sprintf("PID %d", instance.pid)),
-			"  "+fieldValueStyle.Render(truncate(m.instanceTitle(instance), max(width-2, 4))),
-			"  "+dimStyle.Render(truncate(shortenHome(instance.folder)+" · "+formatUptime(instance.uptime(m.clock())), max(width-2, 4))))
-	}
-	return lines
 }
 
 // runningCount answers from the live panel rather than by counting lock
@@ -527,29 +699,7 @@ func (m tuiModel) providerOf(name string) string {
 	return ""
 }
 
-// logLines keeps the last few things that happened. A single status line loses
-// the reason a launch failed the moment the next key is pressed, which is
-// exactly when the user goes looking for it.
-func (m tuiModel) logLines(width int) []string {
-	lines := []string{sectionLabelStyle.Render("LOG")}
-	if len(m.log) == 0 {
-		return append(lines, unknownStyle.Render("nothing yet"))
-	}
-	for _, entry := range m.log {
-		icon, style := statusIcon(entry.kind)
-		lines = append(lines, style.Render(icon)+" "+statusInfoStyle.Render(truncate(entry.text, max(width-2, 4))))
-	}
-	return lines
-}
-
-func (m tuiModel) bottomBarView(frame layout) string {
-	right := renderHelp([]helpEntry{{"q", "quit"}})
-	if m.mode == tuiList && !m.searching {
-		right = renderHelp([]helpEntry{{"/", "search"}, {"?", "keys"}, {"q", "quit"}})
-	}
-	left := renderHelpFit(m.helpEntries(), max(frame.width-lipgloss.Width(right)-2, 8))
-	return spread(left, right, frame.width)
-}
+// ---- boxes ----------------------------------------------------------------
 
 // modalPadding is what modalStyle's own padding takes off the width handed to a
 // content builder: lipgloss counts padding inside the width it is given, so a
@@ -558,24 +708,29 @@ const modalPadding = 4
 
 const (
 	// modalInset is what a box gives back to the frame it is centred over,
-	// rather than what it takes: the cockpit behind a box is the context the
+	// rather than what it takes: the board behind a box is the context the
 	// question was asked from, and a box reaching the rules on both sides hides
 	// it. Everything else is the box's, so a wider terminal grows the box until
 	// it meets its own ceiling.
-	modalInset = 8
+	modalInset = 6
 	// modalMinWidth is the narrowest a box is drawn at. Below it the terminal is
 	// narrower than the box, which centerBox handles by pinning it to the left
 	// edge rather than by shrinking it further.
 	modalMinWidth = 32
-	// promptModalWidth caps the boxes that ask one question. They grow with the
-	// terminal like every other box, but only so far: a label and the value
-	// beside it read worse spread across an ultrawide than they do in a column,
-	// and none of them has more to say when given more room.
-	promptModalWidth = 88
+	// The ceilings each box grows to. A label and the value beside it read
+	// worse spread across an ultrawide than they do in a column, so the boxes
+	// that ask one question stop soonest; the ones with a list and a
+	// conversation side by side go furthest.
+	promptModalWidth  = 88
+	editorModalWidth  = 92
+	argsModalWidth    = 104
+	paletteModalWidth = 120
+	wizardModalWidth  = 124
+	shareModalWidth   = 124
 	// modalChromeRows is what a box spends on itself around its body: the
-	// border, the heading and the blank under it, the hint at the foot, and the
-	// status line with its own blank. A body sized past what is left loses its
-	// last rows off the bottom of the frame.
+	// border, the heading and the blank under it, the key line at the foot,
+	// and the status line with its own blank. A body sized past what is left
+	// loses its last rows off the bottom of the frame.
 	modalChromeRows = 10
 )
 
@@ -592,6 +747,25 @@ func modalRows(frame layout) int {
 	return max(frame.height-modalChromeRows, 4)
 }
 
+// modalCeiling is the width each mode's box grows to.
+func modalCeiling(mode tuiMode) int {
+	switch mode {
+	case tuiRecent:
+		return pickerModalWidth
+	case tuiHandoff, tuiHandoffTo, tuiHandoffBrief:
+		return wizardModalWidth
+	case tuiShare:
+		return shareModalWidth
+	case tuiPalette:
+		return paletteModalWidth
+	case tuiParams:
+		return argsModalWidth
+	case tuiForm:
+		return editorModalWidth
+	}
+	return promptModalWidth
+}
+
 // modalView is what the cockpit is covered with. Every mode but the list is a
 // box: the frame behind it stays put, so answering a prompt never costs the
 // context that prompted it.
@@ -601,13 +775,7 @@ func modalRows(frame layout) int {
 // answer to what was just typed, and a panel it might be covering is the wrong
 // place to answer from.
 func (m tuiModel) modalView(frame layout) string {
-	width := modalWidth(frame, promptModalWidth)
-	switch m.mode {
-	case tuiHelp:
-		width = modalWidth(frame, helpModalWidth)
-	case tuiRecent, tuiHandoff, tuiShareItems, tuiHandoffBrief:
-		width = modalWidth(frame, pickerModalWidth)
-	}
+	width := modalWidth(frame, modalCeiling(m.mode))
 	// The boxes that show a conversation or a list are handed the whole height
 	// the frame has left and fill it, whether or not what they are showing needs
 	// it. They are the boxes whose content changes under the cursor, and a box
@@ -620,38 +788,37 @@ func (m tuiModel) modalView(frame layout) string {
 	if status != "" && fullHeightModal(m.mode) {
 		rows = max(rows-statusRows, minBlockRows)
 	}
+	inner := max(width-modalPadding, 8)
 	content, style := []string(nil), modalStyle
 	switch m.mode {
 	case tuiForm:
-		content = m.formContent()
+		content = m.formContent(inner)
 	case tuiFolder:
-		content = m.folderContent()
+		content = m.folderContent(inner)
 	case tuiParams:
-		content = m.paramsContent(width, rows)
+		content = m.paramsContent(inner, rows)
 	case tuiClone:
-		content = m.cloneContent(width)
-	case tuiShareFrom:
-		content = m.shareFromPicker(width)
-	case tuiShareItems:
-		content = m.shareItemsPicker(width, rows)
+		content = m.cloneContent(inner)
+	case tuiShare:
+		content = m.shareContent(inner, rows)
 	case tuiHijack:
-		content = m.confirmContent(width)
+		content = m.confirmContent(inner)
 	case tuiRecent:
-		content = m.recentPicker(width, rows)
+		content = m.recentPicker(inner, rows)
 	case tuiHandoff:
-		content = m.handoffPicker(width, rows)
+		content = m.handoffPicker(inner, rows)
 	case tuiHandoffTo:
-		content = m.handoffToPicker(width)
+		content = m.handoffToContent(inner, rows)
 	case tuiHandoffBrief:
-		content = m.handoffBriefContent(width, rows)
+		content = m.handoffBriefContent(inner, rows)
 	case tuiConfirmInstall:
-		content = m.installContent(width)
+		content = m.installContent(inner)
 	case tuiConfirmSelfUpdate:
-		content = m.selfUpdateContent(width)
-	case tuiHelp:
-		content = m.helpPane(width)
+		content = m.selfUpdateContent(inner)
+	case tuiPalette:
+		content = m.paletteContent(inner)
 	case tuiConfirmDelete, tuiConfirmKill:
-		content, style = m.confirmContent(width), dangerPanelStyle
+		content, style = m.confirmContent(inner), dangerPanelStyle
 	}
 	if len(content) == 0 {
 		return ""
@@ -666,6 +833,10 @@ func (m tuiModel) modalView(frame layout) string {
 // separates it from the hint above.
 const statusRows = 2
 
+// minBlockRows is the least a list or a conversation is cut to and still says
+// something: its heading and one line under it.
+const minBlockRows = 2
+
 // statusLine is the box's own report of how the last keypress landed, or
 // nothing when there is none to make.
 func (m tuiModel) statusLine(width int) string {
@@ -677,11 +848,11 @@ func (m tuiModel) statusLine(width int) string {
 }
 
 // fullHeightModal names the boxes that draw at the frame's height rather than
-// at their content's. They are the ones handed rows by modalView: a list with a
-// conversation read out beside it, and the brief that ends a handoff.
+// at their content's: a list with a conversation read out beside it, and the
+// steps of a handoff.
 func fullHeightModal(mode tuiMode) bool {
 	switch mode {
-	case tuiRecent, tuiHandoff, tuiShareItems, tuiHandoffBrief:
+	case tuiRecent, tuiHandoff, tuiHandoffTo, tuiShare, tuiHandoffBrief:
 		return true
 	}
 	return false
