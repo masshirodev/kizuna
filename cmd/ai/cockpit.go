@@ -375,7 +375,7 @@ func (m tuiModel) recentLines(width int) []string {
 		return append(lines, unknownStyle.Render(m.pending("no recorded sessions")))
 	}
 	for _, record := range m.recent {
-		lines = append(lines, m.recentRow(pen{}, record, width))
+		lines = append(lines, m.recentRow(pen{}, record, width, false))
 	}
 	return append(lines, dimStyle.Render("press ")+helpKeyStyle.Render("R")+dimStyle.Render(" to resume, ")+
 		helpKeyStyle.Render("H")+dimStyle.Render(" to hand over"))
@@ -383,10 +383,33 @@ func (m tuiModel) recentLines(width int) []string {
 
 // recentRow lays one recorded conversation out as when, what, and where. The
 // panel and the resume picker share it, so the row a key is pressed on is
-// exactly the row that was read.
-func (m tuiModel) recentRow(ink pen, record recordedSession, width int) string {
-	folderWidth := min(max(width/3, 10), 24)
-	cell := max(width-recentTimeWidth-folderWidth-2, 8)
+// exactly the row that was read. showProfile adds the account the session
+// belongs to, which the picker needs once it can list every profile at once;
+// the id is shown when the row is wide enough to carry it, and in full in the
+// preview beside the list.
+func (m tuiModel) recentRow(ink pen, record recordedSession, width int, showProfile bool) string {
+	prefix := ink.render(dimStyle, pad(formatWhen(m.clock(), record.activity()), recentTimeWidth))
+	if showProfile {
+		name := record.profile
+		if name == "" {
+			if profile, ok := m.profileForRecord(record); ok {
+				name = profile.Name
+			}
+		}
+		if name == "" {
+			name = "?"
+		}
+		prefix += " " + ink.render(providerStyle(m.providerOf(name)), pad(truncate(name, recentProfileWidth), recentProfileWidth))
+	}
+	folderWidth := min(max(width/4, 8), 20)
+	idWidth := 0
+	if width >= recentIDMinWidth {
+		idWidth = recentIDWidth
+	}
+	trailing := ink.render(dimStyle, pad(truncate(shortenHome(record.folder), folderWidth), folderWidth))
+	if idWidth > 0 {
+		trailing += " " + ink.render(dimStyle, pad(truncate(record.session.id, idWidth), idWidth))
+	}
 	title, style := record.session.title, fieldValueStyle
 	if title == "" {
 		title, style = "untitled session", unknownStyle
@@ -398,17 +421,24 @@ func (m tuiModel) recentRow(ink pen, record recordedSession, width int) string {
 	if link, passed := m.lineage[record.session.id]; passed && record.session.id != "" {
 		marker = " → " + link.TargetProfile
 	}
-	titleWidth := max(cell-lipgloss.Width(marker), 6)
-	return ink.render(dimStyle, pad(formatWhen(m.clock(), record.when), recentTimeWidth)) +
-		ink.render(dimStyle, " ") +
-		ink.render(style, truncate(title, titleWidth)) +
-		ink.render(liveStyle, marker) +
-		ink.render(dimStyle, strings.Repeat(" ", max(cell-lipgloss.Width(truncate(title, titleWidth))-lipgloss.Width(marker), 0))) +
-		ink.render(dimStyle, " ") +
-		ink.render(dimStyle, pad(truncate(shortenHome(record.folder), folderWidth), folderWidth))
+	cell := max(width-lipgloss.Width(prefix)-lipgloss.Width(trailing)-2, 8)
+	shown := truncate(title, max(cell-lipgloss.Width(marker), 6))
+	return prefix + " " + ink.render(style, shown) + ink.render(liveStyle, marker) +
+		ink.render(dimStyle, strings.Repeat(" ", max(cell-lipgloss.Width(shown)-lipgloss.Width(marker), 0))) +
+		" " + trailing
 }
 
-const recentTimeWidth = 6
+const (
+	recentTimeWidth = 6
+	// recentProfileWidth is the account column the picker adds when it lists
+	// every profile: wide enough to tell a name apart by its head, narrow enough
+	// not to crowd the title.
+	recentProfileWidth = 12
+	// recentIDWidth is the conversation-id column, drawn only when the row is
+	// wide enough for it to sit beside the folder without squeezing the title.
+	recentIDWidth    = 10
+	recentIDMinWidth = 58
+)
 
 // formatWhen dates a past session in the shortest form that still separates it
 // from the others on screen: a clock time today, a word yesterday, a date

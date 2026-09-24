@@ -696,6 +696,21 @@ instead — Codex's IDE integration leads with your open tabs and labels the par
 you typed, so skipping the message would lose the prompt with it. `R` turns that panel
 into a picker and resumes the row you choose.
 
+**The list is ordered by the last message, not by when each session began.** A
+conversation opened three days ago and answered a minute ago belongs at the top,
+and dating the row by its start buried it under everything started since. For
+Claude and Codex the file is appended to on every turn, so its modification time
+is the last thing said; OpenCode keeps the same fact in its `time_updated`
+column. A row therefore shows when the session was last active, and a store
+without that column (an older OpenCode) still lists, dated by when it began.
+
+**Claude's subagent transcripts are not listed.** They live under a `subagents/`
+folder beside their parent conversation and are written every time a subagent
+runs, so a session that delegated leaves a dozen recent-looking files behind.
+They are not conversations that can be resumed, and left in they were most of
+the list after any session that used them.
+
+
 Use the arrow keys or `j`/`k` to select a profile:
 
 - Enter runs the selected profile.
@@ -780,7 +795,9 @@ account on that brief in the same folder.
 
 Which session is leaving is chosen from the same two-pane picker `R` uses (see
 [The picker is two panes](#the-picker-is-two-panes)), so the conversation about
-to be reduced to a brief is readable before it is.
+to be reduced to a brief is readable before it is — and searchable, and
+switchable to every account. A handoff started from the all-profiles mode is
+built from the account that recorded the chosen row, and offered to the others.
 
 Nothing is copied into either CLI's state directory. The conversation stays
 where it was recorded; what moves is a markdown file under
@@ -880,6 +897,25 @@ conversation that continues past what fits ends in `…`. The opening rather tha
 the tail, because what a session was for is settled in its first exchanges,
 while reaching the tail of a six-megabyte transcript means reading all of it.
 
+**No single turn may spend the whole pane on itself.** The read also caps each
+turn at a few rows, because a session opened with a pasted brief or a batch
+prompt has one enormous first message — and uncapped it filled every row, so the
+pane showed one message instead of a conversation. A turn the pane cuts ends in
+an ellipsis; the turns after it are what tell one session from another.
+
+Under the title the pane names the account and the **conversation id** in full —
+the id `ai <profile> resume <id>` takes, which was previously nowhere to read —
+and dates the session by its last activity, the same fact the list is ordered by.
+
+`/` searches the list by title, folder, account, or id, and `a` switches between
+the selected account's sessions and every account's. The search matches what a
+row does not show as well as what it does, so a session can be found by a word
+from its title, the folder it ran in, or the id of a conversation whose row has
+scrolled away. Enter keeps the filter and hands the keys back, matching the
+profile list's own search; Escape clears it. In the all-profiles mode each row
+also names the account that recorded it, and it is reopened under that account —
+a session id only exists inside the isolated state directory that recorded it.
+
 The read happens off the keypress, so moving the cursor never waits on the disk;
 the pane says `reading the transcript…` until it lands. A row already read is
 shown from a cache that lives as long as the picker, so moving up and down a
@@ -896,9 +932,9 @@ modal grows in width with the window up to a ceiling of its own — the pickers 
 the widest, the help pane next, and the boxes that ask one question stop soonest,
 since a label and the value beside it read worse spread across an ultrawide than
 they do in a column. The width a wide terminal adds past that goes to the preview
-rather than the list: a session row is a time, a title and a folder, and beyond
-the width those need, more columns only pad the gaps between them, while the
-preview turns every extra column into a sentence that fits on one line.
+rather than the list: a session row is a time, a title, a folder and the id, and
+beyond the width those need, more columns only pad the gaps between them, while
+the preview turns every extra column into a sentence that fits on one line.
 
 Height is the frame's, and it does not move. The pickers, the item list of a
 share, and the handoff confirmation are drawn at the full height the frame allows
@@ -920,10 +956,11 @@ the folder it was started in. The panel has read every folder the account has
 worked in, so a conversation from another project is one keypress away instead
 of a `cd` away.
 
-The list is always the selected profile's own, and it is reopened under that
-profile's environment. One account cannot resume another's conversation: a
-session id only exists inside the isolated state directory that recorded it, so
-the same id under a different profile finds nothing.
+One account cannot resume another's conversation: a session id only exists
+inside the isolated state directory that recorded it, so the same id under a
+different profile finds nothing. Switching the picker to all profiles does not
+cross that line — it lists other accounts' sessions and reopens each one under
+the account that recorded it, which is the one the row was read from.
 
 **What `RECENT SESSIONS` reads is per provider.** Codex and Claude Code keep a
 transcript file per conversation, which is what gets parsed for a title.

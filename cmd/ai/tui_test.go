@@ -1327,9 +1327,9 @@ func TestPickerKeepsItsHeightAcrossRows(t *testing.T) {
 	width, rows := modalWidth(frame, pickerModalWidth), modalRows(frame)
 
 	m.record, m.preview = 0, sessionPreview{session: "aaa", messages: []handoffMessage{{fromUser: true, text: "rename it"}}}
-	short := m.pickerBody(testProfiles()[1], width, rows)
+	short := m.pickerBody(width, rows)
 	m.record, m.preview = 1, sessionPreview{session: "bbb", messages: longTestConversation(40)}
-	long := m.pickerBody(testProfiles()[1], width, rows)
+	long := m.pickerBody(width, rows)
 
 	if len(short) != rows || len(long) != rows {
 		t.Fatalf("picker body is %d rows on a short conversation and %d on a long one, want %d for both",
@@ -1370,4 +1370,128 @@ func longTestConversation(turns int) []handoffMessage {
 		})
 	}
 	return messages
+}
+
+// pickerKey routes one key through the resume picker, with the named special
+// keys mapped to their real messages so a test can type a query rather than a
+// sequence of runes.
+func pickerKey(t *testing.T, m tuiModel, key string) tuiModel {
+	t.Helper()
+	var msg tea.KeyMsg
+	switch key {
+	case "enter":
+		msg = tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		msg = tea.KeyMsg{Type: tea.KeyEsc}
+	case "up":
+		msg = tea.KeyMsg{Type: tea.KeyUp}
+	case "down":
+		msg = tea.KeyMsg{Type: tea.KeyDown}
+	case "backspace":
+		msg = tea.KeyMsg{Type: tea.KeyBackspace}
+	default:
+		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+	}
+	updated, _ := m.updateRecent(msg)
+	return updated.(tuiModel)
+}
+
+// The picker's own search narrows by what a row says and by what it does not:
+// the title, the folder, the account, and the conversation id.
+func TestResumePickerSearchesTheRecordedSessions(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m.recent = recentTestSessions(t.TempDir())
+	m.mode = tuiRecent
+
+	m = pickerKey(t, m, "/")
+	for _, r := range "status" {
+		m = pickerKey(t, m, string(r))
+	}
+	if got := len(m.visibleRecent()); got != 1 {
+		t.Fatalf("filter %q matched %d rows, want 1", m.recentFilter, got)
+	}
+	view := m.View()
+	if !strings.Contains(view, "Server status card") || strings.Contains(view, "Edit contacts") {
+		t.Fatalf("the search left the wrong rows:\n%s", view)
+	}
+	// Enter keeps the filter and hands the keys back, matching the profile
+	// list's own search, rather than resuming the row.
+	m = pickerKey(t, m, "enter")
+	if m.recentSearching || m.mode != tuiRecent {
+		t.Fatalf("enter left the picker in mode %v, searching=%v", m.mode, m.recentSearching)
+	}
+	// Escape clears it and brings the whole list back.
+	m = pickerKey(t, m, "/")
+	m = pickerKey(t, m, "esc")
+	if m.recentFilter != "" || len(m.visibleRecent()) != 2 {
+		t.Fatalf("escape left filter %q over %d rows", m.recentFilter, len(m.visibleRecent()))
+	}
+}
+
+// Searching by the conversation id works even though the id is only shown in
+// the preview beside the list.
+func TestResumePickerSearchesByConversationID(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m.recent = recentTestSessions(t.TempDir())
+	m.mode = tuiRecent
+
+	m = pickerKey(t, m, "/")
+	m = pickerKey(t, m, "b")
+	m = pickerKey(t, m, "b")
+	m = pickerKey(t, m, "b")
+	if got := len(m.visibleRecent()); got != 1 || m.visibleRecent()[0].session.id != "bbb" {
+		t.Fatalf("filter matched %+v, want only bbb", m.visibleRecent())
+	}
+}
+
+// The pickers can be switched from the selected account to every account, and
+// each row then names the one that recorded it.
+func TestResumePickerTogglesToEveryProfile(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m.recent = recentTestSessions(t.TempDir())
+	m.recentAll = []recordedSession{
+		{session: instanceSession{id: "ccc", title: "Claude personal work"}, folder: "/work/hub", profile: "claude-personal"},
+	}
+	m.recentAllLoaded = true
+	m.mode = tuiRecent
+
+	m = pickerKey(t, m, "a")
+	if !m.pickerAll {
+		t.Fatal("a did not switch the picker to all profiles")
+	}
+	view := m.View()
+	for _, want := range []string{"all profiles", "Claude personal work", "claude-personal"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("the all-profiles picker is missing %q:\n%s", want, view)
+		}
+	}
+	m = pickerKey(t, m, "a")
+	if m.pickerAll || strings.Contains(m.View(), "Claude personal work") {
+		t.Fatal("the picker did not switch back to the selected profile")
+	}
+}
+
+// Rows carry the conversation id, and the preview names it in full, so the id
+// `ai <profile> resume <id>` takes can be read before it is needed.
+func TestResumePickerRowsCarryTheConversationID(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m.recent = recentTestSessions(t.TempDir())
+	m.mode = tuiRecent
+	view := m.View()
+	for _, want := range []string{"aaa", "bbb"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("the picker rows are missing the id %q:\n%s", want, view)
+		}
+	}
+	if !strings.Contains(view, "id aaa") {
+		t.Fatalf("the preview does not name the conversation id:\n%s", view)
+	}
 }

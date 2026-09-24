@@ -25,10 +25,21 @@ const (
 	// previewTurns is how many turns are read. It is more than fits in the pane
 	// at any terminal size the modal is drawn at, so the pane runs out of room
 	// before it runs out of conversation.
-	previewTurns = 16
-	// previewTurnRunes clips one turn. A pasted stack trace is a turn too, and
-	// wrapping the whole of it would push every later turn out of the pane.
+	previewTurns = 24
+	// previewTurnRunes clips one turn as it is read. A pasted stack trace is a
+	// turn too, and reading the whole of one would spend the read on a file that
+	// may be six megabytes.
 	previewTurnRunes = 600
+	// previewTurnRows caps how many rows one turn may take in the pane. Without
+	// it a single long opening message — a pasted brief, a batch prompt — spends
+	// every row the pane has on itself, and the pane shows one message instead
+	// of a conversation. Capping by rows rather than runes is what makes the
+	// bound hold however the message wraps.
+	previewTurnRows = 4
+	// briefTurnRows is the same cap for the handoff confirmation, which reads
+	// the end of the conversation rather than its opening. It is looser because
+	// the last messages are the ones the screen exists to show.
+	briefTurnRows = 6
 )
 
 // sessionPreview is one conversation read far enough to recognise. It names the
@@ -121,6 +132,7 @@ func (m tuiModel) previewLines(profile Profile, record recordedSession, width, r
 	lines = append(lines,
 		titleStyle.Render(truncate(title, width)),
 		dimStyle.Render(truncate(previewWhere(m.clock(), record), width)),
+		dimStyle.Render(truncate(previewIdentity(profile, record), width)),
 		"")
 
 	preview := m.preview
@@ -135,18 +147,31 @@ func (m tuiModel) previewLines(profile Profile, record recordedSession, width, r
 	return fitPreview(lines, rows)
 }
 
+// previewWhere dates a conversation by when it was last spoken in rather than
+// when it was opened, because that is the order the list is in and the two can
+// be days apart.
 func previewWhere(now time.Time, record recordedSession) string {
 	where := shortenHome(record.folder)
 	if where == "" {
 		where = "no folder recorded"
 	}
-	return formatWhen(now, record.when) + " · " + where
+	return formatWhen(now, record.activity()) + " · " + where
+}
+
+// previewIdentity names the account and the conversation id. The id is what
+// `ai <profile> resume <id>` takes, and there was previously nowhere to read it.
+func previewIdentity(profile Profile, record recordedSession) string {
+	identity := "id " + record.session.id
+	if profile.Name != "" {
+		identity = profile.Name + " · " + identity
+	}
+	return identity
 }
 
 // previewBody is the opening of a conversation, marked as going on past what
 // was read when it does.
 func previewBody(provider string, preview sessionPreview, width int) []string {
-	lines := conversationLines(provider, preview.messages, width)
+	lines := conversationLines(provider, preview.messages, width, previewTurnRows)
 	if preview.more {
 		lines = append(lines, "", previewCutMarker)
 	}
@@ -157,12 +182,16 @@ func previewBody(provider string, preview sessionPreview, width int) []string {
 // said, wrapped. Reading is what these panes are for, so the turns are
 // separated by a blank line rather than packed.
 //
+// turnRows caps how many rows one turn may take, so a single long message cannot
+// spend the whole pane on itself; a turn it cut ends in an ellipsis rather than
+// simply stopping. Zero means no cap.
+//
 // Both callers build the whole exchange here and cut it afterwards — the
 // picker's pane from the end, the handoff brief from the start, since one is
 // reading a conversation from its opening and the other is showing how it
 // ended. That way every route to running short of the conversation finishes at
 // the same marker rather than at a sentence that merely stops.
-func conversationLines(provider string, messages []handoffMessage, width int) []string {
+func conversationLines(provider string, messages []handoffMessage, width, turnRows int) []string {
 	var lines []string
 	for index, message := range messages {
 		if index > 0 {
@@ -177,8 +206,13 @@ func conversationLines(provider string, messages []handoffMessage, width int) []
 		if message.fromUser {
 			body = fieldValueStyle
 		}
-		for _, wrapped := range wrapText(message.text, width) {
-			lines = append(lines, body.Render(wrapped))
+		wrapped := wrapText(message.text, width)
+		if turnRows > 0 && len(wrapped) > turnRows {
+			wrapped = wrapped[:turnRows]
+			wrapped[len(wrapped)-1] += "…"
+		}
+		for _, line := range wrapped {
+			lines = append(lines, body.Render(line))
 		}
 	}
 	return lines

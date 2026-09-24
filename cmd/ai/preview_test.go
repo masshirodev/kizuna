@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestReadSessionPreviewReadsTheOpeningTurnsInOrder(t *testing.T) {
@@ -121,5 +122,48 @@ func TestPreviewLinesSayWhenTheTranscriptIsStillBeingRead(t *testing.T) {
 	pane := strings.Join(m.previewLines(Profile{Provider: "claude"}, record, 40, 8), "\n")
 	if !strings.Contains(pane, "reading the transcript") {
 		t.Fatalf("pane = %q, want it to say the read is still running", pane)
+	}
+}
+
+// A session opened with a pasted brief or a batch prompt has one enormous first
+// message. Uncapped it spends every row of the pane on itself and the pane shows
+// one message instead of a conversation.
+func TestPreviewPaneDoesNotLetOneLongMessageFillIt(t *testing.T) {
+	m := tuiModel{preview: sessionPreview{session: "sid", messages: []handoffMessage{
+		{fromUser: true, text: strings.Repeat("a wall of pasted text ", 300)},
+		{fromUser: false, text: "the recognisable answer"},
+	}}}
+	record := recordedSession{session: instanceSession{id: "sid", title: "Long opener"}, folder: "/work/hub"}
+	pane := strings.Join(m.previewLines(Profile{Provider: "claude"}, record, 40, 30), "\n")
+	if !strings.Contains(pane, "the recognisable answer") {
+		t.Fatalf("the second turn was pushed out by the first:\n%s", pane)
+	}
+	if !strings.Contains(pane, "…") {
+		t.Fatalf("the long turn was not marked as cut:\n%s", pane)
+	}
+}
+
+// The pane names the account and the conversation id, which is what
+// `ai <profile> resume <id>` takes and which was previously nowhere to read.
+func TestPreviewPaneShowsTheConversationIdentity(t *testing.T) {
+	m := tuiModel{preview: sessionPreview{session: "sid", messages: []handoffMessage{
+		{fromUser: true, text: "hi"},
+	}}}
+	record := recordedSession{session: instanceSession{id: "c87bbb48-4ae7", title: "A session"}, folder: "/work/hub"}
+	pane := strings.Join(m.previewLines(Profile{Name: "max", Provider: "claude"}, record, 60, 12), "\n")
+	if !strings.Contains(pane, "id c87bbb48-4ae7") || !strings.Contains(pane, "max") {
+		t.Fatalf("pane = %q, want the account and the conversation id", pane)
+	}
+}
+
+// A conversation is dated in the pane by its last activity, the same fact the
+// list is ordered by.
+func TestPreviewPaneDatesByLastActivity(t *testing.T) {
+	start := time.Date(2026, 9, 4, 10, 0, 0, 0, time.Local)
+	active := time.Date(2026, 9, 4, 12, 0, 0, 0, time.Local)
+	record := recordedSession{session: instanceSession{id: "sid", title: "A session"}, folder: "/work/hub", when: start, lastActive: active}
+	got := previewWhere(active, record)
+	if !strings.Contains(got, active.Format("15:04")) || strings.Contains(got, start.Format("15:04")) {
+		t.Fatalf("previewWhere = %q, want the last-activity time %s", got, active.Format("15:04"))
 	}
 }

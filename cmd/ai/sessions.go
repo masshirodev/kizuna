@@ -97,8 +97,8 @@ func matchClaudeSession(agents []claudeAgent, instance profileInstance) instance
 }
 
 // codexSessionSearchLimit caps how many recorded sessions are opened while
-// looking for the newest one in a folder. Rollout names sort by timestamp, so
-// the match is almost always in the first few.
+// looking for the newest one in a folder. The rollouts are ordered by when they
+// were last written, so the match is almost always in the first few.
 const codexSessionSearchLimit = 60
 
 // codexSessionInFolder finds the most recent Codex session recorded for a
@@ -113,7 +113,7 @@ func codexSessionInFolder(profile Profile, folder string) instanceSession {
 	if err != nil {
 		return instanceSession{}
 	}
-	rollouts := codexRollouts(filepath.Join(root, profile.Name, "codex", "sessions"))
+	rollouts := pathsByModTime(codexRollouts(filepath.Join(root, profile.Name, "codex", "sessions")))
 	for index, path := range rollouts {
 		if index >= codexSessionSearchLimit {
 			break
@@ -164,23 +164,50 @@ func profileNamed(profiles []Profile, name string) Profile {
 }
 
 // recordedSession is one conversation read back out of a provider's own log:
-// what it was about, where it ran, and when it started. It is what the recent
-// list is built from, and it is deliberately not instanceSession — a recorded
-// session need not still be running.
+// what it was about, where it ran, when it started, and when it was last
+// touched. It is what the recent list is built from, and it is deliberately not
+// instanceSession — a recorded session need not still be running.
 type recordedSession struct {
 	session instanceSession
 	folder  string
-	when    time.Time
+	// when is when the conversation began. It is what the handoff brief names
+	// as the point the work started from, and it never changes once read.
+	when time.Time
+	// lastActive is when the conversation was last written to, which is the
+	// message that actually decided the list's order. A session opened three
+	// days ago and answered a minute ago belongs at the top; ordering by when
+	// buried it under everything started since.
+	lastActive time.Time
+	// profile is the account that recorded the conversation. It is empty for a
+	// record read by a caller that already knows which profile it asked about,
+	// and set by the union reader so one picker can list several accounts at
+	// once and still reopen each row under the profile that owns it.
+	profile string
+}
+
+// activity is the time a conversation is ordered and dated by: when it was last
+// written to, falling back to when it began for a record whose file could not
+// be stat-ed.
+func (record recordedSession) activity() time.Time {
+	if !record.lastActive.IsZero() {
+		return record.lastActive
+	}
+	return record.when
 }
 
 // recentSessionLimit caps a profile's recent list. The panel shows a handful of
 // rows; reading more only to throw them away is work done on every refresh.
 const recentSessionLimit = 12
 
-// recentSessions lists what a profile has worked on lately, newest first. Both
-// providers keep their own transcript on disk, so this reads their logs rather
-// than asking either CLI: the answer has to arrive for five profiles at once,
-// and a subprocess per profile is not a refresh, it is a stall.
+// allSessionLimit caps the union list the pickers offer when they are switched
+// to every profile. It is wider than one profile's panel because it is a
+// deliberate search across accounts rather than a glance at the last few.
+const allSessionLimit = 80
+
+// recentSessions lists what a profile has worked on lately, newest activity
+// first. Both providers keep their own transcript on disk, so this reads their
+// logs rather than asking either CLI: the answer has to arrive for five profiles
+// at once, and a subprocess per profile is not a refresh, it is a stall.
 func recentSessions(profile Profile, limit int) []recordedSession {
 	if limit <= 0 {
 		limit = recentSessionLimit
@@ -193,10 +220,19 @@ func recentSessions(profile Profile, limit int) []recordedSession {
 			return nil
 		}
 		paths = codexRollouts(filepath.Join(root, profile.Name, "codex", "sessions"))
+		// A resumed Codex session is appended to the rollout it began in, so the
+		// file it was created as is no longer its rank. Ordering by the filename
+		// (which is the creation time) would read the wrong twelve and then sort
+		// them correctly but incompletely.
+		paths = pathsByModTime(paths)
 	case "claude":
 		paths = claudeTranscripts(profile)
 	case "opencode":
-		return opencodeSessions(profile, limit)
+		records := opencodeSessions(profile, limit)
+		for index := range records {
+			records[index].profile = profile.Name
+		}
+		return records
 	default:
 		return nil
 	}
@@ -214,10 +250,30 @@ func recentSessions(profile Profile, limit int) []recordedSession {
 			record, ok = readClaudeTranscript(path)
 		}
 		if ok {
+			record.profile = profile.Name
 			records = append(records, record)
 		}
 	}
-	sort.Slice(records, func(i, j int) bool { return records[i].when.After(records[j].when) })
+	sort.SliceStable(records, func(i, j int) bool { return records[i].activity().After(records[j].activity()) })
+	return records
+}
+
+// allRecentSessions reads every profile's recent list and returns one union,
+// newest activity first. The union is what the pickers list when they are
+// switched away from the selected profile; each record carries the account that
+// recorded it, so the row can be reopened under the right one.
+func allRecentSessions(profiles []Profile, limit int) []recordedSession {
+	if limit <= 0 {
+		limit = allSessionLimit
+	}
+	var records []recordedSession
+	for _, profile := range profiles {
+		records = append(records, recentSessions(profile, limit)...)
+	}
+	sort.SliceStable(records, func(i, j int) bool { return records[i].activity().After(records[j].activity()) })
+	if len(records) > limit {
+		records = records[:limit]
+	}
 	return records
 }
 
@@ -257,7 +313,7 @@ func opencodeSessions(profile Profile, limit int) []recordedSession {
 			records = append(records, record)
 		}
 	}
-	sort.Slice(records, func(i, j int) bool { return records[i].when.After(records[j].when) })
+	sort.SliceStable(records, func(i, j int) bool { return records[i].activity().After(records[j].activity()) })
 	if limit > 0 && len(records) > limit {
 		records = records[:limit]
 	}
@@ -291,6 +347,10 @@ func opencodeSessionDBs(profile Profile) []string {
 	return paths
 }
 
+// queryOpenCodeSessions reads a session store newest activity first. A store
+// written by an OpenCode old enough not to have time_updated still lists, read
+// from time_created instead — the panel is a convenience, and refusing to list
+// it would be a worse answer than dating it by when it began.
 func queryOpenCodeSessions(dbPath string, limit int) ([]recordedSession, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -298,8 +358,19 @@ func queryOpenCodeSessions(dbPath string, limit int) ([]recordedSession, error) 
 	}
 	defer db.Close()
 
-	query := "SELECT id, title, directory, time_created FROM session ORDER BY time_created DESC"
+	records, err := queryOpenCodeSessionRows(db, "time_updated", limit)
+	if err != nil {
+		return queryOpenCodeSessionRows(db, "time_created", limit)
+	}
+	return records, nil
+}
+
+// queryOpenCodeSessionRows runs the listing against one known timestamp column,
+// selected twice so a store without time_updated still gets a lastActive back.
+func queryOpenCodeSessionRows(db *sql.DB, column string, limit int) ([]recordedSession, error) {
+	query := "SELECT id, title, directory, time_created, " + column + " FROM session ORDER BY " + column + " DESC"
 	var rows *sql.Rows
+	var err error
 	if limit > 0 {
 		rows, err = db.Query(query+" LIMIT ?", limit)
 	} else {
@@ -313,22 +384,53 @@ func queryOpenCodeSessions(dbPath string, limit int) ([]recordedSession, error) 
 	var records []recordedSession
 	for rows.Next() {
 		var id, title, directory string
-		var createdMillis int64
-		if err := rows.Scan(&id, &title, &directory, &createdMillis); err != nil {
+		var createdMillis, updatedMillis int64
+		if err := rows.Scan(&id, &title, &directory, &createdMillis, &updatedMillis); err != nil {
 			continue
 		}
 		records = append(records, recordedSession{
-			session: instanceSession{id: id, title: title},
-			folder:  directory,
-			when:    time.UnixMilli(createdMillis),
+			session:    instanceSession{id: id, title: title},
+			folder:     directory,
+			when:       time.UnixMilli(createdMillis),
+			lastActive: time.UnixMilli(updatedMillis),
 		})
 	}
 	return records, rows.Err()
 }
 
+// pathsByModTime orders transcript paths by when they were last written to,
+// newest first. A path that cannot be stat-ed sorts last rather than dropping
+// out: the reader will fail to open it and skip it on its own terms.
+func pathsByModTime(paths []string) []string {
+	type stamped struct {
+		path string
+		mod  time.Time
+	}
+	stamps := make([]stamped, 0, len(paths))
+	for _, path := range paths {
+		when := time.Time{}
+		if info, err := os.Stat(path); err == nil {
+			when = info.ModTime()
+		}
+		stamps = append(stamps, stamped{path: path, mod: when})
+	}
+	sort.SliceStable(stamps, func(i, j int) bool { return stamps[i].mod.After(stamps[j].mod) })
+	ordered := make([]string, 0, len(stamps))
+	for _, stamp := range stamps {
+		ordered = append(ordered, stamp.path)
+	}
+	return ordered
+}
+
 // claudeTranscripts lists a profile's Claude conversation logs newest first.
 // Claude names them by session id rather than by time, so unlike the Codex
 // rollouts these have to be stat-ed to be ordered.
+//
+// Subagent transcripts are skipped. They live under a `subagents/` folder
+// beside their parent conversation and are written every time a subagent runs,
+// so a session that used them leaves a dozen recent-looking files behind — none
+// of which is a conversation that can be resumed. Left in, they were most of the
+// list after any session that delegated.
 func claudeTranscripts(profile Profile) []string {
 	root, err := profileRoot()
 	if err != nil {
@@ -344,6 +446,9 @@ func claudeTranscripts(profile Profile) []string {
 		if walkErr != nil || entry.IsDir() || filepath.Ext(path) != ".jsonl" {
 			return nil
 		}
+		if isSubagentTranscript(path) {
+			return nil
+		}
 		if info, err := entry.Info(); err == nil {
 			files = append(files, transcript{path: path, modTime: info.ModTime()})
 		}
@@ -357,6 +462,13 @@ func claudeTranscripts(profile Profile) []string {
 	return paths
 }
 
+// isSubagentTranscript reports whether a Claude transcript is a subagent's
+// rather than a conversation's. A subagent log sits directly under a
+// `subagents` directory.
+func isSubagentTranscript(path string) bool {
+	return filepath.Base(filepath.Dir(path)) == "subagents"
+}
+
 // readClaudeTranscript pulls one conversation out of a Claude log: where and
 // when it ran, and what it is called. Reading stops as soon as both are settled
 // rather than decoding a transcript that can run to megabytes of tool output.
@@ -368,6 +480,11 @@ func readClaudeTranscript(path string) (recordedSession, bool) {
 	defer file.Close()
 
 	record := recordedSession{session: instanceSession{id: claudeSessionID(path)}}
+	// The file is appended to on every turn, so its modification time is when
+	// the conversation was last spoken in — the fact the list is ordered by.
+	if info, err := file.Stat(); err == nil {
+		record.lastActive = info.ModTime()
+	}
 	found, named := false, false
 	// opening is what was first asked. It titles the row only if the log never
 	// names the conversation, so a session Claude has since named is not still
@@ -563,9 +680,9 @@ const (
 	maxTranscriptLine         = 16 * 1024 * 1024
 )
 
-// codexRollouts lists Codex session logs newest first. The timestamp is part of
-// the file name, so sorting the paths in reverse orders them by recency without
-// stat-ing every file.
+// codexRollouts lists Codex session logs by name, which carries the timestamp
+// the session began. Callers that care about last activity reorder the result;
+// this only avoids stat-ing every file to answer "which rollouts are there".
 func codexRollouts(sessionsDir string) []string {
 	var paths []string
 	_ = filepath.WalkDir(sessionsDir, func(path string, entry os.DirEntry, err error) error {
@@ -603,6 +720,11 @@ func readCodexRollout(path, folder string) (recordedSession, bool) {
 
 	decoder := json.NewDecoder(file)
 	var record recordedSession
+	// The rollout is appended to as the conversation goes on, so its
+	// modification time is when it was last spoken in.
+	if info, err := file.Stat(); err == nil {
+		record.lastActive = info.ModTime()
+	}
 	for lines := 0; lines < 40; lines++ {
 		var line codexRolloutLine
 		if err := decoder.Decode(&line); err != nil {
