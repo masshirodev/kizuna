@@ -70,7 +70,7 @@ func resumeSessionByID(profile Profile, id string, stdout, stderr io.Writer) err
 	if err != nil {
 		return err
 	}
-	return launch(profile, args, stdout, stderr)
+	return launch(profile, args, false, stdout, stderr)
 }
 
 // resumeRecordedSession reopens a conversation read back off disk, in the
@@ -93,7 +93,7 @@ func resumeRecordedSession(profile Profile, record recordedSession, stdout, stde
 	if err != nil {
 		return err
 	}
-	return launchInFolder(profile, profileRunArgs(profile, args), folder, stdout, stderr)
+	return launchInFolder(profile, profileRunArgs(profile, args, false), folder, stdout, stderr)
 }
 
 // launchInFolder runs a profile's command in an explicit folder. A resume
@@ -162,7 +162,7 @@ func runResumeFallback(name string) error {
 	}
 	// launch applies the defaults exactly once; passing the provider's resume
 	// arguments through it is what used to double them.
-	return launch(profile, args, os.Stdout, os.Stderr)
+	return launch(profile, args, false, os.Stdout, os.Stderr)
 }
 
 // resumeTUIModel builds the cockpit with the resume picker open on the named

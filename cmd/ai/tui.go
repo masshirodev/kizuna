@@ -646,7 +646,7 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		if hasSelection {
-			return m, m.execProfile(profile, profileRunArgs(profile, nil), false)
+			return m, m.execProfile(profile, profileRunArgs(profile, nil, false), false)
 		}
 	case "u":
 		if hasSelection {
@@ -807,7 +807,7 @@ func (m tuiModel) updateHijack(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.instances = nil
 		m.mode = tuiList
-		return m, m.execProfileIn(profile, profileRunArgs(profile, args), false, folder)
+		return m, m.execProfileIn(profile, profileRunArgs(profile, args, false), false, folder)
 	case "esc", "q", "n", "N":
 		m.instances = nil
 		m.mode = tuiList
@@ -853,7 +853,7 @@ func (m *tuiModel) openRecent() tea.Cmd {
 		m.setStatus(statusErr, err.Error())
 		return nil
 	}
-	return m.execProfile(profile, profileRunArgs(profile, args), false)
+	return m.execProfile(profile, profileRunArgs(profile, args, false), false)
 }
 
 // updateRecent resumes a conversation read back off disk. The id and the folder
@@ -919,7 +919,7 @@ func (m tuiModel) updateRecent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mode = tuiList
-		return m, m.execProfileIn(profile, profileRunArgs(profile, args), false, folder)
+		return m, m.execProfileIn(profile, profileRunArgs(profile, args, false), false, folder)
 	case "esc", "q":
 		m.mode = tuiList
 		m.clearStatus()
@@ -1293,7 +1293,7 @@ func (m tuiModel) launchHandoff() (tea.Model, tea.Cmd) {
 	m.lineage = handedOff(readLineage())
 	m.handoff = handoffDraft{}
 	m.mode = tuiList
-	return m, m.execProfileIn(target, profileRunArgs(target, args), false, folder)
+	return m, m.execProfileIn(target, profileRunArgs(target, args, false), false, folder)
 }
 
 // execEditor opens the brief in the user's editor. The handoff is the one place
@@ -1368,7 +1368,7 @@ func (m tuiModel) updateParams(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mode = tuiList
-		cmd := m.execProfile(profile, profileRunArgs(profile, args), false)
+		cmd := m.execProfile(profile, profileRunArgs(profile, args, false), false)
 		if cmd != nil && len(args) > 0 {
 			set := argumentSet{Args: args, Profile: profile.Name, Provider: profile.Provider, Used: m.clock()}
 			if _, err := updateArgumentHistory(func(history argumentHistory) argumentHistory {
