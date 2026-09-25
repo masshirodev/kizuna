@@ -110,17 +110,22 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "skill":
 		return skillCommand(args[1:], cfg, stdout)
 	case "run":
-		if len(args) < 2 {
-			return errors.New("usage: ai run <profile> [command arguments...]")
+		rest := args[1:]
+		plain := false
+		if len(rest) > 0 && isPlainFlag(rest[0]) {
+			plain, rest = true, rest[1:]
 		}
-		profile, err := resolveProfile(cfg, args[1])
+		if len(rest) < 1 {
+			return errors.New("usage: ai run [-p|--plain] <profile> [command arguments...]")
+		}
+		profile, err := resolveProfile(cfg, rest[0])
 		if err != nil {
 			return err
 		}
-		if _, isResume := parseResumeRequest(args[2:]); isResume {
-			return resumeProfile(profile, args[2:], stdout, stderr)
+		if _, isResume := parseResumeRequest(rest[1:]); isResume {
+			return resumeProfile(profile, rest[1:], stdout, stderr)
 		}
-		return launch(profile, args[2:], stdout, stderr)
+		return launch(profile, rest[1:], plain, stdout, stderr)
 	case "login":
 		if len(args) != 2 {
 			return errors.New("usage: ai login <profile>")
@@ -189,15 +194,23 @@ func run(args []string, stdout, stderr io.Writer) error {
 	default:
 		// A profile or app name is the most useful thing to do with a bare
 		// argument. Keep all named commands above reserved, so this shorthand
-		// cannot make an existing command ambiguous.
-		profile, err := resolveProfile(cfg, args[0])
+		// cannot make an existing command ambiguous. The plain flag may precede
+		// the profile, as it does after `run`.
+		rest, plain := args, false
+		if isPlainFlag(rest[0]) {
+			plain, rest = true, rest[1:]
+		}
+		if len(rest) == 0 {
+			return errors.New("usage: ai [-p|--plain] <profile> [command arguments...]")
+		}
+		profile, err := resolveProfile(cfg, rest[0])
 		if err != nil {
-			return fmt.Errorf("unknown command, profile, or app %q; try 'ai help'", args[0])
+			return fmt.Errorf("unknown command, profile, or app %q; try 'ai help'", rest[0])
 		}
-		if _, isResume := parseResumeRequest(args[1:]); isResume {
-			return resumeProfile(profile, args[1:], stdout, stderr)
+		if _, isResume := parseResumeRequest(rest[1:]); isResume {
+			return resumeProfile(profile, rest[1:], stdout, stderr)
 		}
-		return launch(profile, args[1:], stdout, stderr)
+		return launch(profile, rest[1:], plain, stdout, stderr)
 	}
 }
 
@@ -265,8 +278,8 @@ func profileCommand(args []string, cfg *Config, path string, stdout io.Writer) e
 	return nil
 }
 
-func launch(profile Profile, args []string, stdout, stderr io.Writer) error {
-	return launchProfileCommand(profile.Command, profileRunArgs(profile, args), profile, stdout, stderr)
+func launch(profile Profile, args []string, plain bool, stdout, stderr io.Writer) error {
+	return launchProfileCommand(profile.Command, profileRunArgs(profile, args, plain), profile, stdout, stderr)
 }
 
 func launchExclusive(profile Profile, args []string, stdout, stderr io.Writer) error {
@@ -285,10 +298,48 @@ func launchUpdate(profile Profile, stdout, stderr io.Writer) error {
 	return cmd.Run()
 }
 
-func profileRunArgs(profile Profile, args []string) []string {
-	result := make([]string, 0, len(profile.DefaultArgs)+len(args))
+// profileRunArgs places a profile's default arguments into a launch. They
+// configure the session the CLI is about to start, so they must follow the
+// subcommand that starts it: `opencode run --auto …`, not `opencode --auto run
+// …`, which the CLI rejects before it ever reaches the subcommand.
+//
+// When the first word that is not a flag names a subcommand this launcher knows
+// (see subcommands.go):
+//
+//   - a subcommand that starts a session takes the defaults right after it;
+//   - a subcommand that manages state — `opencode models`, `claude mcp` — takes
+//     none at all, because they would be foreign flags to it.
+//
+// With no such word — a bare interactive launch, only flags, or a prompt that
+// is not a subcommand — the defaults lead, as they always have.
+//
+// The plain flag drops the defaults entirely, so the caller's arguments are the
+// whole command line.
+func profileRunArgs(profile Profile, args []string, plain bool) []string {
+	provided := append([]string(nil), args...)
+	if plain || len(profile.DefaultArgs) == 0 {
+		return provided
+	}
+	index := subcommandIndex(provided)
+	if index < 0 {
+		return append(append([]string(nil), profile.DefaultArgs...), provided...)
+	}
+	known, takesDefaults := subcommandDisposition(profile.Provider, provided[index])
+	if !known {
+		return append(append([]string(nil), profile.DefaultArgs...), provided...)
+	}
+	if !takesDefaults {
+		return provided
+	}
+	result := make([]string, 0, len(provided)+len(profile.DefaultArgs))
+	result = append(result, provided[:index+1]...)
 	result = append(result, profile.DefaultArgs...)
-	return append(result, args...)
+	return append(result, provided[index+1:]...)
+}
+
+// isPlainFlag reports whether a word opens a launch with no default arguments.
+func isPlainFlag(arg string) bool {
+	return arg == "-p" || arg == "--plain"
 }
 
 // parseArguments accepts shell-style quoting for convenience in the TUI, but
@@ -958,6 +1009,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  ai self-update                          rebuild from ~/.config/ai/repo, reopen")
 	fmt.Fprintln(w, "  ai run <profile> [arguments...]")
 	fmt.Fprintln(w, "  ai <profile> [arguments...]             shorthand for ai run")
+	fmt.Fprintln(w, "  ai run -p <profile> [arguments...]      run with no default arguments")
+	fmt.Fprintln(w, "  ai -p <profile> [arguments...]          shorthand, same flag")
 	fmt.Fprintln(w, "  ai run <profile> resume [session-id]")
 	fmt.Fprintln(w, "  ai <profile> resume [session-id]        reopen a recent conversation")
 	fmt.Fprintln(w, "  ai env <profile>")

@@ -206,3 +206,24 @@ func TestLaunchInFolderRunsTheCommandThere(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A resume that goes through launch — the unknown-id fallback, and the
+// provider's own flag-form resume — applies the profile's defaults once, in the
+// place the ordinary launch puts them. The launcher used to pass them through
+// profileRunArgs and then through launch, which doubled them.
+func TestResumeLaunchAppliesDefaultsOnce(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	profile := Profile{
+		Name:        "ka",
+		Provider:    "claude",
+		Command:     "/bin/echo",
+		DefaultArgs: []string{"--permission-mode", "auto"},
+	}
+	var stdout, stderr strings.Builder
+	if err := launch(profile, []string{"--resume", "abc123"}, false, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "--permission-mode auto --resume abc123\n" {
+		t.Fatalf("resume launch = %q, want the defaults exactly once and in front", stdout.String())
+	}
+}

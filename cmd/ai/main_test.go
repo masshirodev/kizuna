@@ -51,6 +51,71 @@ func TestBareProfileInvocationUsesProfileAndArguments(t *testing.T) {
 	}
 }
 
+// The plain flag runs the profile's command with the arguments given and
+// nothing else, in both the `run` form and the shorthand, and it is a usage
+// error when no profile follows it.
+func TestPlainFlagDropsDefaultArguments(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path, err := configPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveConfig(path, Config{Profiles: []Profile{{
+		Name:        "opencode2",
+		Provider:    "opencode",
+		Command:     "/bin/echo",
+		DefaultArgs: []string{"--auto"},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, form := range [][]string{
+		{"run", "-p", "opencode2", "run", "x"},
+		{"-p", "opencode2", "run", "x"},
+		{"run", "--plain", "opencode2", "run", "x"},
+		{"--plain", "opencode2", "run", "x"},
+	} {
+		var stdout, stderr strings.Builder
+		if err := run(form, &stdout, &stderr); err != nil {
+			t.Fatalf("%v: %v", form, err)
+		}
+		if stdout.String() != "run x\n" {
+			t.Fatalf("%v output = %q, want only the arguments given", form, stdout.String())
+		}
+	}
+
+	for _, form := range [][]string{{"run", "-p"}, {"-p"}, {"run", "--plain"}, {"--plain"}} {
+		var stdout, stderr strings.Builder
+		if err := run(form, &stdout, &stderr); err == nil {
+			t.Fatalf("%v unexpectedly succeeded", form)
+		}
+	}
+}
+
+// Through the ordinary run path, the defaults land after the subcommand rather
+// than in front of it.
+func TestRunPlacesOpenCodeDefaultsAfterTheSubcommand(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path, err := configPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveConfig(path, Config{Profiles: []Profile{{
+		Name:        "opencode2",
+		Provider:    "opencode",
+		Command:     "/bin/echo",
+		DefaultArgs: []string{"--auto"},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+	if err := run([]string{"run", "opencode2", "run", "msg", "-m", "x"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "run --auto msg -m x\n" {
+		t.Fatalf("run output = %q, want defaults after the subcommand", stdout.String())
+	}
+}
+
 func TestUpdateCommandRunsProviderUpdater(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	path, err := configPath()
@@ -80,10 +145,43 @@ func TestAntigravityUsesAgyByDefault(t *testing.T) {
 	}
 }
 
-func TestProfileRunArgsPrependsDefaultsWithoutMutatingInputs(t *testing.T) {
-	profile := Profile{DefaultArgs: []string{"--model", "opus"}}
+func TestProfileRunArgsPlacesDefaultsBySubcommand(t *testing.T) {
+	openCode := Profile{Provider: "opencode", DefaultArgs: []string{"--auto"}}
+	claude := Profile{Provider: "claude", DefaultArgs: []string{"--permission-mode", "auto"}}
+	cases := []struct {
+		name    string
+		profile Profile
+		plain   bool
+		args    []string
+		want    []string
+	}{
+		{"opencode run takes defaults after itself", openCode, false, []string{"run", "msg", "-m", "x"}, []string{"run", "--auto", "msg", "-m", "x"}},
+		{"opencode models takes none", openCode, false, []string{"models", "opencode-go"}, []string{"models", "opencode-go"}},
+		{"opencode with no arguments", openCode, false, nil, []string{"--auto"}},
+		{"opencode prompt is not a subcommand", openCode, false, []string{"fix the bug"}, []string{"--auto", "fix the bug"}},
+		{"opencode leading flag keeps defaults first", openCode, false, []string{"--model", "x"}, []string{"--auto", "--model", "x"}},
+		{"opencode unknown word keeps defaults first", openCode, false, []string{"opencode-go"}, []string{"--auto", "opencode-go"}},
+		{"claude mcp takes none", claude, false, []string{"mcp", "list"}, []string{"mcp", "list"}},
+		{"claude with no arguments", claude, false, nil, []string{"--permission-mode", "auto"}},
+		{"claude prompt keeps defaults first", claude, false, []string{"explain this"}, []string{"--permission-mode", "auto", "explain this"}},
+		{"claude resume is the flag form, defaults still lead", claude, false, []string{"--resume", "abc"}, []string{"--permission-mode", "auto", "--resume", "abc"}},
+		{"plain drops defaults before a subcommand", openCode, true, []string{"run", "x"}, []string{"run", "x"}},
+		{"plain drops defaults with no subcommand", claude, true, []string{"--resume"}, []string{"--resume"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := profileRunArgs(tc.profile, tc.args, tc.plain)
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+				t.Fatalf("profileRunArgs = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestProfileRunArgsDoesNotMutateItsInputs(t *testing.T) {
+	profile := Profile{Provider: "claude", DefaultArgs: []string{"--model", "opus"}}
 	provided := []string{"--print", "hello"}
-	got := profileRunArgs(profile, provided)
+	got := profileRunArgs(profile, provided, false)
 	if strings.Join(got, "|") != "--model|opus|--print|hello" {
 		t.Fatalf("profileRunArgs = %v", got)
 	}

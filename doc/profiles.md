@@ -16,12 +16,32 @@ ai profile add deepseek opencode
 
 ## Default arguments and notes
 
-Each profile can also store default arguments. They are prepended to arguments
-provided at launch, but are not used for login or integration commands. Set
-them in the interactive profile editor; shell-style quotes group values with
-spaces without invoking a shell. The same editor accepts a short note for each
-profile. Arguments typed for a single launch with `p` in the TUI are appended
-after the stored defaults.
+Each profile can also store default arguments. They configure the session a CLI
+is about to start, so where they land depends on what starts it:
+
+- **After a subcommand that starts a session.** `opencode run` takes the same
+  session flags the bare TUI does, so a profile with `--auto` runs
+  `opencode run --auto "msg"`. Placed before the subcommand, as they once were,
+  opencode reads them as its own and prints its top-level help instead.
+- **Not at all for a subcommand that manages state.** `opencode models`,
+  `opencode auth`, and `claude mcp` take no session flags, so their defaults are
+  dropped rather than forced onto a command that would reject them.
+- **In front when there is no subcommand.** A bare interactive launch, a prompt
+  that is not a subcommand, or a run whose arguments are only flags keeps the
+  defaults first, exactly as before.
+
+`ai run -p <profile> [arguments...]` (or the shorthand `ai -p <profile>
+[arguments...]`) drops the defaults for that one launch: the CLI gets the
+arguments given and nothing else. The flag comes before the profile name, so it
+cannot collide with a provider's own `-p` after it (opencode's `auth login -p`).
+Everything else about the launch is unchanged — the environment, the run lock,
+the OpenCode instance copy, and the indicator.
+
+Default arguments are not used for login or integration commands. Set them in
+the interactive profile editor; shell-style quotes group values with spaces
+without invoking a shell. The same editor accepts a short note for each profile.
+Arguments typed for a single launch with `p` in the TUI are placed by the same
+rule against the stored defaults.
 
 The selected-profile panel shows its default arguments and note. In the profile
 editor, Enter or Tab advances through all fields; on the final field it saves.
