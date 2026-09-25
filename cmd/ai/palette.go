@@ -93,7 +93,7 @@ func (m tuiModel) paletteAccepts(action paletteAction) bool {
 
 func (m *tuiModel) openPalette() {
 	m.mode = tuiPalette
-	m.paletteFilter, m.paletteRow = "", 0
+	m.paletteFilter, m.paletteTail, m.paletteRow = "", 0, 0
 	m.clearStatus()
 }
 
@@ -133,17 +133,12 @@ func (m tuiModel) updatePalette(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.mode = tuiList
 		return m.updateList(pressedKey(matches[m.paletteRow].press))
-	case "backspace", "ctrl+h":
-		if runes := []rune(m.paletteFilter); len(runes) > 0 {
-			m.paletteFilter = string(runes[:len(runes)-1])
-		}
-	case "ctrl+u":
-		m.paletteFilter = ""
 	default:
-		if msg.Type != tea.KeyRunes && msg.Type != tea.KeySpace {
+		value, tail, edited := editLine(m.paletteFilter, m.paletteTail, msg)
+		if !edited {
 			return m, nil
 		}
-		m.paletteFilter += string(msg.Runes)
+		m.paletteFilter, m.paletteTail = value, tail
 	}
 	m.settlePaletteRow()
 	return m, nil
@@ -170,7 +165,7 @@ const (
 // groups in two columns — one when the box is too narrow for both.
 func (m tuiModel) paletteContent(width int) []string {
 	ink := selectedPen(true)
-	field := ink.render(helpKeyStyle.Bold(true), "› ") + ink.render(fieldValueStyle, m.paletteFilter) + cursorStyle.Render(" ")
+	field := ink.render(helpKeyStyle.Bold(true), "› ") + caretView(ink, fieldValueStyle, m.paletteFilter, m.paletteTail, max(width-3, 5))
 	if m.paletteFilter == "" {
 		field += ink.render(dimStyle, "  type to filter, or type a key and press ↵")
 	}

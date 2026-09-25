@@ -374,7 +374,7 @@ func (m tuiModel) boardHeader(c boardColumns, width int) string {
 	heading := sectionLabelStyle.Render("ACCOUNT")
 	switch {
 	case m.searching:
-		heading = helpKeyStyle.Render("/") + fieldValueStyle.Render(m.filter) + cursorStyle.Render(" ")
+		heading = helpKeyStyle.Render("/") + caretView(pen{}, fieldValueStyle, m.filter, m.filterTail, len([]rune(m.filter))+1)
 	case m.filter != "":
 		heading += "  " + helpKeyStyle.Render("/") + fieldValueStyle.Render(m.filter)
 	}

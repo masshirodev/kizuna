@@ -76,7 +76,7 @@ func (m tuiModel) scopeToggle() string {
 func (m tuiModel) searchCorner() string {
 	switch {
 	case m.recentSearching:
-		return helpKeyStyle.Render("/") + fieldValueStyle.Render(m.recentFilter) + cursorStyle.Render(" ")
+		return helpKeyStyle.Render("/") + caretView(pen{}, fieldValueStyle, m.recentFilter, m.recentTail, len([]rune(m.recentFilter))+1)
 	case m.recentFilter != "":
 		return helpKeyStyle.Render("/ ") + fieldValueStyle.Render(m.recentFilter) + dimStyle.Render("  esc / clears")
 	}
