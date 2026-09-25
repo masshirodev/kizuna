@@ -33,6 +33,9 @@ ai work                        # run it (same as: ai run work)
 ai                             # or open the TUI
 ```
 
+`ai run -p work [arguments...]` launches with only those arguments, skipping the
+profile's stored defaults. See [doc/running.md](doc/running.md#run).
+
 ## What it does
 
 - **Isolated accounts.** Any number of profiles per provider. Claude, Codex, and

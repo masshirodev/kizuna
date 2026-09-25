@@ -81,6 +81,25 @@ ai run antigravity-personal
 ai run opencode-go
 ```
 
+The profile's default arguments, if it has any, are placed according to what
+starts the CLI: after a subcommand that opens a session (`opencode run --auto
+"msg"`), dropped for a subcommand that manages state instead (`opencode models`,
+`claude mcp`), and in front when the launch has no subcommand at all. This keeps
+a session flag from landing before the subcommand, where opencode and claude
+read it as their own and print help instead. See
+[profiles.md](profiles.md#default-arguments-and-notes).
+
+To launch with the arguments given and no defaults at all, pass `-p` (or
+`--plain`) before the profile name:
+
+```sh
+ai run -p opencode-go models
+ai -p opencode-go
+```
+
+The flag belongs to `ai`, so it is read before the profile name and never
+confused with a provider's own `-p`.
+
 ## Running several at once
 
 Codex and Claude profiles can be launched concurrently from multiple terminals.
