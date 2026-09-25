@@ -237,8 +237,9 @@ rewrite the copy then does not make.
 ## Recent and pinned arguments
 
 The `p` prompt puts the field on top and, under it, the whole command it will
-produce — the profile's stored defaults first, then what was typed, because that
-is the order they are passed in. Under that it lists what it has been given
+produce — the profile's stored defaults placed by the same subcommand rule the
+launch uses, so it is plain where they land. Under that it lists what it has
+been given
 before: `PINNED` sets first, marked `◆`, in the order they were pinned, then the last five sets run under
 `RECENT`, newest first. Only a launch that actually started is recorded, and
 only when it carried arguments — a plain run is what Enter is for.

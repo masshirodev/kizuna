@@ -276,16 +276,16 @@ func (m tuiModel) instanceRows(width int) []string {
 // ---- arguments prompt -----------------------------------------------------
 
 // paramsContent is the field on top with the whole command it produces under
-// it — stored defaults first, so it is plain which way they combine — and the
-// sets there are to reuse below: pinned ones first, then the most recent.
+// it — the defaults placed the way the launch will place them, so the
+// subcommand rule is visible before anything runs — and the sets there are to
+// reuse below: pinned ones first, then the most recent.
 func (m tuiModel) paramsContent(width, rows int) []string {
 	profile, _ := m.selectedProfile()
 	ink := selectedPen(true)
 	field := ink.render(helpKeyStyle.Bold(true), "› ") + ink.render(fieldValueStyle, truncate(m.params, max(width-4, 4))) + cursorStyle.Render(" ")
 	field = padStyled(ink, field, width)
-	stored := formatArguments(append([]string{profile.Command}, profile.DefaultArgs...))
-	runs := sectionLabelStyle.Render("runs  ") + dimStyle.Render(stored+" ") + fieldValueStyle.Render(m.params) +
-		dimStyle.Render("   stored defaults first")
+	runs := sectionLabelStyle.Render("runs  ") + dimStyle.Render(m.commandPreview(profile)) +
+		dimStyle.Render("   defaults placed by subcommand")
 	lines := []string{
 		spread(boxTitle("run with arguments")+"   "+providerStyle(profile.Provider).Render(profile.Name),
 			dimStyle.Render("history is shared by every profile"), width),
@@ -298,6 +298,21 @@ func (m tuiModel) paramsContent(width, rows int) []string {
 	lines = append(lines, windowRows(list, cursor, max(rows-4, 4))...)
 	return append(lines, "", boxFooter(width, helpEntry{"esc", "cancel"},
 		helpEntry{"↑↓", "pick"}, helpEntry{"ctrl-p", "pin / unpin"}, helpEntry{"↵", "run"}))
+}
+
+// commandPreview is the command the pending launch will produce. While the
+// field is still being typed it may not parse; then it shows the words as they
+// stand after the stored defaults, which is the best guess available.
+func (m tuiModel) commandPreview(profile Profile) string {
+	command := []string{profile.Command}
+	if args, err := parseArguments(m.params); err == nil {
+		return formatArguments(append(command, profileRunArgs(profile, args, false)...))
+	}
+	line := formatArguments(append(command, profile.DefaultArgs...))
+	if m.params == "" {
+		return line
+	}
+	return line + " " + m.params
 }
 
 // argumentRows renders both sections and reports which line the highlight is
