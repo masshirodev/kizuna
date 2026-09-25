@@ -66,10 +66,11 @@ func (m tuiModel) formField(field int, label, value string, width int) string {
 	if active {
 		ink = selectedPen(true)
 	}
-	shown := " " + truncate(value, width-3)
-	well := ink.render(fieldValueStyle, shown)
+	var well string
 	if active {
-		well += cursorStyle.Render(" ")
+		well = ink.render(fieldValueStyle, " ") + caretView(ink, fieldValueStyle, value, m.form.tail, width-2)
+	} else {
+		well = ink.render(fieldValueStyle, " "+truncate(value, width-3))
 	}
 	if gap := width - lipgloss.Width(well); gap > 0 {
 		well += ink.render(lipgloss.NewStyle(), strings.Repeat(" ", gap))
@@ -141,9 +142,9 @@ func (m tuiModel) indicatorSummary() string {
 // ---- small prompts --------------------------------------------------------
 
 // promptField is a single-line input in the tinted well, with the cursor.
-func promptField(label, value string, width int) string {
+func promptField(label, value string, tail, width int) string {
 	ink := selectedPen(true)
-	well := ink.render(fieldValueStyle, " "+truncate(value, max(width-detailLabelWidth-3, 4))) + cursorStyle.Render(" ")
+	well := ink.render(fieldValueStyle, " ") + caretView(ink, fieldValueStyle, value, tail, max(width-detailLabelWidth-2, 5))
 	if gap := width - detailLabelWidth - lipgloss.Width(well); gap > 0 {
 		well += ink.render(lipgloss.NewStyle(), strings.Repeat(" ", gap))
 	}
@@ -154,7 +155,7 @@ func (m tuiModel) folderContent(width int) []string {
 	return []string{
 		boxTitle("change launch folder"),
 		"",
-		promptField("folder", m.folderPath, width),
+		promptField("folder", m.folderPath, m.folderTail, width),
 		"",
 		hintStyle.Render(truncate("Relative paths use the current launch folder. ~ is supported.", width)),
 		"",
@@ -177,7 +178,7 @@ func (m tuiModel) cloneContent(width int) []string {
 	return []string{
 		boxTitle("clone") + "   " + providerStyle(source.Provider).Render(source.Name),
 		"",
-		promptField("name", m.clone, width),
+		promptField("name", m.clone, m.cloneTail, width),
 		"",
 		confirmBodyStyle.Render(truncate("Copies its "+what+".", width)),
 		hintStyle.Render(truncate("Credentials do not come with it — the clone starts logged out.", width)),
@@ -282,7 +283,7 @@ func (m tuiModel) instanceRows(width int) []string {
 func (m tuiModel) paramsContent(width, rows int) []string {
 	profile, _ := m.selectedProfile()
 	ink := selectedPen(true)
-	field := ink.render(helpKeyStyle.Bold(true), "› ") + ink.render(fieldValueStyle, truncate(m.params, max(width-4, 4))) + cursorStyle.Render(" ")
+	field := ink.render(helpKeyStyle.Bold(true), "› ") + caretView(ink, fieldValueStyle, m.params, m.paramsTail, max(width-3, 5))
 	field = padStyled(ink, field, width)
 	runs := sectionLabelStyle.Render("runs  ") + dimStyle.Render(m.commandPreview(profile)) +
 		dimStyle.Render("   defaults placed by subcommand")

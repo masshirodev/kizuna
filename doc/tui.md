@@ -175,6 +175,47 @@ Use the arrow keys or `j`/`k` to select a profile. On the key bar:
 - `space` or `?` opens the palette.
 - `q` or Escape quits.
 
+### Typing in a field
+
+Every text field works the same way:
+
+- the board's `/` filter;
+- the recent-sessions filter;
+- the argument prompt;
+- the launch folder;
+- the profile editor;
+- the clone name;
+- the palette.
+
+Each field has a caret, and editing happens where it sits. A field filled in
+for you, such as an edited profile's name or a recalled argument set, opens
+with the caret at the end.
+
+| Key | Does |
+| --- | --- |
+| ← → (`Ctrl-B` `Ctrl-F`) | move one character |
+| Home End (`Ctrl-A` `Ctrl-E`) | jump to the start or the end |
+| `Alt-←` `Alt-→` (`Ctrl-←` `Ctrl-→`, `Alt-B` `Alt-F`) | jump a word |
+| Backspace, Delete (`Ctrl-D`) | delete before, or under, the caret |
+| `Ctrl-W` (`Alt-Backspace`) | delete the word before the caret |
+| `Ctrl-U`, `Ctrl-K` | delete to the start, or to the end |
+
+With the caret at the end, `Ctrl-U` clears the whole field, as it did before
+fields had a caret.
+
+**Keys that keep other meanings:**
+
+- On the profile editor's provider chips, ← → cycle the provider; that field
+  holds no text.
+- The filters and the clone name ignore a space, because no profile name holds
+  one.
+- In the argument prompt, moving the caret through a recalled set keeps it
+  recalled, so a pin still acts on it. Typing into it makes it a new set.
+
+The editor is `cmd/ai/lineedit.go`. A field stores its caret as the number of
+characters after it. Zero means the end, so code that fills a field never has
+to place the caret.
+
 ### The palette
 
 `space` (or `?`) opens every other action as a filterable palette, grouped by

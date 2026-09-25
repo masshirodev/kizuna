@@ -44,8 +44,11 @@ type profileForm struct {
 	defaultArgs string
 	notes       string
 	field       int
-	original    string
-	isNew       bool
+	// tail is the caret in the active field, counted back from its end
+	// (lineedit.go). Moving to another field puts it back at the end.
+	tail     int
+	original string
+	isNew    bool
 }
 
 type processFinishedMsg struct {
@@ -109,6 +112,9 @@ type tuiModel struct {
 	workingDir string
 	folderPath string
 	params     string
+	// folderTail and paramsTail are those fields' carets (lineedit.go).
+	folderTail int
+	paramsTail int
 	// arguments is what the argument prompt offers to reuse, and argumentRow is
 	// the row picked from it, or -1 while the text is being typed. argumentDraft is
 	// what was typed before a row was picked, so stepping back up to the field
@@ -132,6 +138,7 @@ type tuiModel struct {
 	recentAllLoaded bool
 	pickerAll       bool
 	recentFilter    string
+	recentTail      int
 	recentSearching bool
 	// preview is the conversation shown beside the picker list, and previews is
 	// what has already been read while this picker has been open. The cache is
@@ -150,11 +157,13 @@ type tuiModel struct {
 	// share is a copy of MCP servers or skills being set up between two of
 	// them. Both are kept on the model rather than passed between modes so an
 	// escape out of the middle of one leaves nothing half-built behind.
-	clone string
-	share shareDraft
+	clone     string
+	cloneTail int
+	share     shareDraft
 	// paletteFilter is what has been typed into the all-actions palette, and
 	// paletteRow the highlighted action among those it lets through.
 	paletteFilter string
+	paletteTail   int
 	paletteRow    int
 	autoSwap      bool
 	lineage       map[string]lineageLink
@@ -167,8 +176,9 @@ type tuiModel struct {
 	source  string
 	// filter narrows the accounts column; searching is whether the query is
 	// still being typed. The cursor indexes the filtered list, not profiles.
-	filter    string
-	searching bool
+	filter     string
+	filterTail int
+	searching  bool
 	// live, recent and activity are the cockpit's read-only panels. They are
 	// filled by commands so nothing that touches the disk runs on a keypress.
 	// loaded says whether the first read has landed, which is what separates
@@ -576,7 +586,7 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearStatus()
 	case "c":
 		m.mode = tuiFolder
-		m.folderPath = m.workingDir
+		m.folderPath, m.folderTail = m.workingDir, 0
 		m.clearStatus()
 	case "e":
 		if hasSelection {
@@ -725,17 +735,16 @@ func (m tuiModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor++
 		}
 		return m, nil
-	case "backspace", "ctrl+h":
-		if runes := []rune(m.filter); len(runes) > 0 {
-			m.filter = string(runes[:len(runes)-1])
-		}
-	case "ctrl+u":
-		m.filter = ""
 	default:
-		if msg.Type != tea.KeyRunes {
+		// A space is not part of any profile name, so the filter never took one.
+		if msg.Type == tea.KeySpace {
 			return m, nil
 		}
-		m.filter += string(msg.Runes)
+		value, tail, edited := editLine(m.filter, m.filterTail, msg)
+		if !edited {
+			return m, nil
+		}
+		m.filter, m.filterTail = value, tail
 	}
 	m.clampCursor()
 	return m, m.loadCockpitCmd()
@@ -950,17 +959,15 @@ func (m tuiModel) updateRecentSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.record++
 			return m, m.selectPreview()
 		}
-	case "backspace", "ctrl+h":
-		if runes := []rune(m.recentFilter); len(runes) > 0 {
-			m.recentFilter = string(runes[:len(runes)-1])
-		}
-	case "ctrl+u":
-		m.recentFilter = ""
 	default:
-		if msg.Type != tea.KeyRunes {
+		if msg.Type == tea.KeySpace {
 			return m, nil
 		}
-		m.recentFilter += string(msg.Runes)
+		value, tail, edited := editLine(m.recentFilter, m.recentTail, msg)
+		if !edited {
+			return m, nil
+		}
+		m.recentFilter, m.recentTail = value, tail
 	}
 	m.clampRecord()
 	return m, m.selectPreview()
@@ -1392,29 +1399,24 @@ func (m tuiModel) updateParams(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.argumentRow > 0 {
 			m.pickArgumentRow(m.argumentRow - 1)
 		} else if m.argumentRow == 0 {
-			m.argumentRow, m.params = -1, m.argumentDraft
+			m.argumentRow, m.params, m.paramsTail = -1, m.argumentDraft, 0
 		}
 		return m, nil
 	case "ctrl+p":
 		m.toggleArgumentPin()
 		return m, nil
-	case "backspace", "ctrl+h":
-		if runes := []rune(m.params); len(runes) > 0 {
-			m.params = string(runes[:len(runes)-1])
-		}
-		m.argumentRow = -1
-		return m, nil
-	case "ctrl+u":
-		m.params = ""
-		m.argumentRow = -1
+	}
+	value, tail, edited := editLine(m.params, m.paramsTail, msg)
+	if !edited {
 		return m, nil
 	}
-	if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
-		// Editing a recalled set makes it a new one, so the row it came from is
-		// no longer the thing a pin or the highlight would be about.
-		m.params += string(msg.Runes)
+	// Editing a recalled set makes it a new one, so the row it came from is no
+	// longer the thing a pin or the highlight would be about. Only moving the
+	// caret through it leaves the recall standing.
+	if value != m.params {
 		m.argumentRow = -1
 	}
+	m.params, m.paramsTail = value, tail
 	return m, nil
 }
 
@@ -1426,7 +1428,7 @@ func (m *tuiModel) pickArgumentRow(row int) {
 		return
 	}
 	m.argumentRow = row
-	m.params = formatArguments(entries[row].Args)
+	m.params, m.paramsTail = formatArguments(entries[row].Args), 0
 }
 
 // toggleArgumentPin pins or unpins the highlighted row, or, with no row
@@ -1549,17 +1551,9 @@ func (m tuiModel) updateFolder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = tuiList
 		m.setStatus(statusOK, "launch folder set to "+workingDir)
 		return m, nil
-	case "backspace", "ctrl+h":
-		if runes := []rune(m.folderPath); len(runes) > 0 {
-			m.folderPath = string(runes[:len(runes)-1])
-		}
-		return m, nil
-	case "ctrl+u":
-		m.folderPath = ""
-		return m, nil
 	}
-	if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
-		m.folderPath += string(msg.Runes)
+	if value, tail, edited := editLine(m.folderPath, m.folderTail, msg); edited {
+		m.folderPath, m.folderTail = value, tail
 	}
 	return m, nil
 }
@@ -1639,10 +1633,10 @@ func (m tuiModel) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = tuiList
 		return m, tea.Batch(loadUsageCmd(m.profiles), m.loadCockpitCmd())
 	case "tab", "down":
-		m.form.field = (m.form.field + 1) % formFields
+		m.form.field, m.form.tail = (m.form.field+1)%formFields, 0
 		return m, nil
 	case "shift+tab", "up":
-		m.form.field = (m.form.field + formFields - 1) % formFields
+		m.form.field, m.form.tail = (m.form.field+formFields-1)%formFields, 0
 		return m, nil
 	}
 	if m.form.field == formProviderField {
@@ -1654,19 +1648,9 @@ func (m tuiModel) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	switch msg.String() {
-	case "backspace", "ctrl+h":
-		value := m.formValue()
-		if runes := []rune(value); len(runes) > 0 {
-			m.setFormValue(string(runes[:len(runes)-1]))
-		}
-		return m, nil
-	case "ctrl+u":
-		m.setFormValue("")
-		return m, nil
-	}
-	if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
-		m.setFormValue(m.formValue() + string(msg.Runes))
+	if value, tail, edited := editLine(m.formValue(), m.form.tail, msg); edited {
+		m.setFormValue(value)
+		m.form.tail = tail
 	}
 	return m, nil
 }
@@ -2577,17 +2561,13 @@ func (m tuiModel) updateClone(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.mode = tuiList
 		return m, tea.Batch(loadUsageCmd(m.profiles), m.loadCockpitCmd())
-	case "backspace", "ctrl+h":
-		if runes := []rune(m.clone); len(runes) > 0 {
-			m.clone = string(runes[:len(runes)-1])
-		}
-		return m, nil
-	case "ctrl+u":
-		m.clone = ""
+	}
+	// A space is never part of a profile name, so the field never took one.
+	if msg.Type == tea.KeySpace {
 		return m, nil
 	}
-	if msg.Type == tea.KeyRunes {
-		m.clone += string(msg.Runes)
+	if value, tail, edited := editLine(m.clone, m.cloneTail, msg); edited {
+		m.clone, m.cloneTail = value, tail
 	}
 	return m, nil
 }

@@ -45,7 +45,8 @@ rule against the stored defaults.
 
 The selected-profile panel shows its default arguments and note. In the profile
 editor, Enter or Tab advances through all fields; on the final field it saves.
-Escape cancels and Ctrl-U clears the current field.
+Escape cancels. Each field edits at its caret: the arrows, Home and End move it,
+and Ctrl-U clears back to the start (see [Typing in a field](tui.md#typing-in-a-field)).
 
 ## Application profiles
 
