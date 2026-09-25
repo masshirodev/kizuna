@@ -285,10 +285,40 @@ func launchUpdate(profile Profile, stdout, stderr io.Writer) error {
 	return cmd.Run()
 }
 
+// profileRunArgs places a profile's default arguments into a launch. They
+// configure the session the CLI is about to start, so they must follow the
+// subcommand that starts it: `opencode run --auto …`, not `opencode --auto run
+// …`, which the CLI rejects before it ever reaches the subcommand.
+//
+// When the first word that is not a flag names a subcommand this launcher knows
+// (see subcommands.go):
+//
+//   - a subcommand that starts a session takes the defaults right after it;
+//   - a subcommand that manages state — `opencode models`, `claude mcp` — takes
+//     none at all, because they would be foreign flags to it.
+//
+// With no such word — a bare interactive launch, only flags, or a prompt that
+// is not a subcommand — the defaults lead, as they always have.
 func profileRunArgs(profile Profile, args []string) []string {
-	result := make([]string, 0, len(profile.DefaultArgs)+len(args))
+	provided := append([]string(nil), args...)
+	if len(profile.DefaultArgs) == 0 {
+		return provided
+	}
+	index := subcommandIndex(provided)
+	if index < 0 {
+		return append(append([]string(nil), profile.DefaultArgs...), provided...)
+	}
+	known, takesDefaults := subcommandDisposition(profile.Provider, provided[index])
+	if !known {
+		return append(append([]string(nil), profile.DefaultArgs...), provided...)
+	}
+	if !takesDefaults {
+		return provided
+	}
+	result := make([]string, 0, len(provided)+len(profile.DefaultArgs))
+	result = append(result, provided[:index+1]...)
 	result = append(result, profile.DefaultArgs...)
-	return append(result, args...)
+	return append(result, provided[index+1:]...)
 }
 
 // parseArguments accepts shell-style quoting for convenience in the TUI, but

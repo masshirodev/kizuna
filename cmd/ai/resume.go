@@ -160,7 +160,9 @@ func runResumeFallback(name string) error {
 	if err != nil {
 		return err
 	}
-	return launch(profile, profileRunArgs(profile, args), os.Stdout, os.Stderr)
+	// launch applies the defaults exactly once; passing the provider's resume
+	// arguments through it is what used to double them.
+	return launch(profile, args, os.Stdout, os.Stderr)
 }
 
 // resumeTUIModel builds the cockpit with the resume picker open on the named
