@@ -173,15 +173,20 @@ you are — `leaving`, `going to`, `brief`, `open`. `←` goes back a step, and
 2. **Going to** — the leaving account and how its conversation ended on the
    left; on the right the destinations, ranked, each with a gauge for the window
    that runs out first and a note saying which window that is (`limited by 7d`,
-   or `5h nearly out` when it is nearly spent). Accounts whose CLI cannot be
-   opened on a prompt are listed under `CAN'T TAKE A BRIEF` rather than left
-   out. A `WHAT MOVES` line says what goes and what stays.
+   or `5h nearly out` when it is nearly spent). An account whose CLI cannot be
+   opened on a prompt is still a destination, marked `by hand` in its row; it
+   takes the brief by clipboard instead (see below). A `WHAT MOVES` line says
+   what goes and what stays.
 3. **Brief** — the route with both accounts' figures, the conversation's title,
    and the brief as it was written beside how the conversation ended: what was
    asked (the first three, then a count), where it was left, and the repository
    (branch, files changed, `+`/`−` lines, the first few changed paths). The
    file's size and a rough token count sit beside its path.
-4. **Open** — `↵` on the brief step launches the destination on it.
+4. **Open** — `↵` on the brief step hands the brief over: it launches the
+   destination on it, or, when that CLI cannot be opened on a prompt, copies
+   the brief's text to the terminal's clipboard to paste into that CLI's own
+   conversation. `v` reads the full brief in `$PAGER` (default `less`) first,
+   which is also the way to select and copy it by hand.
 
 Nothing is copied into either CLI's state directory. The conversation stays
 where it was recorded; what moves is a markdown file under
@@ -252,7 +257,16 @@ Auto-swap does not watch a running session and switch mid-flight. While a CLI
 owns the terminal the launcher is not running, so it has nothing to watch with.
 
 `H` can hand off *from* Claude Code and Codex, which are the providers whose
-transcripts are read. It can hand off *to* Claude Code and Codex, which are the
-providers whose opening-prompt syntax is known. Another provider chosen as a
-destination is refused with the brief's path, rather than launched with the
-brief silently dropped.
+transcripts are read. It can hand off *to* any other account: Claude Code and
+Codex are opened on the brief directly, because their opening-prompt syntax is
+known, while every other provider — OpenCode, Antigravity — takes it by hand,
+with the brief's text put on the terminal's clipboard to paste.
+
+The clipboard is the terminal's own, reached with an OSC 52 escape rather than
+by shelling out to `xclip`, `wl-copy` or `pbcopy`: which of those exists is a
+fact about the machine, while the terminal is what the wizard is already talking
+to, and a paste into the incoming CLI is a terminal gesture. The escape travels
+back over SSH, and is wrapped for tmux when `$TMUX` is set. Because a terminal
+may ignore an OSC 52 without saying so, the status line names the brief's path
+beside the copy, and the file is written either way — it is the fallback, not a
+second copy.

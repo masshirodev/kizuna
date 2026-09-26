@@ -250,9 +250,16 @@ func (m tuiModel) handoffToContent(width, rows int) []string {
 		lines = append(lines, joinPanes(m.leavingLines(handoffLeftWidth, body), m.destinationLines(right, body), handoffLeftWidth, right, body)...)
 	}
 	source, _ := m.profileForRecord(m.handoff.source)
+	// A launched destination is started in the source folder; one handed over
+	// by hand is not started at all, so the folder is only named in the brief
+	// for the user to open it in.
+	folder := "same folder"
+	if m.handoff.target < len(m.handoff.destinations) && !opensOnPrompt(m.handoff.destinations[m.handoff.target].Provider) {
+		folder = "the folder is named in it"
+	}
 	moves := strings.Join([]string{
 		fieldValueStyle.Render("a brief"),
-		fieldValueStyle.Render("same folder"),
+		fieldValueStyle.Render(folder),
 		fieldValueStyle.Render("git state read fresh"),
 		fieldValueStyle.Render("the transcript stays with " + source.Name),
 	}, dimStyle.Render("  ·  "))
@@ -308,8 +315,9 @@ func (m tuiModel) windowFigures(profile Profile) string {
 }
 
 // destinationLines ranks where the work could go by whichever window runs out
-// first, each with its gauge and what is holding it back, and names the
-// accounts that cannot take a brief at all rather than leaving them out.
+// first, each with its gauge and what is holding it back. Every account is
+// listed and can be chosen; the ones that cannot be opened on a prompt are
+// marked in their row rather than named in a footer apart.
 func (m tuiModel) destinationLines(width, rows int) []string {
 	lines := []string{sectionLabelStyle.Render("GOING TO") + dimStyle.Render("   ranked by whichever window runs out first"), ""}
 	var list []string
@@ -324,17 +332,7 @@ func (m tuiModel) destinationLines(width, rows int) []string {
 		}
 		list = append(list, m.destinationRows(profile, selected, width)...)
 	}
-	blocked := m.cannotTakeBrief()
-	tail := 0
-	if len(blocked) > 0 {
-		tail = 4
-	}
-	lines = append(lines, windowRows(list, cursor+1, max(rows-2-tail, 2))...)
-	if len(blocked) > 0 {
-		lines = append(lines, "", sectionLabelStyle.Render("CAN'T TAKE A BRIEF"),
-			dimStyle.Render(truncate(strings.Join(blocked, " · "), width)),
-			dimStyle.Render("no known way to open these on a prompt"))
-	}
+	lines = append(lines, windowRows(list, cursor+1, max(rows-2, 2))...)
 	return lines
 }
 
@@ -357,6 +355,11 @@ func (m tuiModel) destinationRows(profile Profile, selected bool, width int) []s
 	}
 	line += ink.render(noteStyle, note)
 	detail := ink.render(dimStyle, "  "+windowDetail(m, "5h", usage.FiveHour)+"  ·  "+windowDetail(m, "7d", usage.Weekly))
+	if !opensOnPrompt(profile.Provider) {
+		// A destination that cannot be opened on a prompt is not left out —
+		// it is handed over by hand, and this is where that is said.
+		detail += ink.render(sectionLabelStyle, "  ·  by hand")
+	}
 	return []string{padStyled(ink, line, width), padStyled(ink, detail, width)}
 }
 
@@ -382,23 +385,6 @@ func windowDetail(m tuiModel, label string, window usageWindow) string {
 		detail += " " + reset
 	}
 	return detail
-}
-
-// cannotTakeBrief is every other account whose CLI cannot be started on a
-// prompt, so the list of destinations is visibly short of them rather than
-// silently.
-func (m tuiModel) cannotTakeBrief() []string {
-	source, _ := m.profileForRecord(m.handoff.source)
-	var names []string
-	for _, profile := range m.profiles {
-		if profile.Name == source.Name {
-			continue
-		}
-		if _, err := promptArgs(profile.Provider, ""); err != nil {
-			names = append(names, profile.Name)
-		}
-	}
-	return names
 }
 
 // ---- handoff: the brief ----------------------------------------------------
@@ -435,8 +421,14 @@ func (m tuiModel) handoffBriefContent(width, rows int) []string {
 		right := width - briefDocWidth - dividerWidth
 		lines = append(lines, joinPanes(m.briefLines(briefDocWidth), m.endedLines(right, body), briefDocWidth, right, body)...)
 	}
+	open := "open " + target.Name + " on the brief"
+	if !opensOnPrompt(target.Provider) {
+		// There is no way to start this CLI on a prompt, so the brief moves by
+		// clipboard: the same file, typed into the conversation by hand.
+		open = "copy the brief for " + target.Name
+	}
 	return append(lines, "", boxFooter(width, helpEntry{"esc", "keep the brief, stay"},
-		helpEntry{"↵", "open " + target.Name + " on the brief"}, helpEntry{"e", "edit the brief first"}, helpEntry{"←", "back"}))
+		helpEntry{"↵", open}, helpEntry{"v", "read the full brief"}, helpEntry{"e", "edit the brief first"}, helpEntry{"←", "back"}))
 }
 
 // briefPromptRows is how many of the asks the brief step lists before saying

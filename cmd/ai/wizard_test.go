@@ -87,8 +87,8 @@ func TestResumePickerHandsTheRowOff(t *testing.T) {
 }
 
 // Destinations name the window holding them back, and warn when it is nearly
-// spent; the accounts that cannot be opened on a brief are named rather than
-// silently missing.
+// spent; a provider that cannot be opened on a prompt is still listed, marked
+// as handed over by hand rather than named apart or dropped.
 func TestHandoffDestinationsSayWhatLimitsThem(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	profiles := append(testProfiles(), Profile{Name: "codex-max", Provider: "codex", Command: "codex"},
@@ -105,13 +105,50 @@ func TestHandoffDestinationsSayWhatLimitsThem(t *testing.T) {
 		destinations: handoffDestinations(profiles, source, m.usage),
 	}
 	view := m.View()
-	for _, want := range []string{"limited by 7d", "5h nearly out", "CAN'T TAKE A BRIEF", "gemini"} {
+	for _, want := range []string{"limited by 7d", "5h nearly out", "by hand", "gemini"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("the destinations are missing %q:\n%s", want, view)
 		}
 	}
+	if strings.Contains(view, "CAN'T TAKE A BRIEF") {
+		t.Fatalf("a destination was set apart instead of offered:\n%s", view)
+	}
 	if m.handoff.destinations[0].Name != "codex-max" {
 		t.Fatalf("destinations = %v, want the most headroom first", m.handoff.destinations)
+	}
+}
+
+// On a destination whose CLI cannot be opened on a prompt, the brief step says
+// the brief will be copied rather than that a process will be started.
+func TestBriefStepOffersToCopyForAManualDestination(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	profiles := append(testProfiles(), Profile{Name: "opencode-one", Provider: "opencode", Command: "opencode"})
+	m := wideModel(profiles)
+	m.mode = tuiHandoffBrief
+	source := profileNamed(profiles, "claude-personal")
+	m.handoff = handoffDraft{
+		source:       recordedSession{session: instanceSession{id: "aaa", title: "x"}, profile: source.Name},
+		destinations: handoffDestinations(profiles, source, nil),
+		prompts:      []string{"Do the thing"},
+		path:         "/tmp/handoffs/aaa.md",
+	}
+	// Point the target at the manual account.
+	for index, profile := range m.handoff.destinations {
+		if profile.Name == "opencode-one" {
+			m.handoff.target = index
+		}
+	}
+	if view := m.View(); !strings.Contains(view, "copy the brief for opencode-one") {
+		t.Fatalf("the brief step does not offer to copy:\n%s", view)
+	}
+	// A provider that can be opened still says so.
+	for index, profile := range m.handoff.destinations {
+		if profile.Name == "codex-work" {
+			m.handoff.target = index
+		}
+	}
+	if view := m.View(); !strings.Contains(view, "open codex-work on the brief") {
+		t.Fatalf("the brief step does not offer to open:\n%s", view)
 	}
 }
 
