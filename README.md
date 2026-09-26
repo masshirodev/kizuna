@@ -46,7 +46,8 @@ profile's stored defaults. See [doc/running.md](doc/running.md#run).
 - **Resume anything.** `R` reopens any recent conversation in the folder it ran
   in. `h` attaches to one that is still running.
 - **Hand off when quota runs out.** `H` turns a conversation into a short brief
-  and starts another account on it in the same folder.
+  and starts another account on it in the same folder — or copies the brief to
+  the clipboard for a provider that cannot be started on a prompt.
 - **Shared setup.** Clone a profile, or copy MCP servers and skills between
   profiles, even when they use different providers.
 - **Portable.** Export a profile as an `age`-encrypted bundle and import it

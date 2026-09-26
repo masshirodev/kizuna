@@ -428,13 +428,15 @@ func promptArgs(provider, prompt string) ([]string, error) {
 // this feature exists, so the account with the most of it left leads; profiles
 // whose quota is unknown sort last rather than first, because an unknown
 // remainder is not a good one.
+//
+// Every other profile is a candidate, including the ones whose CLI cannot be
+// opened on a prompt: those take the brief by hand instead (opensOnPrompt),
+// and leaving them out was what made an OpenCode or Antigravity account
+// unreachable from this wizard. The brief is written for all of them alike.
 func handoffDestinations(profiles []Profile, source Profile, usage map[string]usageRemaining) []Profile {
 	var candidates []Profile
 	for _, profile := range profiles {
 		if profile.Name == source.Name {
-			continue
-		}
-		if _, err := promptArgs(profile.Provider, ""); err != nil {
 			continue
 		}
 		candidates = append(candidates, profile)
@@ -443,6 +445,15 @@ func handoffDestinations(profiles []Profile, source Profile, usage map[string]us
 		return headroom(usage[candidates[i].Name]) > headroom(usage[candidates[j].Name])
 	})
 	return candidates
+}
+
+// opensOnPrompt reports whether a provider's CLI can be started on an opening
+// prompt. A provider that cannot is still a destination — the brief is written
+// for it and put on the clipboard to paste — but it is handed over by hand,
+// and the wizard words the open step differently because of it.
+func opensOnPrompt(provider string) bool {
+	_, err := promptArgs(provider, "")
+	return err == nil
 }
 
 // headroom scores an account by the window that will run out first. A weekly

@@ -1,11 +1,15 @@
 package main
 
 import (
+	"encoding/base64"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func writeClaudeSession(t *testing.T, root, profile, encoded, id string, lines ...string) {
@@ -106,11 +110,27 @@ func TestDestinationsAreRankedByTheTightestWindow(t *testing.T) {
 	for _, profile := range got {
 		names = append(names, profile.Name)
 	}
-	// The source is not a destination, and a provider that cannot be opened
-	// with a prompt is not offered at all.
-	want := []string{"roomy", "spent", "unknown"}
+	// The source is not a destination; every other account is, including the
+	// one whose provider cannot be opened on a prompt — it is handed over by
+	// clipboard, so it is offered rather than dropped.
+	want := []string{"roomy", "spent", "unknown", "cannot-open"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("destinations = %v, want %v", names, want)
+	}
+}
+
+// A provider is only a manual destination if its CLI really cannot take an
+// opening prompt; the ones that can are opened on the brief as before.
+func TestOnlyProvidersWithoutPromptSyntaxAreHandedOverByClipboard(t *testing.T) {
+	for _, provider := range []string{"claude", "codex"} {
+		if !opensOnPrompt(provider) {
+			t.Errorf("%s can be opened on a prompt but is treated as manual", provider)
+		}
+	}
+	for _, provider := range []string{"opencode", "antigravity", "deepseek"} {
+		if opensOnPrompt(provider) {
+			t.Errorf("%s cannot be opened on a prompt but is treated as launchable", provider)
+		}
 	}
 }
 
@@ -200,5 +220,88 @@ func TestABriefShorterThanTheBoundIsNotMarkedAsCut(t *testing.T) {
 	}
 	if len(brief.closing) != 2 || brief.earlier {
 		t.Fatalf("closing = %+v, earlier = %v, want the whole exchange unmarked", brief.closing, brief.earlier)
+	}
+}
+
+// The clipboard escape carries the text as base64 under OSC 52, and is wrapped
+// for tmux when the handoff is run inside a session — otherwise tmux drops it
+// and the brief lands nowhere.
+func TestClipboardEscapeIsOSC52AndWrapsForTmux(t *testing.T) {
+	t.Setenv("TMUX", "")
+	plain := osc52Clipboard("# brief")
+	if !strings.HasPrefix(plain, "\x1b]52;c;") || !strings.HasSuffix(plain, "\a") {
+		t.Fatalf("escape = %q, want an OSC 52 write", plain)
+	}
+	encoded := strings.TrimSuffix(strings.TrimPrefix(plain, "\x1b]52;c;"), "\a")
+	if decoded, err := base64.StdEncoding.DecodeString(encoded); err != nil || string(decoded) != "# brief" {
+		t.Fatalf("clipboard payload = %q, err = %v", decoded, err)
+	}
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,123,0")
+	wrapped := osc52Clipboard("# brief")
+	if !strings.HasPrefix(wrapped, "\x1bPtmux;\x1b") || !strings.HasSuffix(wrapped, "\x1b\\") {
+		t.Fatalf("wrapped escape = %q, want tmux pass-through", wrapped)
+	}
+}
+
+// A destination whose CLI cannot be opened on a prompt is handed over by
+// clipboard: the brief is written as always, its exact bytes go to the
+// terminal, the pass is recorded, and no process is started.
+func TestManualDestinationCopiesTheBriefInsteadOfLaunching(t *testing.T) {
+	t.Setenv("TMUX", "")
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	writeClaudeSession(t, root, "claude-personal", "-work-hub", "aaa",
+		`{"type":"user","cwd":"`+root+`","message":{"content":[{"type":"text","text":"Add a settings page"}]}}`)
+	profiles := []Profile{
+		{Name: "claude-personal", Provider: "claude", Command: "claude"},
+		{Name: "opencode-one", Provider: "opencode", Command: "opencode"},
+	}
+	m := wideModel(profiles)
+	m.workingDir = root
+	m.recent = []recordedSession{{session: instanceSession{id: "aaa", title: "Add a settings page"}, folder: root}}
+	m.mode = tuiHandoff
+
+	m = wizardKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mode != tuiHandoffTo || len(m.handoff.destinations) != 1 || m.handoff.destinations[0].Name != "opencode-one" {
+		t.Fatalf("destinations = %+v, want the manual account offered", m.handoff.destinations)
+	}
+	m = wizardKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mode != tuiHandoffBrief {
+		t.Fatalf("enter on the destination opened mode %v (%s)", m.mode, m.status)
+	}
+
+	updated, cmd := m.updateHandoffBrief(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(tuiModel)
+	if got.mode != tuiList || cmd == nil {
+		t.Fatalf("mode = %v, cmd = %v, want a clipboard command and the list back", got.mode, cmd != nil)
+	}
+	if got.handoff.path != "" {
+		t.Fatalf("the draft survived the copy: %+v", got.handoff)
+	}
+	if _, passed := got.lineage["aaa"]; !passed {
+		t.Fatalf("the pass was not recorded: %+v", got.lineage)
+	}
+
+	// The command hands the brief's own bytes to the terminal. Read what it
+	// wrote rather than trusting the closure.
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stdout
+	os.Stdout = write
+	msg := cmd()
+	write.Close()
+	os.Stdout = saved
+	out, _ := io.ReadAll(read)
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSuffix(strings.TrimPrefix(string(out), "\x1b]52;c;"), "\a"))
+	if err != nil {
+		t.Fatalf("clipboard payload is not base64: %q", out)
+	}
+	if !strings.Contains(string(decoded), "Add a settings page") || !strings.Contains(string(decoded), "# Handoff") {
+		t.Fatalf("the clipboard did not carry the brief:\n%s", decoded)
+	}
+	if copied, ok := msg.(clipboardMsg); !ok || copied.err != nil || copied.profile != "opencode-one" {
+		t.Fatalf("copy reported %+v", msg)
 	}
 }

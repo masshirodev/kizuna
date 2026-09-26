@@ -470,6 +470,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tuiPalette:
 			return m.updatePalette(msg)
 		}
+	case clipboardMsg:
+		if msg.err != nil {
+			m.setStatus(statusErr, "could not reach the clipboard — the brief is at "+shortenHome(msg.path))
+		} else {
+			m.setStatus(statusOK, "brief copied for "+msg.profile+" — paste it there; also at "+shortenHome(msg.path))
+		}
 	case processFinishedMsg:
 		m.running = false
 		mergeNote := ""
@@ -1159,7 +1165,7 @@ func (m tuiModel) leaveWith(record recordedSession) (tea.Model, tea.Cmd) {
 	}
 	destinations := handoffDestinations(m.profiles, source, m.usage)
 	if len(destinations) == 0 {
-		m.setStatus(statusErr, "no other profile can be opened with a brief")
+		m.setStatus(statusErr, "no other profile to hand this off to")
 		m.mode = tuiList
 		return m, nil
 	}
@@ -1250,6 +1256,8 @@ func (m tuiModel) updateHandoffBrief(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearStatus()
 	case "e":
 		return m, m.execEditor(m.handoff.path)
+	case "v":
+		return m, m.execPager(m.handoff.path)
 	case "enter":
 		return m.launchHandoff()
 	case "esc", "q", "n", "N":
@@ -1269,18 +1277,48 @@ func (m tuiModel) launchHandoff() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	target := m.handoff.destinations[m.handoff.target]
-	args, err := promptArgs(target.Provider, handoffPrompt(m.handoff.path))
-	if err != nil {
-		m.setStatus(statusErr, err.Error())
-		m.mode = tuiList
-		return m, nil
-	}
 	folder, err := recordedFolder(m.handoff.source, m.workingDir)
 	if err != nil {
 		m.setStatus(statusErr, err.Error())
 		m.mode = tuiList
 		return m, nil
 	}
+	// A provider whose CLI cannot be opened on a prompt takes the brief by
+	// hand: the file is written either way, and what moves is its text, put on
+	// the terminal's clipboard to paste into that CLI's own conversation.
+	if !opensOnPrompt(target.Provider) {
+		body, err := os.ReadFile(m.handoff.path)
+		if err != nil {
+			m.setStatus(statusErr, "could not read the brief: "+err.Error())
+			m.mode = tuiList
+			return m, nil
+		}
+		name, path := target.Name, m.handoff.path
+		m.recordHandoff(source, target, folder)
+		m.handoff = handoffDraft{}
+		m.mode = tuiList
+		return m, copyBriefCmd(name, path, string(body))
+	}
+	args, err := promptArgs(target.Provider, handoffPrompt(m.handoff.path))
+	if err != nil {
+		m.setStatus(statusErr, err.Error())
+		m.mode = tuiList
+		return m, nil
+	}
+	m.recordHandoff(source, target, folder)
+	m.handoff = handoffDraft{}
+	m.mode = tuiList
+	return m, m.execProfileIn(target, profileRunArgs(target, args, false), false, folder)
+}
+
+// recordHandoff notes the pass in the lineage the pickers read. It is called
+// once the pass is going to happen — after the prompt syntax is known to work,
+// or after the brief has been read to copy — so a handoff that could not be
+// carried out is not recorded as one that was. A failure to write the record
+// is reported but does not stop the work: the pass is the point, the record is
+// the note about it. It reads the brief's path and session from the draft, so
+// it must be called before the draft is cleared.
+func (m *tuiModel) recordHandoff(source, target Profile, folder string) {
 	link := lineageLink{
 		When:            m.clock(),
 		SourceProfile:   source.Name,
@@ -1293,14 +1331,28 @@ func (m tuiModel) launchHandoff() (tea.Model, tea.Cmd) {
 		Brief:           m.handoff.path,
 	}
 	if err := appendLineage(link); err != nil {
-		// Say so, but hand the work over anyway: the pass is the point and the
-		// record is the note about it.
 		m.log = append(m.log, logEntry{kind: statusErr, text: "lineage not recorded: " + err.Error()})
 	}
 	m.lineage = handedOff(readLineage())
-	m.handoff = handoffDraft{}
-	m.mode = tuiList
-	return m, m.execProfileIn(target, profileRunArgs(target, args, false), false, folder)
+}
+
+// clipboardMsg reports a brief handed to the terminal's clipboard, so the
+// status line can say where the work went and where the file still is. The
+// file is the fallback for a terminal that has no OSC 52: the copy is
+// unverifiable, so the path is always named beside it.
+type clipboardMsg struct {
+	profile string
+	path    string
+	err     error
+}
+
+// copyBriefCmd puts the brief on the terminal's clipboard. It runs as a command
+// rather than a plain write so the escape goes out between renders.
+func copyBriefCmd(profile, path, body string) tea.Cmd {
+	return func() tea.Msg {
+		_, err := os.Stdout.WriteString(osc52Clipboard(body))
+		return clipboardMsg{profile: profile, path: path, err: err}
+	}
 }
 
 // execEditor opens the brief in the user's editor. The handoff is the one place
@@ -1316,6 +1368,23 @@ func (m *tuiModel) execEditor(path string) tea.Cmd {
 		return nil
 	}
 	cmd := exec.Command(editor, path)
+	cmd.Dir = filepath.Dir(path)
+	m.running = true
+	return tea.ExecProcess(cmd, func(err error) tea.Msg { return processFinishedMsg{err: err} })
+}
+
+// execPager shows the brief in the user's pager, so the whole text can be read
+// and selected — the copy path for a terminal whose clipboard OSC 52 does not
+// reach, and the way to check the file the editor was left alone on. It is a
+// plain `$PAGER` (default `less`) rather than anything of this program's own,
+// because the terminal already knows how to select text and the pager already
+// knows how to scroll.
+func (m *tuiModel) execPager(path string) tea.Cmd {
+	fields := strings.Fields(os.Getenv("PAGER"))
+	if len(fields) == 0 {
+		fields = []string{"less"}
+	}
+	cmd := exec.Command(fields[0], append(fields[1:], path)...)
 	cmd.Dir = filepath.Dir(path)
 	m.running = true
 	return tea.ExecProcess(cmd, func(err error) tea.Msg { return processFinishedMsg{err: err} })
