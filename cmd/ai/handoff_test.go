@@ -301,7 +301,30 @@ func TestManualDestinationCopiesTheBriefInsteadOfLaunching(t *testing.T) {
 	if !strings.Contains(string(decoded), "Add a settings page") || !strings.Contains(string(decoded), "# Handoff") {
 		t.Fatalf("the clipboard did not carry the brief:\n%s", decoded)
 	}
-	if copied, ok := msg.(clipboardMsg); !ok || copied.err != nil || copied.profile != "opencode-one" {
+	if copied, ok := msg.(clipboardMsg); !ok || copied.err != nil || copied.profile != "opencode-one" || copied.target.Name != "opencode-one" {
 		t.Fatalf("copy reported %+v", msg)
+	}
+}
+
+// TestClipboardBriefOpensTheDestination covers the second half of a by-hand
+// handoff: once the brief is on the clipboard, the account it is going to is
+// opened in the work's folder so there is somewhere to paste it. A copy with no
+// target — the bare clipboard case — opens nothing.
+func TestClipboardBriefOpensTheDestination(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root := t.TempDir()
+	profile := Profile{Name: "oc", Provider: "opencode", Command: "opencode"}
+	m := tuiModel{profiles: []Profile{profile}, workingDir: root, width: 140, height: 32}
+
+	updated, cmd := m.Update(clipboardMsg{profile: "oc", path: "/tmp/brief.md", target: profile, folder: root})
+	got := updated.(tuiModel)
+	if cmd == nil || !got.running {
+		t.Fatalf("a by-hand handoff did not open its destination: running=%v cmd=%v", got.running, cmd != nil)
+	}
+
+	plain := tuiModel{profiles: []Profile{profile}, workingDir: root, width: 140, height: 32}
+	updated, cmd = plain.Update(clipboardMsg{profile: "oc", path: "/tmp/brief.md"})
+	if cmd != nil || updated.(tuiModel).running {
+		t.Fatal("a plain clipboard copy opened a profile")
 	}
 }

@@ -62,9 +62,10 @@ picker is a plain list, the same way the cockpit folds a column rather than
 squeezing it. A list longer than the pane scrolls to keep the row the keys act
 on in view.
 
-The pane is filled from the same transcripts the handoff brief is built from, so
-it shows nothing for a provider whose conversations are not read back —
-OpenCode and Antigravity say so instead of sitting on `reading…`.
+The pane is filled from the same conversations the handoff brief is built from,
+so it shows nothing for a provider whose conversations are not read back —
+Antigravity says so instead of sitting on `reading…`. OpenCode's pane is read
+from its store, not a transcript file, and is filled the same way.
 
 This is a wider offer than the provider's own resume flow, which only ever sees
 the folder it was started in. The panel has read every folder the account has
@@ -84,6 +85,10 @@ transcript file per conversation, which is what gets parsed for a title.
 OpenCode keeps its own SQLite database (`opencode.db`) with title, folder, and
 timestamp as plain columns — no parsing needed, and resuming picks the exact
 conversation by id (`opencode --session <id>`), the same as Codex and Claude.
+The conversation itself is read out of that store too, for the handoff brief and
+the preview pane: `message` carries the role and `part` the prose, and only the
+`text` parts survive the read (tool calls, reasoning and step markers are not
+something anyone said). See [Handing a session to another account](#handing-a-session-to-another-account).
 
 **A row is titled with the conversation's own name where there is one.** Claude
 Code names a conversation itself a few turns in and writes that name into the
@@ -184,9 +189,10 @@ you are — `leaving`, `going to`, `brief`, `open`. `←` goes back a step, and
    file's size and a rough token count sit beside its path.
 4. **Open** — `↵` on the brief step hands the brief over: it launches the
    destination on it, or, when that CLI cannot be opened on a prompt, copies
-   the brief's text to the terminal's clipboard to paste into that CLI's own
-   conversation. `v` reads the full brief in `$PAGER` (default `less`) first,
-   which is also the way to select and copy it by hand.
+   the brief's text to the terminal's clipboard and opens that account in the
+   folder, so there is somewhere to paste it into. `v` reads the full brief in
+   `$PAGER` (default `less`) first, which is also the way to select and copy it
+   by hand.
 
 Nothing is copied into either CLI's state directory. The conversation stays
 where it was recorded; what moves is a markdown file under
@@ -209,10 +215,13 @@ The brief has three parts:
    that were actually edited, because the work went through shell heredocs and
    no tool argument ever named a path. Git does not have that problem.
 
-The full transcript is named at the end as a path, not pasted in. That is the
+The full conversation is named at the end, not pasted in. That is the
 difference from handing over the profile folder and saying "continue": the next
 agent *can* read it, but does not have to. On this machine a 1140 KB transcript
-(~292k tokens) reduced to a 5 KB brief (~1.3k tokens).
+(~292k tokens) reduced to a 5 KB brief (~1.3k tokens). For Claude and Codex it
+is named as a path to grep; for OpenCode, which has no transcript file, it is
+named as the store and session id with a read-only `sqlite3` command that prints
+its rows.
 
 There is no model anywhere in that path, and that is forced rather than chosen:
 the premise is that you are out of quota, so the outgoing CLI cannot summarise
@@ -256,11 +265,41 @@ account has the most quota left. It does **not** skip two other things:
 Auto-swap does not watch a running session and switch mid-flight. While a CLI
 owns the terminal the launcher is not running, so it has nothing to watch with.
 
-`H` can hand off *from* Claude Code and Codex, which are the providers whose
-transcripts are read. It can hand off *to* any other account: Claude Code and
-Codex are opened on the brief directly, because their opening-prompt syntax is
-known, while every other provider — OpenCode, Antigravity — takes it by hand,
-with the brief's text put on the terminal's clipboard to paste.
+`H` can hand off *from* Claude Code, Codex and OpenCode: the first two are read
+from a transcript file, the third from its SQLite store. It can hand off *to* any
+other account: Claude Code and Codex are opened on the brief directly, because
+their opening-prompt syntax is known, while every other provider — OpenCode,
+Antigravity — takes it by hand: the brief's text goes on the terminal's
+clipboard and that account is opened in the folder, so the paste has somewhere
+to land. The brief step's key line says which of the two it will do.
+
+### Reading OpenCode
+
+The OpenCode reader is the same reduction the other two get, from a different
+shape of store. `message` carries the role and `part` the prose; only `text`
+parts survive, and the store is filtered by `session_id` so a large database is
+queried by session rather than read whole. The rows are parsed in Go rather than
+with SQL's JSON functions, so the reader does not depend on how the SQLite build
+was compiled.
+
+With concurrent instances, a session may live in the profile's merged store, in a
+live instance's private copy, or both. The reader picks the copy whose session row
+was updated last, so a conversation still being written is read where it is
+rather than from the copy it has not merged into.
+
+**Where this departs from the brief.** The brief allowed a pointer-only fallback
+tier for a session that could not be read; the full reader landed instead, so only
+one kind of brief is produced. The pointer text survives in the brief's own "if
+you need more" section as the `sqlite3` command. The preview pane reads the
+session's text parts and takes the tail from the end rather than scanning
+backwards through a file, which is bounded by the session and needs no windowing.
+
+**What it does not do yet.** Antigravity is still unread (its title is a
+protobuf blob with no published schema). `opencode export <id>` is not used: on
+this machine it answered `Session not found` for a session present in the
+profile store, so the store is read directly. And a session that lives only in a
+stale, unmerged instance directory is still not read — the same copies the recent
+list refuses to offer, for the same reason.
 
 The clipboard is the terminal's own, reached with an OSC 52 escape rather than
 by shelling out to `xclip`, `wl-copy` or `pbcopy`: which of those exists is a

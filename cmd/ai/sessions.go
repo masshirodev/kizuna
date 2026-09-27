@@ -398,6 +398,113 @@ func queryOpenCodeSessionRows(db *sql.DB, column string, limit int) ([]recordedS
 	return records, rows.Err()
 }
 
+// opencodeMessagesQuery pulls one session's parts and the role of the message
+// each belongs to. The session filter uses part_session_idx; the JSON is parsed
+// in Go rather than by SQL, so the reader does not depend on the SQLite build
+// carrying the JSON1 extension. Ordering by the message's timestamp and then the
+// part's reconstructs the conversation.
+const opencodeMessagesQuery = `SELECT m.data, p.data FROM part p
+	JOIN message m ON m.id = p.message_id
+	WHERE p.session_id = ?
+	ORDER BY m.time_created, m.id, p.time_created, p.id`
+
+// decodeOpenCodePart pulls one said thing out of a message row and its part. The
+// message carries the role and the part its kind; only a text part is something
+// said, so tool calls, reasoning and step markers are dropped the same way a
+// transcript's tool traffic is.
+func decodeOpenCodePart(messageData, partData []byte) (handoffMessage, bool) {
+	var message struct {
+		Role string `json:"role"`
+	}
+	var part struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(messageData, &message) != nil || json.Unmarshal(partData, &part) != nil {
+		return handoffMessage{}, false
+	}
+	if part.Type != "text" || (message.Role != "user" && message.Role != "assistant") {
+		return handoffMessage{}, false
+	}
+	text := strings.TrimSpace(part.Text)
+	if message.Role == "user" {
+		text = userText(text)
+	}
+	if text == "" {
+		return handoffMessage{}, false
+	}
+	return handoffMessage{fromUser: message.Role == "user", text: text}, true
+}
+
+// readOpenCodeMessages reads one session's prose out of an OpenCode store, in
+// order. It is the OpenCode counterpart to readAllMessages: the same reduction
+// from a different shape of store.
+func readOpenCodeMessages(dbPath, sessionID string) ([]handoffMessage, error) {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	rows, err := db.Query(opencodeMessagesQuery, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var messages []handoffMessage
+	for rows.Next() {
+		var messageData, partData string
+		if err := rows.Scan(&messageData, &partData); err != nil {
+			continue
+		}
+		if message, ok := decodeOpenCodePart([]byte(messageData), []byte(partData)); ok {
+			messages = append(messages, message)
+		}
+	}
+	return messages, rows.Err()
+}
+
+// opencodeStoreFor finds the store a session can be read out of. More than one
+// copy can hold it — the profile's merged store and a live instance's copy — and
+// the freshest one wins, measured by the session's own time_updated, so a
+// conversation still being written is read where it is, not from the copy it has
+// not merged into yet.
+func opencodeStoreFor(profile Profile, id string) (string, bool) {
+	return freshestStore(opencodeSessionDBs(profile), id)
+}
+
+// freshestStore picks, among the copies that hold a session, the one whose row
+// was updated last. It is separate from the profile lookup so the choice can be
+// tested without a running instance to fabricate.
+func freshestStore(paths []string, id string) (string, bool) {
+	if id == "" {
+		return "", false
+	}
+	best, bestUpdated := "", int64(-1)
+	for _, dbPath := range paths {
+		updated, ok := opencodeSessionUpdated(dbPath, id)
+		if !ok {
+			continue
+		}
+		if updated > bestUpdated {
+			best, bestUpdated = dbPath, updated
+		}
+	}
+	return best, best != ""
+}
+
+func opencodeSessionUpdated(dbPath, id string) (int64, bool) {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return 0, false
+	}
+	defer db.Close()
+	var updated int64
+	if err := db.QueryRow(`SELECT time_updated FROM session WHERE id = ?`, id).Scan(&updated); err != nil {
+		return 0, false
+	}
+	return updated, true
+}
+
 // pathsByModTime orders transcript paths by when they were last written to,
 // newest first. A path that cannot be stat-ed sorts last rather than dropping
 // out: the reader will fail to open it and skip it on its own terms.

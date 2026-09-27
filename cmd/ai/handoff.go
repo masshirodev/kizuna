@@ -55,6 +55,33 @@ const (
 	briefClosingTurns = 14
 )
 
+// transcriptRef is where a conversation can be read back. Claude and Codex keep
+// a file, so the reference is a path; OpenCode keeps a SQLite store and names a
+// conversation by id, so the reference is the store and the id. The brief words
+// its "if you need more" line from whichever it has.
+type transcriptRef struct {
+	path      string
+	store     string
+	sessionID string
+}
+
+func (r transcriptRef) empty() bool { return r.path == "" && r.store == "" }
+
+// command is a read-only shell command that prints one OpenCode session's rows.
+// It is what the brief hands an agent that wants the whole conversation.
+func (r transcriptRef) command() string {
+	query := `SELECT m.data, p.data FROM part p JOIN message m ON m.id = p.message_id ` +
+		`WHERE p.session_id = ` + quoteString(r.sessionID) + ` ORDER BY m.time_created, p.time_created;`
+	return "sqlite3 " + shellQuote(r.store) + " " + shellQuote(query)
+}
+
+// shellQuote wraps a string for a POSIX shell. Session ids and paths are tame,
+// but a path may hold a space or an apostrophe, and a briefly-wrong quote is a
+// command that reads the wrong thing.
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
+}
+
 // sessionBrief is everything the outgoing session contributes. Git state is
 // collected separately, because it is a fact about the folder now rather than
 // about the conversation then.
@@ -63,7 +90,7 @@ type sessionBrief struct {
 	profile    Profile
 	prompts    []string
 	notes      []string
-	transcript string
+	transcript transcriptRef
 	truncated  bool
 	// closing is the tail of the conversation as it was said, for the
 	// confirmation screen rather than for the file. earlier says the
@@ -75,17 +102,29 @@ type sessionBrief struct {
 // readSessionMessages reads a whole recorded conversation, not just far enough
 // to title it. It is only ever called for one session at a time, on a keypress
 // the user pressed on purpose, so unlike the panel readers it can afford the
-// whole file.
-func readSessionMessages(profile Profile, record recordedSession) ([]handoffMessage, string, error) {
+// whole conversation. OpenCode's conversation is in SQLite rather than a file,
+// so this is where the two shapes are told apart.
+func readSessionMessages(profile Profile, record recordedSession) ([]handoffMessage, transcriptRef, error) {
+	if profile.Provider == "opencode" {
+		store, ok := opencodeStoreFor(profile, record.session.id)
+		if !ok {
+			return nil, transcriptRef{}, errors.New("this session is not in any OpenCode store on disk")
+		}
+		messages, err := readOpenCodeMessages(store, record.session.id)
+		if err != nil {
+			return nil, transcriptRef{}, err
+		}
+		return messages, transcriptRef{store: store, sessionID: record.session.id}, nil
+	}
 	path, err := transcriptPath(profile, record)
 	if err != nil {
-		return nil, "", err
+		return nil, transcriptRef{}, err
 	}
 	messages, err := readAllMessages(path, profile.Provider)
 	if err != nil {
-		return nil, "", err
+		return nil, transcriptRef{}, err
 	}
-	return messages, path, nil
+	return messages, transcriptRef{path: path}, nil
 }
 
 // decodeHandoffLine pulls one said thing out of either provider's log. Both
@@ -176,11 +215,11 @@ func transcriptPath(profile Profile, record recordedSession) (string, error) {
 // no way to infer them back; the model's own prose is kept only at the tail,
 // where the conclusions are.
 func buildBrief(profile Profile, record recordedSession) (sessionBrief, error) {
-	messages, path, err := readSessionMessages(profile, record)
+	messages, ref, err := readSessionMessages(profile, record)
 	if err != nil {
 		return sessionBrief{}, err
 	}
-	brief := sessionBrief{source: record, profile: profile, transcript: path}
+	brief := sessionBrief{source: record, profile: profile, transcript: ref}
 	var notes []string
 	for _, message := range messages {
 		if message.fromUser {
@@ -361,9 +400,14 @@ func renderBrief(brief sessionBrief, state gitState, now time.Time) string {
 		writeBlock(&out, "Recent commits", state.commits, "")
 	}
 
-	if brief.transcript != "" {
+	if !brief.transcript.empty() {
 		out.WriteString("\n## If you need more\n\n")
-		fmt.Fprintf(&out, "The full transcript is at `%s`. It is large and mostly tool traffic — read it only if this brief leaves a real gap, and grep it rather than opening it whole.\n", brief.transcript)
+		if brief.transcript.store != "" {
+			fmt.Fprintf(&out, "The full conversation is in OpenCode's own store, not in a transcript file. It is large, so read it by session id rather than whole:\n\n```sh\n%s\n```\n\nThe session is `%s` in `%s`.\n",
+				brief.transcript.command(), brief.transcript.sessionID, brief.transcript.store)
+		} else {
+			fmt.Fprintf(&out, "The full transcript is at `%s`. It is large and mostly tool traffic — read it only if this brief leaves a real gap, and grep it rather than opening it whole.\n", brief.transcript.path)
+		}
 	}
 	return out.String()
 }

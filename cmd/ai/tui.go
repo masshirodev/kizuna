@@ -111,7 +111,11 @@ type tuiModel struct {
 	usage      map[string]usageRemaining
 	workingDir string
 	folderPath string
-	params     string
+	// tree is the launch-folder picker's state while it is open: the open
+	// folders, the cursor, and the two caches that keep a cursor move off the
+	// disk. It is dropped when the box closes.
+	tree   folderTree
+	params string
 	// folderTail and paramsTail are those fields' carets (lineedit.go).
 	folderTail int
 	paramsTail int
@@ -473,9 +477,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clipboardMsg:
 		if msg.err != nil {
 			m.setStatus(statusErr, "could not reach the clipboard — the brief is at "+shortenHome(msg.path))
-		} else {
-			m.setStatus(statusOK, "brief copied for "+msg.profile+" — paste it there; also at "+shortenHome(msg.path))
+			return m, nil
 		}
+		// A handoff to a CLI that cannot be started on a prompt opens that
+		// account once the brief is on the clipboard, so there is somewhere to
+		// paste it rather than only a copy and a dead end.
+		if msg.target.Name != "" {
+			m.setStatus(statusOK, "brief copied for "+msg.profile+" — opening it; also at "+shortenHome(msg.path))
+			return m, m.execProfileIn(msg.target, profileRunArgs(msg.target, nil, false), false, msg.folder)
+		}
+		m.setStatus(statusOK, "brief copied for "+msg.profile+" — paste it there; also at "+shortenHome(msg.path))
 	case processFinishedMsg:
 		m.running = false
 		mergeNote := ""
@@ -592,7 +603,7 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearStatus()
 	case "c":
 		m.mode = tuiFolder
-		m.folderPath, m.folderTail = m.workingDir, 0
+		m.openFolderTree()
 		m.clearStatus()
 	case "e":
 		if hasSelection {
@@ -1285,7 +1296,8 @@ func (m tuiModel) launchHandoff() (tea.Model, tea.Cmd) {
 	}
 	// A provider whose CLI cannot be opened on a prompt takes the brief by
 	// hand: the file is written either way, and what moves is its text, put on
-	// the terminal's clipboard to paste into that CLI's own conversation.
+	// the terminal's clipboard to paste. The account is opened too, in the
+	// folder the work is in, so the paste has somewhere to go.
 	if !opensOnPrompt(target.Provider) {
 		body, err := os.ReadFile(m.handoff.path)
 		if err != nil {
@@ -1293,11 +1305,11 @@ func (m tuiModel) launchHandoff() (tea.Model, tea.Cmd) {
 			m.mode = tuiList
 			return m, nil
 		}
-		name, path := target.Name, m.handoff.path
+		path := m.handoff.path
 		m.recordHandoff(source, target, folder)
 		m.handoff = handoffDraft{}
 		m.mode = tuiList
-		return m, copyBriefCmd(name, path, string(body))
+		return m, copyBriefCmd(target, path, string(body), folder)
 	}
 	args, err := promptArgs(target.Provider, handoffPrompt(m.handoff.path))
 	if err != nil {
@@ -1339,19 +1351,25 @@ func (m *tuiModel) recordHandoff(source, target Profile, folder string) {
 // clipboardMsg reports a brief handed to the terminal's clipboard, so the
 // status line can say where the work went and where the file still is. The
 // file is the fallback for a terminal that has no OSC 52: the copy is
-// unverifiable, so the path is always named beside it.
+// unverifiable, so the path is always named beside it. A handoff to a CLI that
+// cannot be opened on a prompt carries the account and folder to open once the
+// copy has landed.
 type clipboardMsg struct {
 	profile string
 	path    string
+	target  Profile
+	folder  string
 	err     error
 }
 
 // copyBriefCmd puts the brief on the terminal's clipboard. It runs as a command
-// rather than a plain write so the escape goes out between renders.
-func copyBriefCmd(profile, path, body string) tea.Cmd {
+// rather than a plain write so the escape goes out between renders. target and
+// folder name the account to open once it has: empty target is a copy with no
+// account to follow it into.
+func copyBriefCmd(target Profile, path, body, folder string) tea.Cmd {
 	return func() tea.Msg {
 		_, err := os.Stdout.WriteString(osc52Clipboard(body))
-		return clipboardMsg{profile: profile, path: path, err: err}
+		return clipboardMsg{profile: target.Name, path: path, target: target, folder: folder, err: err}
 	}
 }
 
@@ -1604,26 +1622,79 @@ func (m tuiModel) updateKill(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updateFolder drives the launch-folder tree. The typed-path field, when / has
+// opened it, takes the editing keys and resolves on ↵; otherwise the keys move
+// in the tree, and ↵ opens rather than sets, because that is what a folder tree
+// does with its Enter and `s` is where "make this the launch folder" lives.
 func (m tuiModel) updateFolder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.tree.pathMode {
+		switch msg.String() {
+		case "esc":
+			m.tree.pathMode = false
+			m.clearStatus()
+			return m, nil
+		case "enter":
+			return m.setFolderFromPath()
+		}
+		if value, tail, edited := editLine(m.folderPath, m.folderTail, msg); edited {
+			m.folderPath, m.folderTail = value, tail
+		}
+		return m, nil
+	}
 	switch msg.String() {
-	case "esc":
+	case "esc", "q":
 		m.mode = tuiList
 		m.clearStatus()
-		return m, nil
-	case "enter":
-		workingDir, err := resolveWorkingDir(m.folderPath, m.workingDir)
-		if err != nil {
-			m.setStatus(statusErr, err.Error())
-			return m, nil
-		}
-		m.workingDir = workingDir
-		m.mode = tuiList
-		m.setStatus(statusOK, "launch folder set to "+workingDir)
+	case "up", "k":
+		m.tree.move(-1)
+	case "down", "j":
+		m.tree.move(1)
+	case "enter", "right", "l":
+		m.tree.toggle()
+	case "left", "h":
+		m.tree.collapseOrUp()
+	case "s":
+		return m.setFolderToSelection()
+	case "/":
+		m.tree.pathMode = true
+		m.folderPath, m.folderTail = m.workingDir, 0
+		m.clearStatus()
+	case ".":
+		m.tree.hidden = !m.tree.hidden
+		m.tree.rebuild()
+	}
+	return m, nil
+}
+
+// setFolderToSelection makes the folder under the cursor the launch folder. A
+// folder that cannot be read is refused, since a launch in it would fail the
+// same way.
+func (m tuiModel) setFolderToSelection() (tea.Model, tea.Cmd) {
+	entry, ok := m.tree.selected()
+	if !ok || !entry.isDir {
 		return m, nil
 	}
-	if value, tail, edited := editLine(m.folderPath, m.folderTail, msg); edited {
-		m.folderPath, m.folderTail = value, tail
+	if !entry.readable {
+		m.setStatus(statusErr, shortenHome(entry.path)+" cannot be read")
+		return m, nil
 	}
+	m.workingDir = entry.path
+	m.mode = tuiList
+	m.setStatus(statusOK, "launch folder set to "+entry.path)
+	return m, nil
+}
+
+// setFolderFromPath resolves the typed path exactly as the old prompt did —
+// relative to the current launch folder, ~ supported — and sets it.
+func (m tuiModel) setFolderFromPath() (tea.Model, tea.Cmd) {
+	workingDir, err := resolveWorkingDir(m.folderPath, m.workingDir)
+	if err != nil {
+		m.setStatus(statusErr, err.Error())
+		return m, nil
+	}
+	m.workingDir = workingDir
+	m.mode = tuiList
+	m.setStatus(statusOK, "launch folder set to "+workingDir)
 	return m, nil
 }
 
