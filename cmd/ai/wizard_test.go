@@ -138,8 +138,11 @@ func TestBriefStepOffersToCopyForAManualDestination(t *testing.T) {
 			m.handoff.target = index
 		}
 	}
-	if view := m.View(); !strings.Contains(view, "copy the brief for opencode-one") {
+	if view := m.View(); !strings.Contains(view, "copy the brief + open opencode-one") {
 		t.Fatalf("the brief step does not offer to copy:\n%s", view)
+	}
+	if view := m.View(); !strings.Contains(view, "paste it into the new session") {
+		t.Fatalf("the brief step does not say the brief is copied:\n%s", view)
 	}
 	// A provider that can be opened still says so.
 	for index, profile := range m.handoff.destinations {

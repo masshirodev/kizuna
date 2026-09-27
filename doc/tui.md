@@ -74,7 +74,7 @@ name column narrows. A board taller than the frame loses the expansion's second
 half (running, activity, recent) before it loses rows, and then scrolls to keep
 the cursor in view.
 
-Everything else — the profile editor, the folder and argument prompts, the
+Everything else — the profile editor, the folder tree and argument prompts, the
 delete confirmation, the clone and share boxes, the pickers, the handoff wizard
 and the palette — opens as a box over the board. The board behind a box fades to
 one flat tone, with a fainter tint left on the rows that were selected: every
@@ -126,10 +126,16 @@ intentionally profile-local and does not use OpenUsage, so multiple accounts for
 the same provider stay separate. Credential files are never opened.
 
 The TUI starts in the directory where you ran `ai`. Press `c` to set another
-launch folder without leaving the TUI; relative paths resolve from the current
-launch folder and `~` is supported. The chosen folder applies to subsequent
-CLI launches in that TUI session and does not change the parent shell's
-directory.
+launch folder without leaving the TUI: a tree of directories opens at your home
+folder and down to the current launch folder, with the folder under the cursor
+read out beside it. `↑↓` move, `↵` opens a folder, `←` closes it or steps to its
+parent, and `s` makes the folder under the cursor the launch folder. `.` toggles
+hidden entries; files are shown dimmed and skipped by the cursor. `/` opens the
+path field the command used to be, where `↵` resolves the typed path exactly as
+before — relative to the current launch folder, `~` supported — and sets it. See
+[The launch folder tree](launch-folder-tree.md). The chosen folder applies to
+subsequent CLI launches in that TUI session and does not change the parent
+shell's directory.
 
 ## Activity and recent sessions
 
@@ -182,7 +188,7 @@ Every text field works the same way:
 - the board's `/` filter;
 - the recent-sessions filter;
 - the argument prompt;
-- the launch folder;
+- the launch folder's path field (opened with `/` in the tree);
 - the profile editor;
 - the clone name;
 - the palette.

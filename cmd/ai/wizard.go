@@ -414,18 +414,21 @@ func (m tuiModel) handoffBriefContent(width, rows int) []string {
 	}
 	what := titleStyle.Render(title) + dimStyle.Render("  ·  in "+shortenHome(m.handoff.source.folder))
 	lines := []string{stepper(2), "", truncateStyled(route, width), truncateStyled(what, width), ""}
-	body := max(rows-7, 6)
+	open := "open " + target.Name + " on the brief"
+	if !opensOnPrompt(target.Provider) {
+		// There is no way to start this CLI on a prompt, so the brief moves by
+		// clipboard: the same file, typed into the conversation by hand. The
+		// account is opened too, so the paste has somewhere to land, and the
+		// screen says so rather than leaving it to the key label alone.
+		open = "copy the brief + open " + target.Name
+		lines = append(lines, dimStyle.Render(truncate("↵ copies the brief to the clipboard, then opens "+target.Name+" — paste it into the new session.", width)))
+	}
+	body := max(rows-7-(len(lines)-5), 6)
 	if width < briefDocWidth+dividerWidth+30 {
 		lines = append(lines, padToRows(m.briefLines(width), body, -1)...)
 	} else {
 		right := width - briefDocWidth - dividerWidth
 		lines = append(lines, joinPanes(m.briefLines(briefDocWidth), m.endedLines(right, body), briefDocWidth, right, body)...)
-	}
-	open := "open " + target.Name + " on the brief"
-	if !opensOnPrompt(target.Provider) {
-		// There is no way to start this CLI on a prompt, so the brief moves by
-		// clipboard: the same file, typed into the conversation by hand.
-		open = "copy the brief for " + target.Name
 	}
 	return append(lines, "", boxFooter(width, helpEntry{"esc", "keep the brief, stay"},
 		helpEntry{"↵", open}, helpEntry{"v", "read the full brief"}, helpEntry{"e", "edit the brief first"}, helpEntry{"←", "back"}))

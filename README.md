@@ -47,7 +47,8 @@ profile's stored defaults. See [doc/running.md](doc/running.md#run).
   in. `h` attaches to one that is still running.
 - **Hand off when quota runs out.** `H` turns a conversation into a short brief
   and starts another account on it in the same folder — or copies the brief to
-  the clipboard for a provider that cannot be started on a prompt.
+  the clipboard and opens that account, for a provider that cannot be started
+  on a prompt.
 - **Shared setup.** Clone a profile, or copy MCP servers and skills between
   profiles, even when they use different providers.
 - **Portable.** Export a profile as an `age`-encrypted bundle and import it
@@ -63,6 +64,7 @@ on right now.
 | Creating, cloning, and moving profiles; app profiles | [doc/profiles.md](doc/profiles.md) |
 | Installing CLIs, logging in, running, concurrency | [doc/running.md](doc/running.md) |
 | The TUI: panels, keys, saved arguments | [doc/tui.md](doc/tui.md) |
+| The launch folder tree (`c`) | [doc/launch-folder-tree.md](doc/launch-folder-tree.md) |
 | Resuming, hijacking, and handing off sessions | [doc/sessions.md](doc/sessions.md) |
 | Copying MCP servers and skills | [doc/mcp-and-skills.md](doc/mcp-and-skills.md) |
 | Seeing the active profile inside a CLI; OpenUsage | [doc/integrations.md](doc/integrations.md) |

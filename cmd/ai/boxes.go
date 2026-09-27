@@ -151,18 +151,6 @@ func promptField(label, value string, tail, width int) string {
 	return fieldLabelActive.Render(pad(label, detailLabelWidth)) + well
 }
 
-func (m tuiModel) folderContent(width int) []string {
-	return []string{
-		boxTitle("change launch folder"),
-		"",
-		promptField("folder", m.folderPath, m.folderTail, width),
-		"",
-		hintStyle.Render(truncate("Relative paths use the current launch folder. ~ is supported.", width)),
-		"",
-		boxFooter(width, helpEntry{"esc", "cancel"}, helpEntry{"↵", "set folder"}, helpEntry{"ctrl-u", "clear"}),
-	}
-}
-
 // cloneContent asks for the name and says what the new profile will and will
 // not have. The second half matters more than the first: "clone" reads as a
 // duplicate account, and this one is a duplicate setup.

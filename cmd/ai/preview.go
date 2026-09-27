@@ -74,9 +74,37 @@ func (p sessionPreview) pending() bool {
 }
 
 // readSessionPreview reads the last turns of a recorded conversation, without
-// reading the whole transcript to reach them.
+// reading the whole transcript to reach them. OpenCode has no file to read
+// backwards, so its conversation is read out of the store and the tail taken
+// from the end; a store query is bounded by the session, where a transcript file
+// is not.
 func readSessionPreview(profile Profile, record recordedSession) sessionPreview {
 	preview := sessionPreview{session: record.session.id}
+	if profile.Provider == "opencode" {
+		store, ok := opencodeStoreFor(profile, record.session.id)
+		if !ok {
+			preview.problem = "this session is not in any OpenCode store on disk"
+			return preview
+		}
+		messages, err := readOpenCodeMessages(store, record.session.id)
+		if err != nil {
+			preview.problem = err.Error()
+			return preview
+		}
+		if len(messages) == 0 {
+			preview.problem = "nothing was said in this session"
+			return preview
+		}
+		preview.earlier = len(messages) > previewTurns
+		if preview.earlier {
+			messages = messages[len(messages)-previewTurns:]
+		}
+		for index := range messages {
+			messages[index].text = clipRunes(messages[index].text, previewTurnRunes)
+		}
+		preview.messages = messages
+		return preview
+	}
 	path, err := transcriptPath(profile, record)
 	if err != nil {
 		preview.problem = err.Error()

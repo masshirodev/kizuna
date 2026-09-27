@@ -263,6 +263,13 @@ func TestChangeFolderUsesRelativeDirectory(t *testing.T) {
 	if got.mode != tuiFolder || got.folderPath != root {
 		t.Fatalf("change folder form = mode %v, value %q", got.mode, got.folderPath)
 	}
+	// / opens the typed-path field; ↵ there resolves and sets exactly as the
+	// prompt did before the tree replaced it.
+	updated, _ = got.updateFolder(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	got = updated.(tuiModel)
+	if !got.tree.pathMode {
+		t.Fatal("/ did not open the typed-path field")
+	}
 	got.folderPath = "project"
 	updated, _ = got.updateFolder(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(tuiModel)
