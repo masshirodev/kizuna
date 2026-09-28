@@ -282,6 +282,12 @@ queried by session rather than read whole. The rows are parsed in Go rather than
 with SQL's JSON functions, so the reader does not depend on how the SQLite build
 was compiled.
 
+A resumed OpenCode session is carried into its instance first: every instance
+starts on an empty store, and `opencode --session` only finds sessions in the
+store it opens. The launcher exports the session from the profile's store and
+imports it into the instance, from the session's own folder, before opencode
+starts (see [session-store.md](session-store.md)).
+
 With concurrent instances, a session may live in the profile's merged store, in a
 live instance's private copy, or both. The reader picks the copy whose session row
 was updated last, so a conversation still being written is read where it is

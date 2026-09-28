@@ -89,7 +89,7 @@ func profileWorkdir(t *testing.T, root, name string) string {
 	return workdir
 }
 
-func TestIsolatedSeedCopiesStoreAndMarksReceipt(t *testing.T) {
+func TestIsolatedSeedStartsOnAnEmptyStoreAndMarksReceipt(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", root)
 	profile := Profile{Name: "oc", Provider: "opencode", Command: "opencode"}
@@ -110,8 +110,10 @@ func TestIsolatedSeedCopiesStoreAndMarksReceipt(t *testing.T) {
 	if !isIsolatedInstanceDir(instanceDir) {
 		t.Fatal("instance carries no seed receipt")
 	}
-	if countRows(t, filepath.Join(instanceDir, "data", "opencode", "opencode.db"), "session") != 1 {
-		t.Fatal("instance store was not seeded from the profile")
+	// The archive is not copied: opencode creates the store on first open, and
+	// a resume brings in only the session it reopens.
+	if _, err := os.Stat(filepath.Join(instanceDir, "data", "opencode", "opencode.db")); !os.IsNotExist(err) {
+		t.Fatal("instance was seeded with a copy of the profile's session store")
 	}
 	if _, err := os.Stat(filepath.Join(instanceDir, "data", "opencode", "auth.json")); err != nil {
 		t.Fatal("auth.json was not seeded:", err)

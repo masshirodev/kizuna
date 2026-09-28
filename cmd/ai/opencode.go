@@ -110,9 +110,17 @@ func acquireIsolatedInstance(profile Profile, workdir string) (string, func() st
 	return instanceDir, cleanup, nil
 }
 
-// seedIsolatedInstance copies the profile's data/state into the instance. The
-// seed receipt is written last: anything that fails before it leaves a
-// directory the merger may delete without a second thought.
+// seedIsolatedInstance prepares an instance's private data and state. The
+// session store itself is NOT copied: opencode creates and migrates an empty
+// one on first open, and a resume brings in just the session it reopens
+// (importOpenCodeSession). Copying the profile's opencode.db made every launch
+// pay for the whole archive -- 5 GB on one profile here, 55 s for 2.8 GB on
+// another -- almost all of it opencode's sync event log. The full copy was once
+// chosen to keep project ids stable, but opencode derives project.id from the
+// repository, so an empty store names the same project the archive does
+// (doc/session-store.md). Credentials, the model pick, and prompt history are
+// still copied. The seed receipt is written last: anything that fails before it
+// leaves a directory the merger may delete without a second thought.
 func seedIsolatedInstance(workdir, instanceDir string) error {
 	dataDir := filepath.Join(instanceDir, "data", "opencode")
 	stateDir := filepath.Join(instanceDir, "state", "opencode")
@@ -123,11 +131,6 @@ func seedIsolatedInstance(workdir, instanceDir string) error {
 		return err
 	}
 	info := isolatedSeedInfo{SeededAt: time.Now().UTC().Format(time.RFC3339)}
-	if src := filepath.Join(workdir, "data", "opencode", "opencode.db"); fileExists(src) {
-		if err := snapshotSQLiteDB(src, filepath.Join(dataDir, "opencode.db")); err != nil {
-			return fmt.Errorf("seed session store: %w", err)
-		}
-	}
 	if auth, err := readFileIfExists(filepath.Join(workdir, "data", "opencode", "auth.json")); err != nil {
 		return err
 	} else if auth != nil {
@@ -158,24 +161,6 @@ func seedIsolatedInstance(workdir, instanceDir string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(instanceDir, isolatedSeedFile), append(encoded, '\n'), 0600)
-}
-
-// snapshotSQLiteDB copies a SQLite database through the engine rather than
-// the filesystem, so the copy is transactionally consistent even if another
-// ai process is merging into the source at that moment. VACUUM INTO also
-// folds any WAL content into the copy, which a file copy would leave behind
-// in a -wal file nobody copied.
-func snapshotSQLiteDB(src, dst string) error {
-	db, err := sql.Open("sqlite", src)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	if _, err := db.Exec(`PRAGMA busy_timeout = 10000`); err != nil {
-		return err
-	}
-	_, err = db.Exec(`VACUUM INTO '` + strings.ReplaceAll(dst, "'", "''") + `'`)
-	return err
 }
 
 // retireIsolatedInstance merges an instance store back into the profile and
@@ -217,12 +202,25 @@ func mergeIsolatedStore(workdir string, profile Profile, instanceDir string) (st
 		return "", err
 	}
 	var notes []string
-	sessions, warnings, err := mergeInstanceDatabase(
-		filepath.Join(workdir, "data", "opencode", "opencode.db"),
-		filepath.Join(instanceDir, "data", "opencode", "opencode.db"),
-	)
+	profileDB := filepath.Join(workdir, "data", "opencode", "opencode.db")
+	instanceDB := filepath.Join(instanceDir, "data", "opencode", "opencode.db")
+	// Nothing but merges opens the archive any more, so an opencode upgrade
+	// migrates every fresh instance store and never the archive; the column
+	// sets would then differ and the merge skip the session table. Let opencode
+	// bring the archive up to the instance's schema first. The caller holds the
+	// merge lock, so no other writer is on it.
+	var migrateWarning string
+	if archiveBehindInstance(profileDB, instanceDB) {
+		if err := migrateOpenCodeArchive(profile, workdir); err != nil {
+			migrateWarning = fmt.Sprintf("could not migrate the archive (%s)", err)
+		}
+	}
+	sessions, warnings, err := mergeInstanceDatabase(profileDB, instanceDB)
 	if err != nil {
 		return "", err
+	}
+	if migrateWarning != "" {
+		warnings = append(warnings, migrateWarning)
 	}
 	if sessions > 0 {
 		notes = append(notes, fmt.Sprintf("merged %s from %s", plural(sessions, "session"), profile.Name))
@@ -263,6 +261,18 @@ var opencodeMergeSkippedTables = map[string]bool{
 // refreshed cannot regress the profile's tokens on exit.
 var opencodeAuthTables = map[string]bool{
 	"account": true, "control_account": true, "credential": true,
+}
+
+// opencodeSessionTables carry edits as well as new rows, newest time_updated
+// winning. A resumed session exists on both sides: without this its session
+// row (title, time_updated) and any message it rewrote would stay as they
+// were when it was imported, and the archive would order and preview it by
+// stale values. project is deliberately not here: a fresh store writes its own
+// project row with default fields, and "newer wins" would wipe the archive's
+// icon overrides and commands with them.
+var opencodeSessionTables = map[string]bool{
+	"session": true, "message": true, "part": true,
+	"session_message": true, "session_share": true, "todo": true,
 }
 
 // mergeInstanceDatabase folds the instance session store into the profile's.
@@ -337,9 +347,12 @@ func mergeInstanceDatabase(profileDB, instanceDB string) (int, []string, error) 
 			continue
 		}
 		var execErr error
-		if opencodeAuthTables[table] {
-			execErr = mergeAuthTable(tx, table, mainCols)
-		} else {
+		switch {
+		case opencodeAuthTables[table]:
+			execErr = mergeNewerRows(tx, table, mainCols)
+		case opencodeSessionTables[table] && canOrderByUpdated(mainCols):
+			execErr = mergeNewerRows(tx, table, mainCols)
+		default:
 			execErr = mergeAdditiveTable(tx, table, mainCols.names)
 		}
 		if execErr != nil {
@@ -412,10 +425,21 @@ func mergeAdditiveTable(tx *sql.Tx, table string, columns []string) error {
 	return err
 }
 
-// mergeAuthTable carries newer credential rows across. A strict greater-than
-// on time_updated means clock ties keep the profile's copy rather than
-// flipping a coin between two refreshes.
-func mergeAuthTable(tx *sql.Tx, table string, columns tableColumnsResult) error {
+// canOrderByUpdated reports whether a table has what mergeNewerRows needs: a
+// primary key to match rows on and a time_updated to compare.
+func canOrderByUpdated(columns tableColumnsResult) bool {
+	hasKey, hasUpdated := false, false
+	for index, name := range columns.names {
+		hasKey = hasKey || columns.pk[index]
+		hasUpdated = hasUpdated || name == "time_updated"
+	}
+	return hasKey && hasUpdated
+}
+
+// mergeNewerRows carries newer rows across and inserts missing ones. A strict
+// greater-than on time_updated means clock ties keep the profile's copy rather
+// than flipping a coin between two writers.
+func mergeNewerRows(tx *sql.Tx, table string, columns tableColumnsResult) error {
 	var pk []string
 	hasUpdated := false
 	for index, name := range columns.names {

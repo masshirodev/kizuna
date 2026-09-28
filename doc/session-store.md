@@ -1,6 +1,7 @@
 # A session store of our own, and a fresh OpenCode store per instance
 
-Status: **proposed**, not built. It changes the seeding decision in
+Status: **approved 2026-09-28.** P1 is built (below, "As built"); P0, P2 and P3
+are not yet. It changes the seeding decision in
 [opencode-concurrent-instances.md](opencode-concurrent-instances.md) and the
 readers in [sessions.md](sessions.md). Back to the [README](../README.md).
 
@@ -77,20 +78,39 @@ events.
 ### 2. Resume imports one session
 
 `opencode --session <id>` needs the session inside the store it opens, and a
-fresh store has none. Before exec, a resume of session `S` copies `S`'s
-subtree from the profile archive into the new instance store. This is the
-merge, run in reverse and filtered to one session: `ATTACH` the archive, then
-`INSERT OR IGNORE` of `project` (`S`'s row), `session`, `message`, `part`,
-`session_message`, `session_input`, `session_context_epoch`, `session_share`
-and `todo` where `session_id = S`, in the merge's FK order and through the same
-generic table walk, so a drifted table is skipped with a warning, not fatal.
-It never copies `event`. On exit, `S` merges back like any other session, and
-the `INSERT OR IGNORE` merge already handles a session that exists on both
-sides.
+fresh store has none. Before exec, a launch that reopens session `S` carries
+`S` from the archive into the new instance store with opencode's own tools:
+`opencode export S` against the archive, then `opencode import` against the
+instance. Their JSON is the one format opencode promises to read back across
+its own schema changes; a row copy would have to follow every migration it
+ships. The import writes no `event` rows.
 
-`opencode --continue` (the fallback when nothing is recorded) imports the
-newest session whose `directory` is the launch folder, which is what
-`--continue` would have picked in a full copy.
+**Import re-homes a session to the folder it runs in**: `project_id` and
+`directory` come from the import's working directory, not from the JSON. Run
+from `/tmp`, a hansei session came back as project `global` in `/tmp`. So the
+import runs in the session's recorded folder, which yields the same
+`project_id` the archive has.
+
+The export opens the archive through opencode, which migrates it on open, so it
+runs under the profile's merge lock like every other writer. `-c/--continue`
+imports the newest top-level session recorded for the launch folder, which is
+what `--continue` would have found in a full copy. A launch that reopens
+nothing (a headless `run`, a new session) imports nothing.
+
+**A resumed session exists on both sides, so the merge now carries edits.**
+The merge used to be a union: rows the archive already had were left alone.
+That silently dropped a resumed session's new title and `time_updated` and any
+message it rewrote. The session subtree (`session`, `message`, `part`,
+`session_message`, `session_share`, `todo`) now merges newest `time_updated`
+wins, the rule the credential tables already used. `project` stays
+insert-only: a fresh store writes its own project row with default fields, and
+"newer wins" would wipe the archive's icon overrides and commands with them.
+
+**Schema drift.** Only merges and exports open the archive now, so an opencode
+upgrade migrates every fresh instance store and not the archive. The merge
+would then see different columns and skip `session`. Before merging, if the
+instance store has applied migrations the archive has not, the merge lets
+opencode migrate the archive first (`opencode db "select 1"`, about 1.3 s).
 
 The rule "a session living only in a live instance cannot be resumed" stays
 as it is.
@@ -194,17 +214,37 @@ the refactor that makes P3 cheap.
   fixture of all three providers (a golden comparison), and deleting
   `sessions.db` rebuilds it identically.
 
-## Open questions
+## Decisions (2026-09-28)
 
-1. **Where the full OpenCode conversation lives.** Proposed: the profile's
-   `opencode.db`, as an archive only merges write. The alternative is raw
-   opencode rows in `sessions.db`, which ties us to their schema (see
-   Non-goals). Recommendation: the archive.
-2. **Should wave workers be indexed at all?** A wave launches dozens of
-   one-shot headless sessions that no one resumes. The index could mark
-   sessions launched with `-p` and a `run` subcommand as `headless` and keep
-   them out of the default list (a filter, not a delete).
-3. **Claude and Codex transcripts are never copied** into our store beyond
-   their text turns. Resume stays pointed at their files. Is that the line,
-   or should the index also keep a pointer-only row for a transcript that has
-   since been deleted?
+1. **The full OpenCode conversation lives in the archive**, the profile's
+   `opencode.db`, which only merges and exports open. `sessions.db` holds the
+   index and the spoken text, never opencode's raw rows.
+2. **Headless sessions are indexed but hidden by default**, with a key in the
+   pickers that shows them. A session is headless when it was launched with a
+   `run` subcommand (the wave workers are). This is a filter, not a delete, and
+   it belongs to P2.
+
+## Open question
+
+**Claude and Codex transcripts are never copied** into our store beyond their
+text turns, and resume stays pointed at their files. Is that the line, or
+should the index keep a pointer-only row for a transcript that has since been
+deleted?
+
+## As built (P1)
+
+- `seedIsolatedInstance` copies `auth.json`, `model.json` and prompt history,
+  and no store. `snapshotSQLiteDB` is gone with the copy.
+- `cmd/ai/opencode_resume.go`: `openCodeResumeTarget` reads
+  `-s/--session[=]` and `-c/--continue`. `prepareOpenCodeInstance` runs in
+  both launch paths that take an instance (`launchProfileCommand`,
+  `launchInFolder`) and never fails a launch: a session it cannot bring in is
+  reported, and opencode then says it found none.
+- `mergeNewerRows` (formerly `mergeAuthTable`) serves the credential tables and
+  the session subtree. `archiveBehindInstance` compares the two stores'
+  `migration` ids.
+- `TestRealDBResumeImportAndMerge` (replacing `TestRealDBSeedAndMerge`) runs
+  the real binary against a copy of the operator's real store: a fresh
+  instance, an import that lands under the archive's `project_id` with no
+  events, and a merge that carries the resumed session's newer row. It is
+  skipped wherever the store or the binary is missing.
