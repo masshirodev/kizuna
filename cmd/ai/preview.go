@@ -80,6 +80,19 @@ func (p sessionPreview) pending() bool {
 // is not.
 func readSessionPreview(profile Profile, record recordedSession) sessionPreview {
 	preview := sessionPreview{session: record.session.id}
+	// A conversation already read whole (a handoff, an earlier preview of an
+	// OpenCode session) is in the index; its tail costs one query.
+	if messages, ok := cachedSessionTurns(profile.Name, record.session.id); ok && len(messages) > 0 {
+		preview.earlier = len(messages) > previewTurns
+		if preview.earlier {
+			messages = messages[len(messages)-previewTurns:]
+		}
+		for index := range messages {
+			messages[index].text = clipRunes(messages[index].text, previewTurnRunes)
+		}
+		preview.messages = messages
+		return preview
+	}
 	if profile.Provider == "opencode" {
 		store, ok := opencodeStoreFor(profile, record.session.id)
 		if !ok {
@@ -90,6 +103,9 @@ func readSessionPreview(profile Profile, record recordedSession) sessionPreview 
 		if err != nil {
 			preview.problem = err.Error()
 			return preview
+		}
+		if store == openCodeArchivePath(profile) {
+			cacheSessionTurns(profile.Name, record.session.id, append([]handoffMessage(nil), messages...))
 		}
 		if len(messages) == 0 {
 			preview.problem = "nothing was said in this session"
