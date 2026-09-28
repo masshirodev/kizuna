@@ -181,6 +181,18 @@ process by PID, or stop all of that profile's instances. Each lock records the
 launcher PID on its first line and the child CLI PID on its second line;
 orphaned locks can therefore be reclaimed after an interrupted SSH session.
 
+The launcher's PID is a handle on the whole run. `SIGTERM` and `SIGHUP` sent
+to `ai` are passed on to the CLI, and `ai` waits for it to exit, so the lock is
+released and an OpenCode store merges back exactly as on a normal exit. This
+is what a script running a session headless relies on: `ai run -p opencode3 run
+"…" &`, then `kill` that PID. A signal that arrives while an OpenCode instance
+is still being seeded (a store of a few GB takes the better part of a minute to
+copy) is held and delivered the moment the CLI starts, so it stops at once and
+nothing is left for the next start to reclaim. `SIGINT` is not forwarded: at a
+terminal, Ctrl-C already reaches the CLI through the foreground process group.
+Before this, a `kill` of the launcher killed only `ai`, orphaned the CLI, and
+left the instance to be merged by some later start.
+
 ## Environment
 
 DeepSeek should be configured in the OpenCode profile using OpenCode's normal

@@ -414,6 +414,8 @@ func formatArguments(args []string) string {
 }
 
 func launchExternal(command string, args []string, profile Profile, stdout, stderr io.Writer) error {
+	signals := forwardSignals()
+	defer signals.stop()
 	workdir, err := ensureProfileState(profile)
 	if err != nil {
 		return err
@@ -423,18 +425,21 @@ func launchExternal(command string, args []string, profile Profile, stdout, stde
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = launchEnvironment(profile, workdir, workdir, os.Environ())
-	return runLockedCommand(cmd, workdir, sessionTitle(profile))
+	return runLockedCommand(cmd, workdir, sessionTitle(profile), signals)
 }
 
-func runLockedCommand(cmd *exec.Cmd, workdir, title string) error {
+func runLockedCommand(cmd *exec.Cmd, workdir, title string, signals *signalForwarder) error {
 	lockDir, unlock, err := acquireExclusiveRunLock(workdir)
 	if err != nil {
 		return err
 	}
-	return runCommandWithLock(cmd, lockDir, unlock, title)
+	return runCommandWithLock(cmd, lockDir, unlock, title, signals)
 }
 
 func launchProfileCommand(command string, args []string, profile Profile, stdout, stderr io.Writer) error {
+	// Before the lock: seeding an OpenCode instance can take seconds.
+	signals := forwardSignals()
+	defer signals.stop()
 	workdir, err := ensureProfileState(profile)
 	if err != nil {
 		return err
@@ -455,10 +460,10 @@ func launchProfileCommand(command string, args []string, profile Profile, stdout
 		unlock()
 		return err
 	}
-	return runCommandWithLock(cmd, lockDir, unlock, sessionTitle(profile))
+	return runCommandWithLock(cmd, lockDir, unlock, sessionTitle(profile), signals)
 }
 
-func runCommandWithLock(cmd *exec.Cmd, lockDir string, unlock func() string, title string) error {
+func runCommandWithLock(cmd *exec.Cmd, lockDir string, unlock func() string, title string, signals *signalForwarder) error {
 	defer func() {
 		if note := unlock(); note != "" {
 			fmt.Fprintln(os.Stderr, note)
@@ -472,6 +477,7 @@ func runCommandWithLock(cmd *exec.Cmd, lockDir string, unlock func() string, tit
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	signals.attach(cmd.Process)
 	if err := setProfileChildPID(lockDir, cmd.Process.Pid); err != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()

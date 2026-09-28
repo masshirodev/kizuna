@@ -101,6 +101,8 @@ func resumeRecordedSession(profile Profile, record recordedSession, stdout, stde
 // happens to be pointed — which is why this exists beside launch, which
 // inherits the current directory.
 func launchInFolder(profile Profile, args []string, folder string, stdout, stderr io.Writer) error {
+	signals := forwardSignals()
+	defer signals.stop()
 	workdir, err := ensureProfileState(profile)
 	if err != nil {
 		return err
@@ -120,7 +122,7 @@ func launchInFolder(profile Profile, args []string, folder string, stdout, stder
 		unlock()
 		return err
 	}
-	return runCommandWithLock(cmd, lockDir, unlock, sessionTitle(profile))
+	return runCommandWithLock(cmd, lockDir, unlock, sessionTitle(profile), signals)
 }
 
 // runTUIResume opens the cockpit with the resume picker already up for the
