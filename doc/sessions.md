@@ -51,6 +51,21 @@ profile list's own search; Escape clears it. In the all-profiles mode each row
 also names the account that recorded it, and it is reopened under that account —
 a session id only exists inside the isolated state directory that recorded it.
 
+**Headless runs are hidden until `.` shows them.** A conversation nobody typed
+into (`opencode run`, `claude -p`, `codex exec`) is still listed, but only once
+`.` is pressed in a picker; the count under the list says how many are hidden,
+and the expanded account's `RECENT` rows follow the same switch. A wave night
+leaves dozens of them, and they used to push every conversation a person had
+off the list. Each kind is limited separately, so a list of runs can never
+crowd the conversations out even while they are hidden. How each provider marks
+one:
+
+| Provider | Headless when |
+| -------- | ------------- |
+| OpenCode | the session's permission rules deny the `question` tool, which `opencode run` writes because nobody is there to answer (checked against 61 interactive and 62 headless sessions) |
+| Claude Code | the transcript's `entrypoint` is not `cli` (`claude -p` writes `sdk-cli`) |
+| Codex | the rollout's originator names `exec`; not verified on a machine with Codex rollouts |
+
 The read happens off the keypress, so moving the cursor never waits on the disk;
 the pane says `reading the transcript…` until it lands. A row already read is
 shown from a cache that lives as long as the picker, so moving up and down a
@@ -77,6 +92,21 @@ inside the isolated state directory that recorded it, so the same id under a
 different profile finds nothing. Switching the picker to all profiles does not
 cross that line — it lists other accounts' sessions and reopens each one under
 the account that recorded it, which is the one the row was read from.
+
+## The session index
+
+Every list above reads `~/.config/ai/sessions.db`, one table of every profile's
+conversations. A refresh stats each source and re-reads only the ones whose
+fingerprint moved (a transcript's size and modification time, an OpenCode
+session's `time_updated`), so the first build on the workstation took 335 ms
+for 448 conversations across eight profiles and every refresh after it 20 ms.
+A conversation read whole (a handoff, an OpenCode preview) is cached there too,
+against the same fingerprint, and the next preview or handoff of it is one
+query. The index is a cache, never the record: deleting it costs one slower
+refresh, and when it cannot be opened the lists fall back to reading the
+sources directly. Sessions that live only in a running OpenCode instance are
+not indexed; they are read from that instance's store until it merges. See
+[session-store.md](session-store.md).
 
 ## What is read, per provider
 
