@@ -1,7 +1,7 @@
 # A session store of our own, and a fresh OpenCode store per instance
 
-Status: **approved 2026-09-28.** P1 is built (below, "As built"); P0, P2 and P3
-are not yet. It changes the seeding decision in
+Status: **approved 2026-09-28.** P0 and P1 are built (below, "As built"); P2
+and P3 are not yet. It changes the seeding decision in
 [opencode-concurrent-instances.md](opencode-concurrent-instances.md) and the
 readers in [sessions.md](sessions.md). Back to the [README](../README.md).
 
@@ -171,14 +171,17 @@ deleting `sessions.db` costs one slow refresh, never data.
 
 ### 4. Shrinking the existing archives (one-off, and then a command)
 
-`ai opencode compact <profile>`:
+`ai compact <profile>` (not `ai opencode compact`: a profile named `opencode`
+exists, and `ai opencode …` already launches it):
 
 1. Refuse while the profile has any live instance, or any `opencode` process
    whose `XDG_DATA_HOME` is the profile's data dir (a direct launch, the way
    the waves ran), found by reading `/proc/*/environ`.
 2. Back up `opencode.db` next to itself (`opencode.db.<timestamp>.bak`) and say
    so.
-3. `DELETE FROM event_sequence`, which cascades to `event`, then `VACUUM`.
+3. `DELETE FROM event` and `DELETE FROM event_sequence`, then `VACUUM`. Both
+   explicitly: the cascade from `event_sequence` needs `foreign_keys` on,
+   which the connection does not have, and a test proves it does not fire.
 4. Report the size before and after.
 
 The cost is that those sessions can no longer be moved to a remote workspace.
@@ -189,7 +192,7 @@ from the table sizes above.
 
 | Phase | What | Visible result |
 | --- | --- | --- |
-| P0 | `ai opencode compact`, and run it on opencode2 and opencode3 while no wave uses them | the archives shrink; seeding gets fast even before P1 |
+| P0 | `ai compact`, and run it on opencode2 and opencode3 while no wave uses them | the archives shrink; seeding gets fast even before P1 |
 | P1 | fresh instances plus resume import | no seed copy at all; `LAUNCHER=ai` becomes the wave default |
 | P2 | `sessions.db`, and ingesters and readers for Claude, Codex and OpenCode | lists and previews read one indexed table |
 | P3 | Antigravity ingester (protobuf decode) | Antigravity sessions in the pickers, and resumable |
@@ -248,3 +251,12 @@ deleted?
   instance, an import that lands under the archive's `project_id` with no
   events, and a merge that carries the resumed session's newer row. It is
   skipped wherever the store or the binary is missing.
+
+## As built (P0)
+
+- `cmd/ai/compact.go`: `ai compact <profile>` takes the exclusive profile lock
+  (refused while any instance runs) and then the merge lock, and refuses while
+  any process has the profile's data dir as its `XDG_DATA_HOME`
+  (`/proc/*/environ`, Linux only). It backs up with `VACUUM INTO` to
+  `opencode.db.<UTC timestamp>.bak`, deletes the two event tables, vacuums, and
+  reports the size before and after and the backup's path and size.

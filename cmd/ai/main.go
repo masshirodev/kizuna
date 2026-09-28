@@ -179,6 +179,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return installIndicator(profile, &cfg, configPath, stdout)
 		}
 		return launchExternal("openusage", []string{"integrations", "install", openUsageIntegration(profile.Provider)}, profile, stdout, stderr)
+	case "compact":
+		return compactCommand(cfg, args[1:], stdout)
 	case "path":
 		path, err := profileRoot()
 		if err != nil {
@@ -1014,6 +1016,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  ai login <profile>")
 	fmt.Fprintln(w, "  ai install <profile|provider>           install the provider's own CLI")
 	fmt.Fprintln(w, "  ai update <profile>")
+	fmt.Fprintln(w, "  ai compact <profile>                    drop an opencode store's sync event log, vacuum it")
 	fmt.Fprintln(w, "  ai self-update                          rebuild from ~/.config/ai/repo, reopen")
 	fmt.Fprintln(w, "  ai run <profile> [arguments...]")
 	fmt.Fprintln(w, "  ai <profile> [arguments...]             shorthand for ai run")
