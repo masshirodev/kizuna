@@ -1,7 +1,7 @@
 # A session store of our own, and a fresh OpenCode store per instance
 
-Status: **approved 2026-09-28.** P0 and P1 are built (below, "As built"); P2
-and P3 are not yet. It changes the seeding decision in
+Status: **approved 2026-09-28.** P0, P1 and P2 are built (below, "As built");
+P3 is not yet. It changes the seeding decision in
 [opencode-concurrent-instances.md](opencode-concurrent-instances.md) and the
 readers in [sessions.md](sessions.md). Back to the [README](../README.md).
 
@@ -260,3 +260,23 @@ deleted?
   (`/proc/*/environ`, Linux only). It backs up with `VACUUM INTO` to
   `opencode.db.<UTC timestamp>.bak`, deletes the two event tables, vacuums, and
   reports the size before and after and the backup's path and size.
+
+## As built (P2)
+
+- `cmd/ai/index.go`: `session` (with `headless`), `turn`, and `turn_source`
+  (the fingerprint the cached turns were read at). `recentSessions` refreshes
+  the profile's rows and answers from the index; `scannedRecentSessions` is the
+  old reader, kept as the fallback when the index cannot be opened.
+- **Turns are cached on demand, not on refresh.** Materializing every turn of
+  every transcript would have put 2 GB of Claude transcripts into the first
+  refresh. A handoff reads a conversation whole and caches it; a preview uses
+  the cache when it is fresh, and otherwise still reads the transcript's tail.
+- **Each kind is limited separately** (`limitEachKind`), after live OpenCode
+  sessions join. A single limit let a night of runs take every slot, and the
+  first draft forgot to re-apply it after the live union
+  (`TestUnionReaderSeesLiveInstancesOnce` caught that).
+- Headless is hidden in both pickers and the expanded row; `.` toggles it.
+- Measured on the workstation: 448 conversations (125 headless) over eight
+  profiles, first build 335 ms, refresh 20 ms.
+- The open question stands: rows whose transcript was deleted are dropped with
+  it, not kept as pointers.

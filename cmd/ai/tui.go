@@ -164,7 +164,10 @@ type tuiModel struct {
 	// switch; recentFilter and recentSearching are the picker's own search,
 	// kept apart from the profile list's filter so a query typed in one is
 	// never applied to the other.
-	recentAll       []recordedSession
+	recentAll []recordedSession
+	// showHeadless lists the conversations nobody typed into (`opencode run`,
+	// `claude -p`, the wave workers). They are hidden until `.` in a picker.
+	showHeadless    bool
 	recentAllLoaded bool
 	pickerAll       bool
 	recentFilter    string
@@ -296,9 +299,43 @@ func (m *tuiModel) clampCursor() {
 // been switched to all of them.
 func (m tuiModel) pickerSessions() []recordedSession {
 	if m.pickerAll {
-		return m.recentAll
+		return m.withoutHeadless(m.recentAll)
 	}
-	return m.recent
+	return m.withoutHeadless(m.recent)
+}
+
+// withoutHeadless drops headless conversations unless they are being shown.
+func (m tuiModel) withoutHeadless(records []recordedSession) []recordedSession {
+	if m.showHeadless {
+		return records
+	}
+	kept := make([]recordedSession, 0, len(records))
+	for _, record := range records {
+		if !record.headless {
+			kept = append(kept, record)
+		}
+	}
+	return kept
+}
+
+// hiddenHeadless counts what the current picker scope is hiding.
+func (m tuiModel) hiddenHeadless() int {
+	if m.showHeadless {
+		return 0
+	}
+	all := m.recent
+	if m.pickerAll {
+		all = m.recentAll
+	}
+	return len(all) - len(m.withoutHeadless(all))
+}
+
+// toggleHeadless shows or hides the headless conversations in a picker.
+func (m tuiModel) toggleHeadless() (tea.Model, tea.Cmd) {
+	m.showHeadless = !m.showHeadless
+	m.record = 0
+	m.clampRecord()
+	return m, m.selectPreview()
 }
 
 // visibleRecent is the picker list after its own search is applied. The cursor
@@ -935,6 +972,8 @@ func (m tuiModel) updateRecent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearStatus()
 	case "a":
 		return m.toggleAllProfiles()
+	case ".":
+		return m.toggleHeadless()
 	case "H":
 		if m.record >= 0 && m.record < len(visible) {
 			return m.leaveWith(visible[m.record])
@@ -1175,6 +1214,8 @@ func (m tuiModel) updateHandoff(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearStatus()
 	case "a":
 		return m.toggleAllProfiles()
+	case ".":
+		return m.toggleHeadless()
 	case "A":
 		m.toggleAutoSwap()
 	case "enter":

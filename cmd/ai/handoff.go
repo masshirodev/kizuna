@@ -104,27 +104,55 @@ type sessionBrief struct {
 // the user pressed on purpose, so unlike the panel readers it can afford the
 // whole conversation. OpenCode's conversation is in SQLite rather than a file,
 // so this is where the two shapes are told apart.
+//
+// A conversation read whole is cached in the session index against its
+// source's fingerprint, so the next handoff or preview of it reads the index.
 func readSessionMessages(profile Profile, record recordedSession) ([]handoffMessage, transcriptRef, error) {
 	if profile.Provider == "opencode" {
 		store, ok := opencodeStoreFor(profile, record.session.id)
 		if !ok {
 			return nil, transcriptRef{}, errors.New("this session is not in any OpenCode store on disk")
 		}
+		ref := transcriptRef{store: store, sessionID: record.session.id}
+		// Only the archive is the record; a live instance is still writing.
+		archived := store == openCodeArchivePath(profile)
+		if archived {
+			if messages, ok := cachedSessionTurns(profile.Name, record.session.id); ok {
+				return messages, ref, nil
+			}
+		}
 		messages, err := readOpenCodeMessages(store, record.session.id)
 		if err != nil {
 			return nil, transcriptRef{}, err
 		}
-		return messages, transcriptRef{store: store, sessionID: record.session.id}, nil
+		if archived {
+			cacheSessionTurns(profile.Name, record.session.id, messages)
+		}
+		return messages, ref, nil
 	}
 	path, err := transcriptPath(profile, record)
 	if err != nil {
 		return nil, transcriptRef{}, err
 	}
+	if messages, ok := cachedSessionTurns(profile.Name, record.session.id); ok {
+		return messages, transcriptRef{path: path}, nil
+	}
 	messages, err := readAllMessages(path, profile.Provider)
 	if err != nil {
 		return nil, transcriptRef{}, err
 	}
+	cacheSessionTurns(profile.Name, record.session.id, messages)
 	return messages, transcriptRef{path: path}, nil
+}
+
+// openCodeArchivePath is the profile's own session store, the one instances
+// merge into.
+func openCodeArchivePath(profile Profile) string {
+	root, err := profileRoot()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(root, profile.Name, "data", "opencode", "opencode.db")
 }
 
 // decodeHandoffLine pulls one said thing out of either provider's log. Both

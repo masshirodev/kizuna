@@ -183,6 +183,10 @@ type recordedSession struct {
 	// and set by the union reader so one picker can list several accounts at
 	// once and still reopen each row under the profile that owns it.
 	profile string
+	// headless is true for a conversation nobody typed into: `opencode run`,
+	// `claude -p`, `codex exec`. The wave workers are all headless. The lists
+	// hide them until asked (`.`), without dropping them from the index.
+	headless bool
 }
 
 // activity is the time a conversation is ordered and dated by: when it was last
@@ -212,6 +216,16 @@ func recentSessions(profile Profile, limit int) []recordedSession {
 	if limit <= 0 {
 		limit = recentSessionLimit
 	}
+	if records, ok := indexedRecentSessions(profile, limit); ok {
+		return records
+	}
+	return scannedRecentSessions(profile, limit)
+}
+
+// scannedRecentSessions reads a profile's recent list straight off its
+// sources, the way every refresh did before the index. It is the fallback for
+// an index that cannot be opened.
+func scannedRecentSessions(profile Profile, limit int) []recordedSession {
 	var paths []string
 	switch profile.Provider {
 	case "codex":
@@ -327,14 +341,25 @@ func opencodeSessionDBs(profile Profile) []string {
 	if err != nil {
 		return nil
 	}
-	workdir := filepath.Join(root, profile.Name)
 	var paths []string
-	if dbPath := filepath.Join(workdir, "data", "opencode", "opencode.db"); fileExists(dbPath) {
+	if dbPath := filepath.Join(root, profile.Name, "data", "opencode", "opencode.db"); fileExists(dbPath) {
 		paths = append(paths, dbPath)
 	}
+	return append(paths, liveOpenCodeStores(profile)...)
+}
+
+// liveOpenCodeStores lists the private stores of a profile's running
+// instances.
+func liveOpenCodeStores(profile Profile) []string {
+	root, err := profileRoot()
+	if err != nil {
+		return nil
+	}
+	workdir := filepath.Join(root, profile.Name)
+	var paths []string
 	lockDirs, err := activeProfileInstanceLocks(workdir)
 	if err != nil {
-		return paths
+		return nil
 	}
 	for _, lockDir := range lockDirs {
 		if !isIsolatedInstanceDir(lockDir) {
@@ -360,9 +385,38 @@ func queryOpenCodeSessions(dbPath string, limit int) ([]recordedSession, error) 
 
 	records, err := queryOpenCodeSessionRows(db, "time_updated", limit)
 	if err != nil {
-		return queryOpenCodeSessionRows(db, "time_created", limit)
+		if records, err = queryOpenCodeSessionRows(db, "time_created", limit); err != nil {
+			return nil, err
+		}
 	}
+	markHeadlessOpenCodeSessions(db, records)
 	return records, nil
+}
+
+// openCodeHeadlessPermission is the rule `opencode run` writes into every
+// session it creates: with nobody at the terminal, the tool that asks the user
+// a question is denied. An interactive session never carries it (checked
+// against 61 interactive and 62 headless sessions on two profiles).
+const openCodeHeadlessPermission = `"permission":"question","pattern":"*","action":"deny"`
+
+// markHeadlessOpenCodeSessions flags the headless ones among records. A store
+// too old to have the permission column marks nothing.
+func markHeadlessOpenCodeSessions(db *sql.DB, records []recordedSession) {
+	rows, err := db.Query(`SELECT id FROM session WHERE instr(permission, ?) > 0`, openCodeHeadlessPermission)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	headless := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			headless[id] = true
+		}
+	}
+	for index := range records {
+		records[index].headless = headless[records[index].session.id]
+	}
 }
 
 // queryOpenCodeSessionRows runs the listing against one known timestamp column,

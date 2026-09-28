@@ -113,9 +113,19 @@ func (m tuiModel) pickerList(width, rows int) []string {
 	header += pad("CONVERSATION", max(width-lipgloss.Width(header)-pickerFolderWidth, 8)) + "FOLDER"
 	lines := []string{sectionLabelStyle.Render(truncate(header, width)), ""}
 	footer := fmt.Sprintf("  %s · newest activity first", plural(len(visible), "conversation"))
+	switch hidden := m.hiddenHeadless(); {
+	case hidden > 0:
+		footer += fmt.Sprintf(" · %d headless hidden, . shows", hidden)
+	case m.showHeadless:
+		footer += " · headless shown, . hides"
+	}
 	if len(visible) == 0 && m.recentFilter != "" {
 		lines = append(lines, emptyStateStyle.Render("Nothing matches "+m.recentFilter))
 		return lines
+	}
+	if len(visible) == 0 && m.hiddenHeadless() > 0 {
+		lines = append(lines, emptyStateStyle.Render("Only headless runs recorded here; . shows them"))
+		return append(lines, "", dimStyle.Render(truncate(footer, width)))
 	}
 	lines = append(lines, windowRows(m.recentRows(width), m.record, max(rows-4, 1))...)
 	return append(lines, "", dimStyle.Render(truncate(footer, width)))

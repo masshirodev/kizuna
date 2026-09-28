@@ -618,10 +618,11 @@ const expansionRecentRows = 4
 
 func (m tuiModel) expansionRecent(profile Profile, width int) []string {
 	lines := []string{sectionLabelStyle.Render("RECENT")}
-	if len(m.recent) == 0 {
+	recent := m.withoutHeadless(m.recent)
+	if len(recent) == 0 {
 		lines = append(lines, unknownStyle.Render(m.pending("no recorded sessions")))
 	}
-	for index, record := range m.recent {
+	for index, record := range recent {
 		if index == expansionRecentRows {
 			break
 		}

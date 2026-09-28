@@ -251,7 +251,10 @@ what, where, plus the account once it lists every one — and the conversation
 under the cursor on the right, read from its end. The heading carries the scope
 as a toggle (`this account` / `all accounts`, `a` flips it) and the search
 (`/`, by title, folder, account, or conversation id). The footer names the
-folder Enter will reopen the row in, and `H` hands that row off instead. See
+folder Enter will reopen the row in, and `H` hands that row off instead.
+Headless runs (`opencode run`, `claude -p`, the wave workers) are hidden until
+`.` shows them, in this picker and the handoff picker alike; the count under the
+list says how many are hidden. See
 [The picker is two panes](sessions.md#the-picker-is-two-panes).
 
 **The handoff (`H`)** is a four-step wizard — see
