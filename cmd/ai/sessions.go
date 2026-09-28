@@ -247,6 +247,16 @@ func scannedRecentSessions(profile Profile, limit int) []recordedSession {
 			records[index].profile = profile.Name
 		}
 		return records
+	case "antigravity":
+		records, _ := antigravitySessions(profile)
+		if len(records) > limit {
+			records = records[:limit]
+		}
+		for index := range records {
+			records[index].profile = profile.Name
+			records[index].when = antigravityStartTime(profile, records[index].session.id)
+		}
+		return records
 	default:
 		return nil
 	}

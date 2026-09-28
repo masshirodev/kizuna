@@ -63,6 +63,9 @@ type transcriptRef struct {
 	path      string
 	store     string
 	sessionID string
+	// protobuf marks a path to a store whose turns are protobuf (Antigravity),
+	// which grep cannot read the way it reads a JSONL transcript.
+	protobuf bool
 }
 
 func (r transcriptRef) empty() bool { return r.path == "" && r.store == "" }
@@ -108,6 +111,22 @@ type sessionBrief struct {
 // A conversation read whole is cached in the session index against its
 // source's fingerprint, so the next handoff or preview of it reads the index.
 func readSessionMessages(profile Profile, record recordedSession) ([]handoffMessage, transcriptRef, error) {
+	if profile.Provider == "antigravity" {
+		path, ok := antigravityConversationPath(profile, record.session.id)
+		if !ok {
+			return nil, transcriptRef{}, errors.New("this conversation is not in the Antigravity store on disk")
+		}
+		ref := transcriptRef{path: path, protobuf: true}
+		if messages, ok := cachedSessionTurns(profile.Name, record.session.id); ok {
+			return messages, ref, nil
+		}
+		messages, err := readAntigravityMessages(profile, record.session.id)
+		if err != nil {
+			return nil, transcriptRef{}, err
+		}
+		cacheSessionTurns(profile.Name, record.session.id, messages)
+		return messages, ref, nil
+	}
 	if profile.Provider == "opencode" {
 		store, ok := opencodeStoreFor(profile, record.session.id)
 		if !ok {
@@ -433,6 +452,8 @@ func renderBrief(brief sessionBrief, state gitState, now time.Time) string {
 		if brief.transcript.store != "" {
 			fmt.Fprintf(&out, "The full conversation is in OpenCode's own store, not in a transcript file. It is large, so read it by session id rather than whole:\n\n```sh\n%s\n```\n\nThe session is `%s` in `%s`.\n",
 				brief.transcript.command(), brief.transcript.sessionID, brief.transcript.store)
+		} else if brief.transcript.protobuf {
+			fmt.Fprintf(&out, "The full conversation is Antigravity's own store at `%s`. Its turns are protobuf with no published schema, so the brief above is the readable form of it.\n", brief.transcript.path)
 		} else {
 			fmt.Fprintf(&out, "The full transcript is at `%s`. It is large and mostly tool traffic — read it only if this brief leaves a real gap, and grep it rather than opening it whole.\n", brief.transcript.path)
 		}

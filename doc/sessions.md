@@ -77,10 +77,9 @@ picker is a plain list, the same way the cockpit folds a column rather than
 squeezing it. A list longer than the pane scrolls to keep the row the keys act
 on in view.
 
-The pane is filled from the same conversations the handoff brief is built from,
-so it shows nothing for a provider whose conversations are not read back —
-Antigravity says so instead of sitting on `reading…`. OpenCode's pane is read
-from its store, not a transcript file, and is filled the same way.
+The pane is filled from the same conversations the handoff brief is built from.
+OpenCode's pane is read from its store and Antigravity's from its
+per-conversation store, not a transcript file, and both are filled the same way.
 
 This is a wider offer than the provider's own resume flow, which only ever sees
 the folder it was started in. The panel has read every folder the account has
@@ -128,15 +127,15 @@ opening sentence instead left the launcher and the CLI disagreeing about what
 the same session was called. The opening sentence is still the fallback, for a
 session too short to have been named and for Codex, which records no name at
 all.
-Antigravity is not read yet: its conversation store is a per-conversation
-SQLite database whose readable metadata carries ids but not a title, and the
-title lives in a protobuf blob with no published schema — resuming a specific
-Antigravity conversation already works from a *running* instance (see `h`
-below), but there is no picker for a stopped one.
+Antigravity is listed from its `conversation_summaries.db`, which carries the
+title, the workspace and the last-modified time as plain columns; its turns are
+read out of each conversation's own store (see
+[Reading Antigravity](#reading-antigravity)). A stopped conversation is
+reopened by id in its workspace with `agy --conversation <id>`, like any other
+row.
 
-With nothing recorded — an account that has not run yet, or Antigravity, whose
-transcripts this launcher does not read — `R` falls back to the provider's own
-resume flow in the current launch folder:
+With nothing recorded — an account that has not run yet — `R` falls back to the
+provider's own resume flow in the current launch folder:
 
 | Provider | Command |
 | -------- | ------- |
@@ -158,8 +157,7 @@ ai codex-work resume ses_abc    # one conversation, reopened in its folder
 ai run codex-work resume        # the run spelling works too
 ```
 
-With nothing recorded — an account that has not run yet, or Antigravity,
-whose transcripts are not read — `resume` falls back to the provider's own
+With nothing recorded — an account that has not run yet — `resume` falls back to the provider's own
 flow above, which is the same offer `R` makes from inside the TUI. A
 `resume` followed by anything else is not the wrapper at all: a prompt that
 happens to start with the word keeps passing through to the provider
@@ -295,8 +293,9 @@ account has the most quota left. It does **not** skip two other things:
 Auto-swap does not watch a running session and switch mid-flight. While a CLI
 owns the terminal the launcher is not running, so it has nothing to watch with.
 
-`H` can hand off *from* Claude Code, Codex and OpenCode: the first two are read
-from a transcript file, the third from its SQLite store. It can hand off *to* any
+`H` can hand off *from* Claude Code, Codex, OpenCode and Antigravity: the first
+two are read from a transcript file, OpenCode from its SQLite store, and
+Antigravity from its per-conversation store. It can hand off *to* any
 other account: Claude Code and Codex are opened on the brief directly, because
 their opening-prompt syntax is known, while every other provider — OpenCode,
 Antigravity — takes it by hand: the brief's text goes on the terminal's
@@ -330,12 +329,42 @@ you need more" section as the `sqlite3` command. The preview pane reads the
 session's text parts and takes the tail from the end rather than scanning
 backwards through a file, which is bounded by the session and needs no windowing.
 
-**What it does not do yet.** Antigravity is still unread (its title is a
-protobuf blob with no published schema). `opencode export <id>` is not used: on
-this machine it answered `Session not found` for a session present in the
-profile store, so the store is read directly. And a session that lives only in a
-stale, unmerged instance directory is still not read — the same copies the recent
-list refuses to offer, for the same reason.
+**What it does not do yet.** The brief still reads OpenCode's store directly
+rather than through `opencode export <id>`. Export once answered `Session not
+found` here for a session present in the profile store; run with the profile's
+own environment it works, and it is what a resume uses to carry a session into
+an instance (see [session-store.md](session-store.md)), but the reader predates
+that and has no reason to change. A session that lives only in a stale,
+unmerged instance directory is still not read — the same copies the recent list
+refuses to offer, for the same reason.
+
+### Reading Antigravity
+
+Antigravity keeps one SQLite store per conversation
+(`~/.gemini/antigravity-cli/conversations/<id>.db` under the profile's private
+home) and a `conversation_summaries.db` beside them. The summaries hold what a
+list needs as plain columns, so listing decodes nothing. A conversation with no
+workspace was a prompt a program handed the CLI (on the workstation, six calls
+from a reading tool), so it is headless. Subagent conversations
+(`nesting_depth` above 0) are not listed.
+
+The turns are protobuf in the `steps` table, with no published schema. The field
+paths were read off the workstation's own conversations and hold across all of
+them:
+
+| Step type | Field | What it is | Read |
+| --------- | ----- | ---------- | ---- |
+| 14 | `19.2` | what the user typed | yes |
+| 15 | `20.1` | the model's reply (`20.8` repeats it) | yes |
+| 15 | `20.3` | its thinking | no |
+| 15 | `20.7.3` | a tool call's arguments | no |
+| first step's metadata | `1.1` | when the conversation began (seconds) | yes, once |
+
+The start time is read when a conversation is indexed, not on a refresh, and the
+turns are cached in the index once something reads them. A path that stops
+matching after an Antigravity update reads as nothing said, never as the wrong
+thing said. The brief points at the conversation's store and says it is
+protobuf, rather than suggesting to grep it.
 
 The clipboard is the terminal's own, reached with an OSC 52 escape rather than
 by shelling out to `xclip`, `wl-copy` or `pbcopy`: which of those exists is a
