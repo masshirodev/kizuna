@@ -202,6 +202,16 @@ func refreshSessionIndex(db *sql.DB, profile Profile) error {
 		})
 	case "opencode":
 		return refreshOpenCodeRows(db, profile)
+	case "antigravity":
+		sessions, err := antigravitySessions(profile)
+		if err != nil {
+			return err
+		}
+		// The start time is protobuf in the conversation's first step: read
+		// once, when the conversation is (re)indexed, never on a refresh.
+		return refreshStoreRows(db, profile, antigravitySummariesPath(profile), sessions, func(record *recordedSession) {
+			record.when = antigravityStartTime(profile, record.session.id)
+		})
 	}
 	return nil
 }
@@ -271,6 +281,14 @@ func refreshOpenCodeRows(db *sql.DB, profile Profile) error {
 			return err
 		}
 	}
+	return refreshStoreRows(db, profile, archive, sessions, nil)
+}
+
+// refreshStoreRows indexes a provider whose conversations are rows in a store
+// rather than files: the fingerprint is each session's own last activity and
+// title. fillIn, when given, completes a record that is about to be written,
+// for fields that cost a decode the listing did not pay for.
+func refreshStoreRows(db *sql.DB, profile Profile, source string, sessions []recordedSession, fillIn func(*recordedSession)) error {
 	known := map[string]string{}
 	rows, err := db.Query(`SELECT id, fingerprint FROM session WHERE profile = ?`, profile.Name)
 	if err != nil {
@@ -296,7 +314,10 @@ func refreshOpenCodeRows(db *sql.DB, profile Profile) error {
 		if known[record.session.id] == fingerprint {
 			continue
 		}
-		if err := upsertIndexedSession(tx, profile, record, archive, fingerprint); err != nil {
+		if fillIn != nil {
+			fillIn(&record)
+		}
+		if err := upsertIndexedSession(tx, profile, record, source, fingerprint); err != nil {
 			return err
 		}
 	}

@@ -1,7 +1,6 @@
 # A session store of our own, and a fresh OpenCode store per instance
 
-Status: **approved 2026-09-28.** P0, P1 and P2 are built (below, "As built");
-P3 is not yet. It changes the seeding decision in
+Status: **approved 2026-09-28.** P0 to P3 are all built (below, "As built"). It changes the seeding decision in
 [opencode-concurrent-instances.md](opencode-concurrent-instances.md) and the
 readers in [sessions.md](sessions.md). Back to the [README](../README.md).
 
@@ -280,3 +279,24 @@ deleted?
   profiles, first build 335 ms, refresh 20 ms.
 - The open question stands: rows whose transcript was deleted are dropped with
   it, not kept as pointers.
+
+## As built (P3)
+
+- **The premise was out of date.** The proposal said Antigravity's titles live in
+  a protobuf blob. In the version on the workstation, `conversation_summaries.db`
+  carries title, workspace and last-modified time as plain columns, so listing
+  decodes nothing. What is protobuf is each conversation's `steps`, which is
+  where the turns and the start time are.
+- `cmd/ai/antigravity.go`: a schema-less wire-format walker (`protoString`,
+  `protoVarint`) follows field paths read off the operator's own conversations:
+  user text at step type 14 `19.2`, reply at type 15 `20.1`, start time at the
+  first step's metadata `1.1`. Thinking (`20.3`) and tool arguments (`20.7.3`)
+  are skipped. The table is in [sessions.md](sessions.md#reading-antigravity).
+- Indexed through `refreshStoreRows`, the store-backed refresh OpenCode now
+  shares: the start time is decoded once per changed conversation, via its
+  `fillIn` hook. Turns are cached once read.
+- Headless: no workspace. The workstation's six are all a reading tool's calls;
+  its twelve conversations all have one.
+- On the workstation: 18 conversations listed (12 interactive), start times
+  earlier than their last activity, and a 403-step conversation reduced to its
+  six spoken turns out of 197 tool calls.

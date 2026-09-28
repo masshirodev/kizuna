@@ -93,6 +93,26 @@ func readSessionPreview(profile Profile, record recordedSession) sessionPreview 
 		preview.messages = messages
 		return preview
 	}
+	if profile.Provider == "antigravity" {
+		messages, _, err := readSessionMessages(profile, record)
+		if err != nil {
+			preview.problem = err.Error()
+			return preview
+		}
+		if len(messages) == 0 {
+			preview.problem = "nothing was said in this conversation"
+			return preview
+		}
+		preview.earlier = len(messages) > previewTurns
+		if preview.earlier {
+			messages = messages[len(messages)-previewTurns:]
+		}
+		for index := range messages {
+			messages[index].text = clipRunes(messages[index].text, previewTurnRunes)
+		}
+		preview.messages = messages
+		return preview
+	}
 	if profile.Provider == "opencode" {
 		store, ok := opencodeStoreFor(profile, record.session.id)
 		if !ok {
