@@ -193,6 +193,16 @@ terminal, Ctrl-C already reaches the CLI through the foreground process group.
 Before this, a `kill` of the launcher killed only `ai`, orphaned the CLI, and
 left the instance to be merged by some later start.
 
+## Compacting an OpenCode store
+
+`ai compact <profile>` drops opencode's sync event log from an OpenCode
+profile's session store and vacuums it. That log is read only to move a
+session to a remote workspace, and it can dwarf the conversations: 4.9 GB of a
+5.0 GB store on one profile here. It refuses while any instance runs or any
+process uses the store without going through `ai`, keeps a backup beside the
+store, and reports the size before and after. See
+[session-store.md](session-store.md).
+
 ## Environment
 
 DeepSeek should be configured in the OpenCode profile using OpenCode's normal

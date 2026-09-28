@@ -49,6 +49,32 @@ type profileForm struct {
 	tail     int
 	original string
 	isNew    bool
+	// running is true when the profile had a live instance as the form
+	// opened. Name, provider and command are then locked (formFieldLocked);
+	// default args and the note are read only at launch, so they stay editable.
+	running bool
+}
+
+// formRunningLockedFields are the fields a running profile cannot change: the
+// name is its directory and the instances live under it, and the provider and
+// command decide what the live processes are.
+const formRunningLockedFields = 3
+
+// formFieldLocked reports whether a field is read-only in this form.
+func (form profileForm) formFieldLocked(field int) bool {
+	return form.running && field < formRunningLockedFields
+}
+
+// nextFormField moves focus by step, skipping locked fields.
+func (form profileForm) nextFormField(step int) int {
+	field := form.field
+	for range formFields {
+		field = (field + step + formFields) % formFields
+		if !form.formFieldLocked(field) {
+			return field
+		}
+	}
+	return form.field
 }
 
 type processFinishedMsg struct {
@@ -607,10 +633,6 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearStatus()
 	case "e":
 		if hasSelection {
-			if profileIsRunning(profile) {
-				m.setStatus(statusErr, "cannot edit a running profile")
-				return m, nil
-			}
 			m.mode = tuiForm
 			m.form = profileForm{
 				name:        profile.Name,
@@ -619,6 +641,10 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				defaultArgs: formatArguments(profile.DefaultArgs),
 				notes:       profile.Notes,
 				original:    profile.Name,
+				running:     profileIsRunning(profile),
+			}
+			if m.form.running {
+				m.form.field = formRunningLockedFields
 			}
 			m.clearStatus()
 		}
@@ -1773,10 +1799,13 @@ func (m tuiModel) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = tuiList
 		return m, tea.Batch(loadUsageCmd(m.profiles), m.loadCockpitCmd())
 	case "tab", "down":
-		m.form.field, m.form.tail = (m.form.field+1)%formFields, 0
+		m.form.field, m.form.tail = m.form.nextFormField(1), 0
 		return m, nil
 	case "shift+tab", "up":
-		m.form.field, m.form.tail = (m.form.field+formFields-1)%formFields, 0
+		m.form.field, m.form.tail = m.form.nextFormField(-1), 0
+		return m, nil
+	}
+	if m.form.formFieldLocked(m.form.field) {
 		return m, nil
 	}
 	if m.form.field == formProviderField {
@@ -1883,8 +1912,11 @@ func (m *tuiModel) saveForm() error {
 		if err != nil {
 			return err
 		}
-		if profileIsRunning(original) {
-			return errors.New("cannot edit a running profile")
+		// Checked at save, not only at open: the profile may have started
+		// while the form was up.
+		if profileIsRunning(original) && (m.form.name != original.Name ||
+			m.form.provider != original.Provider || m.form.command != original.Command) {
+			return fmt.Errorf("stop %s before changing its name, provider or command", original.Name)
 		}
 		if m.form.name != m.form.original {
 			if err := checkNameAvailable(cfg, m.form.name); err != nil {

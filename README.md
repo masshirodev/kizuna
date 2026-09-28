@@ -70,6 +70,7 @@ on right now.
 | Seeing the active profile inside a CLI; OpenUsage | [doc/integrations.md](doc/integrations.md) |
 | Update check and self-update | [doc/updates.md](doc/updates.md) |
 | How concurrent OpenCode instances work | [doc/opencode-concurrent-instances.md](doc/opencode-concurrent-instances.md) |
+| Fresh OpenCode stores, resume by import, `ai compact` | [doc/session-store.md](doc/session-store.md) |
 
 ## License
 

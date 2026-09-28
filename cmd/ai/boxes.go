@@ -36,15 +36,18 @@ func (m tuiModel) formContent(width int) []string {
 		heading += "   " + providerStyle(m.form.provider).Render(name)
 	}
 	valueWidth := min(formValueWidth, max(width-formLabelWidth, 8))
-	lines := []string{
-		spread(heading, dimStyle.Render("applies from the next launch"), width), "",
+	lines := []string{spread(heading, dimStyle.Render("applies from the next launch"), width), ""}
+	if m.form.running {
+		lines = append(lines, dimStyle.Render(truncate("running: name, provider and command are locked until it stops", width)), "")
+	}
+	lines = append(lines,
 		m.formField(0, "name", m.form.name, valueWidth), "",
-		m.formLabel(formProviderField, "provider") + m.providerChips(), "",
+		m.formLabel(formProviderField, "provider")+m.providerRow(), "",
 		m.formField(2, "command", m.form.command, valueWidth), "",
 		m.formField(3, "default args", m.form.defaultArgs, valueWidth),
-		strings.Repeat(" ", formLabelWidth) + dimStyle.Render(truncate("shell-style quotes group words; nothing is run through a shell", max(width-formLabelWidth, 8))), "",
+		strings.Repeat(" ", formLabelWidth)+dimStyle.Render(truncate("shell-style quotes group words; nothing is run through a shell", max(width-formLabelWidth, 8))), "",
 		m.formField(4, "note", m.form.notes, valueWidth), "",
-	}
+	)
 	lines = append(lines, m.launchesAs(width)...)
 	return append(lines, "", boxFooter(width, helpEntry{"esc", "discard"},
 		helpEntry{"tab", "next field"}, helpEntry{"←→", "provider"}, helpEntry{"↵", "save"}))
@@ -61,6 +64,9 @@ func (m tuiModel) formLabel(field int, label string) string {
 // is the field being typed into, and in the quieter field tone otherwise, so
 // every field reads as editable and only one as active.
 func (m tuiModel) formField(field int, label, value string, width int) string {
+	if m.form.formFieldLocked(field) {
+		return m.formLabel(field, label) + dimStyle.Render(" "+truncate(value, width-3))
+	}
 	active := field == m.form.field
 	ink := pen{background: colorField}
 	if active {
@@ -76,6 +82,15 @@ func (m tuiModel) formField(field int, label, value string, width int) string {
 		well += ink.render(lipgloss.NewStyle(), strings.Repeat(" ", gap))
 	}
 	return m.formLabel(field, label) + well
+}
+
+// providerRow is the chips, or just the provider when a running profile has
+// it locked: offering the others would suggest they could be picked.
+func (m tuiModel) providerRow() string {
+	if m.form.formFieldLocked(formProviderField) {
+		return dimStyle.Render(" " + m.form.provider)
+	}
+	return m.providerChips()
 }
 
 // providerChips draws the providers as a row, the chosen one reversed into

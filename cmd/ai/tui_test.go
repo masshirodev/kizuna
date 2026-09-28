@@ -161,10 +161,20 @@ func TestViewCountsConcurrentProfileInstances(t *testing.T) {
 	}
 }
 
-func TestEditRefusesRunningProfile(t *testing.T) {
+// runningProfileFixture configures one profile and marks it running (a lock
+// naming PID 1, which is always alive).
+func runningProfileFixture(t *testing.T) (tuiModel, Profile) {
+	t.Helper()
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", root)
-	profile := Profile{Name: "claude-personal", Provider: "claude", Command: "claude"}
+	profile := Profile{Name: "claude-personal", Provider: "claude", Command: "claude", Notes: "old note"}
+	path, err := configPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveConfig(path, Config{Profiles: []Profile{profile}}); err != nil {
+		t.Fatal(err)
+	}
 	dir := filepath.Join(root, appName, "profiles", profile.Name, instancesDirectory, "run-one")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -172,11 +182,67 @@ func TestEditRefusesRunningProfile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".active.lock"), []byte("1\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	m := tuiModel{profiles: []Profile{profile}, mode: tuiList}
-	updated, _ := m.updateList(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
-	got := updated.(tuiModel)
-	if got.mode != tuiList || !strings.Contains(got.status, "cannot edit") {
-		t.Fatalf("running profile entered edit mode: mode=%v status=%q", got.mode, got.status)
+	return tuiModel{profiles: []Profile{profile}, mode: tuiList, configPath: path, width: 100}, profile
+}
+
+func keyRunes(text string) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text)}
+}
+
+// Default args and the note are read only at launch, so a running profile's
+// can change; its name, provider and command cannot.
+func TestEditingARunningProfileLocksOnlyNameProviderAndCommand(t *testing.T) {
+	m, profile := runningProfileFixture(t)
+	updated, _ := m.updateList(keyRunes("e"))
+	m = updated.(tuiModel)
+	if m.mode != tuiForm {
+		t.Fatalf("running profile did not open the editor: mode=%v status=%q", m.mode, m.status)
+	}
+	if m.form.field != 3 {
+		t.Fatalf("editor opened on field %d, want default args (3)", m.form.field)
+	}
+	if view := strings.Join(m.formContent(100), "\n"); !strings.Contains(view, "locked until it stops") {
+		t.Fatalf("editor does not say why fields are locked:\n%s", view)
+	}
+	// Tab only ever lands on the two editable fields.
+	seen := map[int]bool{}
+	for range 6 {
+		updated, _ = m.updateForm(tea.KeyMsg{Type: tea.KeyTab})
+		m = updated.(tuiModel)
+		seen[m.form.field] = true
+	}
+	if len(seen) != 2 || !seen[3] || !seen[4] {
+		t.Fatalf("tab visited fields %v, want only 3 and 4", seen)
+	}
+	// Typing on the note is saved.
+	for m.form.field != 4 {
+		updated, _ = m.updateForm(tea.KeyMsg{Type: tea.KeyTab})
+		m = updated.(tuiModel)
+	}
+	updated, _ = m.updateForm(keyRunes("!"))
+	m = updated.(tuiModel)
+	updated, _ = m.updateForm(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(tuiModel)
+	if m.mode != tuiList {
+		t.Fatalf("save refused: %q", m.status)
+	}
+	cfg, err := loadConfig(m.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Profiles[0]; got.Notes != "old note!" || got.Name != profile.Name || got.Command != profile.Command {
+		t.Fatalf("saved profile = %+v", got)
+	}
+}
+
+// The lock holds at save as well, for a form opened before the profile started.
+func TestSaveRefusesRenamingAProfileThatIsRunning(t *testing.T) {
+	m, profile := runningProfileFixture(t)
+	m.mode = tuiForm
+	m.form = profileForm{name: "renamed", provider: profile.Provider, command: profile.Command,
+		notes: profile.Notes, original: profile.Name}
+	if err := m.saveForm(); err == nil || !strings.Contains(err.Error(), "stop claude-personal before changing") {
+		t.Fatalf("save of a renamed running profile = %v, want refused", err)
 	}
 }
 

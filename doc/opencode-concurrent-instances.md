@@ -244,10 +244,12 @@ workaround this spec exists to fix.
 
 ## Implementation notes (as built)
 
-- Seed is a full copy via `VACUUM INTO` (transactionally consistent even
-  mid-merge, WAL folded in), not a table subset — so project ids, history,
-  and OAuth rows all match the profile, and there is no per-table schema
-  bookkeeping at seed time. Cost: one full copy per launch.
+- ~~Seed is a full copy via `VACUUM INTO`~~ **Superseded 2026-09-28** by
+  [session-store.md](session-store.md): the store is no longer copied. The
+  copy cost 55 s for a 2.8 GB store and would have been 5 GB per launch on
+  another, almost all of it opencode's sync event log. project ids turned out
+  to be derived from the repository, so a fresh store matches the archive
+  anyway, and a resume imports the one session it reopens.
 - The seed receipt (`.seeded`, with seed hashes of `auth.json`/`model.json`
   and the history size) doubles as the merge contract: no receipt means a
   failed seed the scanner may delete; a receipt means user data the scanner
