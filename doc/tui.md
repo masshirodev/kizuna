@@ -265,6 +265,15 @@ the isolated directory the provider is pointed at (`CLAUDE_CONFIG_DIR`,
 `CODEX_HOME`, the XDG triple, …), and how the running account will name itself.
 Tab moves between fields and Enter saves from any of them.
 
+A running profile opens in the editor too. Its default args and note are read
+only when a launch starts, so changing them cannot reach a process already
+running, and they stay editable. Its **name, provider and command are locked**:
+the name is the directory its live instances run under, and the provider and
+command are what those instances are. They are drawn dimmed under a
+`running:` line, and tab skips them. The save checks again, because a profile
+can start while its form is open, and it refuses a change to any of the three
+with `stop <name> before changing its name, provider or command`.
+
 **The MCP / skill box (`m`, `s`)** is one box: the profiles that could lend on
 the left with how many each has, the chosen one's servers or skills on the right,
 ticked with space. `←`/`→` move between the panes, moving through the lenders
