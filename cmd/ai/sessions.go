@@ -24,6 +24,11 @@ import (
 type instanceSession struct {
 	id    string
 	title string
+	// name is the slug Claude Code runs an interactive session under
+	// (`ranma-ff`). It is not the conversation's title — two sessions in one
+	// repo get near-identical slugs — so the picker shows it beside the title,
+	// as the handle `claude agents` and the status line know the session by.
+	name string
 }
 
 // sessionLookupTimeout bounds the provider CLI call made to list live
@@ -40,7 +45,7 @@ func describeInstances(profile Profile, instances []profileInstance) []profileIn
 	case "claude":
 		live := claudeLiveSessions(profile)
 		for index, instance := range described {
-			described[index].session = matchClaudeSession(live, instance)
+			described[index].session = titleClaudeSession(profile, matchClaudeSession(live, instance))
 		}
 	case "codex":
 		for index, instance := range described {
@@ -94,6 +99,32 @@ func matchClaudeSession(agents []claudeAgent, instance profileInstance) instance
 		}
 	}
 	return instanceSession{}
+}
+
+// titleClaudeSession swaps the agent slug `claude agents` reports for the
+// title the conversation's own transcript carries, which is what Claude Code's
+// UI calls the session. The slug is kept as the session's name, and stays the
+// title too when the transcript cannot be found or names nothing.
+func titleClaudeSession(profile Profile, session instanceSession) instanceSession {
+	if session.id == "" {
+		return session
+	}
+	session.name = session.title
+	root, err := profileRoot()
+	if err != nil {
+		return session
+	}
+	// Transcripts sit under a folder named after the directory the session
+	// started in, which need not be the folder the instance was launched from,
+	// so the id is looked for under every project rather than derived.
+	paths, _ := filepath.Glob(filepath.Join(root, profile.Name, "claude", "projects", "*", session.id+".jsonl"))
+	for _, path := range paths {
+		if record, ok := readClaudeTranscript(path); ok && record.session.title != "" && record.session.title != session.name {
+			session.title = record.session.title
+			return session
+		}
+	}
+	return session
 }
 
 // codexSessionSearchLimit caps how many recorded sessions are opened while

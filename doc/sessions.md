@@ -175,9 +175,18 @@ itself and are best effort:
 | Provider | Source |
 | -------- | ------ |
 | Codex | the newest session log recorded for that folder |
-| Claude Code | `claude agents --json`, matched on the recorded PID |
+| Claude Code | `claude agents --json`, matched on the recorded PID, then titled from that session's transcript |
 | Antigravity | not available; the instance is listed without a title |
 | OpenCode | not available; the instance is listed without a title |
+
+For Claude Code, `claude agents` gives the session id and a slug such as
+`ranma-ff`, but no title. The slug comes from the folder name, so two sessions
+in one repo look almost the same. The picker takes the session id, opens that
+conversation's transcript, and shows the title Claude Code gave it (its
+`ai-title` record), falling back to the opening message. The slug is shown dim
+after the title, because it is how the status line and `claude agents` name the
+session. When the row is too narrow for both, the slug is dropped. When no
+transcript is found, the slug is the title.
 
 Hijacking an Antigravity profile is refused for the same reason a
 second launch is: its credential store is exclusive while the first process is

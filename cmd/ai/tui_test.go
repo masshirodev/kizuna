@@ -640,12 +640,12 @@ func TestHijackPickerNamesSessionAndFolder(t *testing.T) {
 		cursor:   1,
 		mode:     tuiHijack,
 		instances: []profileInstance{
-			{pid: 11, folder: "/work/lattice", session: instanceSession{id: "aaa", title: "Edit contacts"}},
+			{pid: 11, folder: "/work/lattice", session: instanceSession{id: "aaa", title: "Edit contacts", name: "lattice-7d"}},
 			{pid: 12, folder: "/work/hub", session: instanceSession{id: "bbb", title: "Server status card"}},
 		},
 	}
 	view := m.View()
-	for _, want := range []string{"OPEN A RUNNING SESSION HERE   codex-work", "Instance 1 (PID 11)", "Edit contacts", "/work/lattice", "Instance 2 (PID 12)", "Server status card", "open here"} {
+	for _, want := range []string{"OPEN A RUNNING SESSION HERE   codex-work", "Instance 1 (PID 11)", "Edit contacts  lattice-7d", "/work/lattice", "Instance 2 (PID 12)", "Server status card", "open here"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("hijack picker is missing %q:\n%s", want, view)
 		}
