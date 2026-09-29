@@ -54,6 +54,7 @@ func paletteColumns() [][]paletteGroup {
 				{"K", "K", "stop an instance"},
 				{"m", "m", "install MCP servers"},
 				{"s", "s", "install skills"},
+				{"I", "I", "integrations"},
 			}},
 			{"AI-SESSION", []paletteAction{
 				{"c", "c", "change launch folder"},
@@ -250,6 +251,10 @@ func (m tuiModel) paletteNote(key string) (string, lipgloss.Style) {
 		}
 	case "C":
 		return "no credentials", dimStyle
+	case "I":
+		if selected {
+			return m.integrationsPaletteNote(profile), dimStyle
+		}
 	case "l":
 		if !selected {
 			break

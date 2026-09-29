@@ -799,6 +799,8 @@ func modalCeiling(mode tuiMode) int {
 		return wizardModalWidth
 	case tuiShare, tuiFolder:
 		return shareModalWidth
+	case tuiIntegrations:
+		return integrationsModalWidth
 	case tuiPalette:
 		return paletteModalWidth
 	case tuiParams:
@@ -862,6 +864,10 @@ func (m tuiModel) modalView(frame layout) string {
 		content = m.selfUpdateContent(inner)
 	case tuiPalette:
 		content = m.paletteContent(inner)
+	case tuiIntegrations:
+		content = m.integrationsContent(inner, rows)
+	case tuiConfirmOpenUsage:
+		content = m.openUsageConfirmContent(inner)
 	case tuiConfirmDelete, tuiConfirmKill:
 		content, style = m.confirmContent(inner), dangerPanelStyle
 	}
@@ -897,7 +903,7 @@ func (m tuiModel) statusLine(width int) string {
 // steps of a handoff.
 func fullHeightModal(mode tuiMode) bool {
 	switch mode {
-	case tuiRecent, tuiHandoff, tuiHandoffTo, tuiShare, tuiHandoffBrief, tuiFolder:
+	case tuiRecent, tuiHandoff, tuiHandoffTo, tuiShare, tuiHandoffBrief, tuiFolder, tuiIntegrations:
 		return true
 	}
 	return false

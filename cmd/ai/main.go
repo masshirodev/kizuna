@@ -172,9 +172,24 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 		return nil
 	case "integrate":
+		if len(args) >= 2 && args[1] == "list" {
+			if len(args) > 3 {
+				return errors.New("usage: ai integrate list [profile]")
+			}
+			profiles := cfg.Profiles
+			if len(args) == 3 {
+				profile, err := resolveProfile(cfg, args[2])
+				if err != nil {
+					return err
+				}
+				profiles = []Profile{profile}
+			}
+			integrateList(profiles, machineIntegrationEnv(), stdout)
+			return nil
+		}
 		rest, off := takeFlag(args[1:], "--off")
 		if len(rest) != 2 || (rest[0] != "openusage" && rest[0] != "statusline" && rest[0] != "ranma") || (off && rest[0] != "ranma") {
-			return errors.New("usage: ai integrate <openusage|statusline|ranma> <profile> (ranma takes --off)")
+			return errors.New("usage: ai integrate <openusage|statusline|ranma> <profile> (ranma takes --off), or ai integrate list [profile]")
 		}
 		profile, err := resolveProfile(cfg, rest[1])
 		if err != nil {
@@ -185,6 +200,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 		if rest[0] == "statusline" {
 			return installIndicator(profile, &cfg, configPath, stdout)
+		}
+		if !supportsOpenUsage(profile.Provider) {
+			return fmt.Errorf("OpenUsage has no %s integration", profile.Provider)
 		}
 		return launchExternal("openusage", []string{"integrations", "install", openUsageIntegration(profile.Provider)}, profile, stdout, stderr)
 	case "compact":
@@ -1036,6 +1054,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  ai integrate openusage <profile>")
 	fmt.Fprintln(w, "  ai integrate statusline <profile>       show the profile inside the CLI")
 	fmt.Fprintln(w, "  ai integrate ranma <profile> [--off]    in a ranma pane, open tmux panes (agent teams) as ranma panes")
+	fmt.Fprintln(w, "  ai integrate list [profile]             what each profile has, and what it could have")
 	fmt.Fprintln(w, "  ai path")
 	fmt.Fprintln(w, "  ai version                              build revision and update check")
 	fmt.Fprintln(w, "")
