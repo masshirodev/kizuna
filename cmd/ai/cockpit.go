@@ -578,6 +578,9 @@ func (m tuiModel) launchSummary(profile Profile) string {
 		parts = append(parts, "model "+model)
 	}
 	parts = append(parts, indicator)
+	if profile.TmuxShim {
+		parts = append(parts, "ranma tmux shim")
+	}
 	if profile.Notes != "" {
 		parts = append(parts, profile.Notes)
 	}

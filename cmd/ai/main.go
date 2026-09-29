@@ -41,6 +41,10 @@ type Profile struct {
 	// Indicator names the mechanism that tells the user which profile owns the
 	// screen once the CLI starts. Empty means none; see indicator.go.
 	Indicator string `json:"indicator,omitempty"`
+	// TmuxShim launches the profile under ranma's tmux shim when it is started
+	// in a ranma pane, so programs that open tmux panes open ranma ones; see
+	// ranma.go.
+	TmuxShim bool `json:"tmux_shim,omitempty"`
 }
 
 type Config struct {
@@ -168,14 +172,18 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 		return nil
 	case "integrate":
-		if len(args) != 3 || (args[1] != "openusage" && args[1] != "statusline") {
-			return errors.New("usage: ai integrate <openusage|statusline> <profile>")
+		rest, off := takeFlag(args[1:], "--off")
+		if len(rest) != 2 || (rest[0] != "openusage" && rest[0] != "statusline" && rest[0] != "ranma") || (off && rest[0] != "ranma") {
+			return errors.New("usage: ai integrate <openusage|statusline|ranma> <profile> (ranma takes --off)")
 		}
-		profile, err := resolveProfile(cfg, args[2])
+		profile, err := resolveProfile(cfg, rest[1])
 		if err != nil {
 			return err
 		}
-		if args[1] == "statusline" {
+		if rest[0] == "ranma" {
+			return setTmuxShim(profile, !off, &cfg, configPath, stdout)
+		}
+		if rest[0] == "statusline" {
 			return installIndicator(profile, &cfg, configPath, stdout)
 		}
 		return launchExternal("openusage", []string{"integrations", "install", openUsageIntegration(profile.Provider)}, profile, stdout, stderr)
@@ -459,7 +467,7 @@ func launchProfileCommand(command string, args []string, profile Profile, stdout
 	cmd.Env = launchEnvironment(profile, workdir, lockDir, os.Environ())
 	// A fresh OpenCode store holds no sessions; bring in the one being reopened.
 	prepareOpenCodeInstance(profile, workdir, lockDir, commandFolder(cmd), args, stderr)
-	cmd, err = applyIndicator(cmd, profile, lockDir)
+	cmd, err = wrapLaunch(cmd, profile, lockDir)
 	if err != nil {
 		unlock()
 		return err
@@ -1027,6 +1035,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  ai env <profile>")
 	fmt.Fprintln(w, "  ai integrate openusage <profile>")
 	fmt.Fprintln(w, "  ai integrate statusline <profile>       show the profile inside the CLI")
+	fmt.Fprintln(w, "  ai integrate ranma <profile> [--off]    in a ranma pane, open tmux panes (agent teams) as ranma panes")
 	fmt.Fprintln(w, "  ai path")
 	fmt.Fprintln(w, "  ai version                              build revision and update check")
 	fmt.Fprintln(w, "")
