@@ -35,6 +35,8 @@ const (
 	tuiConfirmInstall
 	tuiConfirmSelfUpdate
 	tuiPalette
+	tuiIntegrations
+	tuiConfirmOpenUsage
 )
 
 type profileForm struct {
@@ -193,6 +195,9 @@ type tuiModel struct {
 	clone     string
 	cloneTail int
 	share     shareDraft
+	// integrations is the integrations box (`I`): its scope, its cursors, and
+	// the statuses read when it opened (integrationsbox.go).
+	integrations integrationsDraft
 	// paletteFilter is what has been typed into the all-actions palette, and
 	// paletteRow the highlighted action among those it lets through.
 	paletteFilter string
@@ -536,6 +541,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSelfUpdate(msg)
 		case tuiPalette:
 			return m.updatePalette(msg)
+		case tuiIntegrations:
+			return m.updateIntegrations(msg)
+		case tuiConfirmOpenUsage:
+			return m.updateConfirmOpenUsage(msg)
 		}
 	case clipboardMsg:
 		if msg.err != nil {
@@ -726,6 +735,8 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if hasSelection {
 			m.openShare(shareSkills)
 		}
+	case "I":
+		m.openIntegrations()
 	case "p":
 		if hasSelection {
 			m.openParams()

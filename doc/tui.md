@@ -241,7 +241,7 @@ The keys it lists, all of which also work straight from the board:
 | ----- | --- | ------ |
 | Conversation | `↵` `p` `R` `h` `H` | run here · run with arguments · resume · open a live instance (the original keeps running) · hand off |
 | Profile | `a` `e` `C` `x` `/` | add · edit · clone its setup (no credentials) · delete after confirmation · find |
-| Provider CLI | `l` `i` `u` `K` `m` `s` | log in · install the CLI (after showing the command) · update it · stop an instance (Enter stops one, `a`/`y` all) · install MCP servers · install skills |
+| Provider CLI | `l` `i` `u` `K` `m` `s` `I` | log in · install the CLI (after showing the command) · update it · stop an instance (Enter stops one, `a`/`y` all) · install MCP servers · install skills · integrations |
 | ai-session | `c` `A` `r` `U` `q` | change launch folder · auto-swap on handoff · refresh quotas and updates · update ai-session (after showing the checkout and steps) · quit |
 
 ## The boxes
@@ -293,6 +293,42 @@ for each ticked server, what the copy rewrites — `${VAR}` respelled as
 computed from the same splits the writers use, so the box cannot describe a
 rewrite the copy then does not make.
 
+**The integrations box (`I`)** shows what the selected profile has of the
+things `ai integrate` writes, which are the status line, OpenUsage's hooks and
+ranma's tmux shim ([integrations.md](integrations.md)), and it acts on them.
+It has two scopes, and `a` flips between them the way the resume picker flips
+between this account and all accounts:
+
+- **One profile.** The integrations that apply to this profile are listed on
+  the left, one state each. The pane on the right explains the row under the
+  cursor: what it `writes`, what the `launch` adds, what it `gives`, how to
+  `undo` it, whether it applies `HERE` (for the shim, whether this TUI is in a
+  ranma pane), the `CHECKS` that decide it, and the CLI command it is the
+  `SAME AS`. An integration that does not apply to the provider is not listed
+  (OpenUsage has nothing for Antigravity). A running profile gets a `running:`
+  line, and the cursor skips the OpenUsage row until the profile stops.
+- **Every profile.** A grid of accounts against integrations. `↑↓` moves between
+  accounts and `←→` between integrations, and the cell under the cursor is
+  explained under the table with its next step and its command (`→ refused`
+  when the CLI would refuse it). Going back with `a` opens the profile the grid
+  was on, and the board follows.
+
+Both scopes use one set of states: `● on` (ai wrote it and reads it back),
+`● another` (a status line that is not ai's), `○ off`, `· not read` (OpenUsage:
+ai never looks), `▶ locked` (refused while the profile runs), `— n/a` (not for
+this provider), `✗ refused` (conflicts with another integration), `needs
+<tool>` (a prerequisite is missing), and `inert here` (the shim is set but this
+TUI is not in a ranma pane). They come from the same checks `ai integrate` and
+the launch make (`cmd/ai/integrations.go`), and `ai integrate list` prints the
+same states as text.
+
+Enter does what the footer says. The shim toggles in place. The status line is
+installed in place and has no undo yet. OpenUsage first shows its installer,
+with the environment it runs in, then runs it under the profile's exclusive
+lock the way `ai integrate openusage` does. That box says outright that the
+row keeps saying `not read` afterwards, since ai never reads OpenUsage's hooks
+back. `m` and `s` go on to the MCP and skill box for the same profile.
+
 ## Recent and pinned arguments
 
 The `p` prompt puts the field on top and, under it, the whole command it will
@@ -335,7 +371,7 @@ history.
 
 **A box is sized to the terminal, not to what it happens to be showing.** Every
 box grows in width with the window up to a ceiling of its own, border included — the resume
-picker at 140, the handoff wizard and the share box at 124, the palette at 120,
+picker at 140, the handoff wizard, the share box and the integrations box at 124, the palette at 120,
 the arguments prompt at 104, the editor at 92, and the boxes that ask one
 question at 88 — and gives back six columns to the board behind it. The width a
 wide terminal adds to a picker goes to the preview rather than the list: a
@@ -391,7 +427,32 @@ disagree, the repository won, and these are the places:
   bar, and auto-swap is shown where it can be changed — the handoff wizard's
   footer and the palette.
 
+- **The integrations box lists one order everywhere.** The integrations
+  handoff put the shim second in the per-profile list and third in the grid.
+  Both scopes follow the grid's order (status line, OpenUsage, ranma), so a row
+  does not move when the scope flips.
+- **The integrations box has no `←→ pane` key.** The mock's per-profile footer
+  offers one, but the explanation pane has nothing to select or scroll, so
+  moving focus into it would do nothing. `a` takes that place in the footer
+  instead, flipping to the grid. The mock drew that scope as a separate shape.
+- **The grid's `↵` is named for what it does** (`↵ turn on`, `↵ install`)
+  rather than "act on cell", and it is left out when the cell has nothing to
+  do. The per-profile scope already worked that way.
+- **The status line's `HERE` is filled in.** The mock only drew `HERE` for the
+  shim. The status line and OpenUsage say they apply to every launch, which is
+  true of anything written into the profile.
+- **Running comes from the board.** The box and the palette note take "running"
+  from the board's own list of instances, the one behind the `▶` count, so
+  they agree with it. The OpenUsage installer still takes the real exclusive
+  lock, and it refuses if an instance started since.
+
 ## What it does not do yet
+
+- **No undo for the status line or OpenUsage from the integrations box.** Both
+  are install-only, as they are on the CLI. Each says so in its `undo` line,
+  along with how to remove it by hand.
+- **No `needs <tool>` in the grid's legend.** The legend is the handoff's six
+  states. A row that needs a tool says which one in its own words.
 
 - **No light-theme review.** The three new tones (`colorTrack`, `colorField`,
   `colorGhost`) have light values, but only the dark theme was checked against

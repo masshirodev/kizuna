@@ -90,6 +90,26 @@ so Codex and Claude hooks are installed beside that profile's own state.
 Login, integration, and export are refused while any instance of the profile
 is running; see [Concurrency and locks](running.md#concurrency-and-locks).
 
+## What each profile has: `ai integrate list` and `I`
+
+```sh
+ai integrate list            # every profile
+ai integrate list max2       # one
+```
+
+`ai integrate list` prints one line per profile and integration, with its
+state in the same words the TUI uses: `● on`, `● another`, `○ off`,
+`· not read`, `▶ locked`, `— n/a`, `✗ refused`, `needs <tool>`. A short note
+follows where there is one, such as `own line`, `tmux bar` or `inert here`. In
+the TUI, `I` opens the integrations box, which shows the same states for one
+profile or for every profile and acts on them
+([tui.md](tui.md#the-boxes), "The integrations box").
+
+Neither says OpenUsage is installed, only `not read`. ai runs OpenUsage's
+installer and never reads back what it wrote. OpenUsage has no Antigravity
+integration, so `ai integrate openusage` refuses an Antigravity profile
+instead of passing the provider through and letting OpenUsage fail on it.
+
 ## Agent teams in ranma panes
 
 Claude Code's agent teams open a pane per teammate when they find themselves
