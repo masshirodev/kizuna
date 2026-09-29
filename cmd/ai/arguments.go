@@ -15,11 +15,12 @@ import (
 // finding the set you meant costs more than typing it again.
 const recentArgumentLimit = 5
 
-// argumentSet is one set of extra arguments typed at the p prompt, and the
-// account it last went to. The account is kept because the history is shared
+// argumentSet is one set of extra arguments typed at the p prompt, the
+// variables typed before them (env.go), and the account it last went to. The account is kept because the history is shared
 // across every provider, and a flag one CLI understands is one another rejects:
 // the row has to say where it was used for that to be visible before it runs.
 type argumentSet struct {
+	Env      []string  `json:"env,omitempty"`
 	Args     []string  `json:"args"`
 	Profile  string    `json:"profile,omitempty"`
 	Provider string    `json:"provider,omitempty"`
@@ -96,23 +97,38 @@ func (h argumentHistory) entries() []argumentSet {
 	return append(slices.Clone(h.Pinned), h.Recent...)
 }
 
-func (h argumentHistory) pinnedIndex(args []string) int {
-	return slices.IndexFunc(h.Pinned, func(set argumentSet) bool { return slices.Equal(set.Args, args) })
+func (h argumentHistory) pinnedIndex(set argumentSet) int {
+	return slices.IndexFunc(h.Pinned, set.same)
 }
 
-func (h argumentHistory) recentIndex(args []string) int {
-	return slices.IndexFunc(h.Recent, func(set argumentSet) bool { return slices.Equal(set.Args, args) })
+func (h argumentHistory) recentIndex(set argumentSet) int {
+	return slices.IndexFunc(h.Recent, set.same)
+}
+
+// same reports whether two sets launch the same way, whoever ran them.
+func (s argumentSet) same(other argumentSet) bool {
+	return slices.Equal(s.Env, other.Env) && slices.Equal(s.Args, other.Args)
+}
+
+// empty is a set that adds nothing to a launch.
+func (s argumentSet) empty() bool {
+	return len(s.Env) == 0 && len(s.Args) == 0
+}
+
+// line is the set as it is typed at the prompt.
+func (s argumentSet) line() string {
+	return formatLaunchLine(s.Env, s.Args)
 }
 
 // record notes a launch. A pinned set is updated where it sits; anything else
 // moves to the front of recent, and the oldest falls off the end. An empty set
-// is not recorded, since running with no extra arguments is what Enter does.
+// is not recorded, since running with nothing extra is what Enter does.
 func (h argumentHistory) record(set argumentSet) argumentHistory {
-	if len(set.Args) == 0 {
+	if set.empty() {
 		return h
 	}
-	set.Args = slices.Clone(set.Args)
-	if index := h.pinnedIndex(set.Args); index >= 0 {
+	set.Env, set.Args = slices.Clone(set.Env), slices.Clone(set.Args)
+	if index := h.pinnedIndex(set); index >= 0 {
 		h.Pinned = slices.Clone(h.Pinned)
 		h.Pinned[index] = set
 		return h
@@ -123,7 +139,7 @@ func (h argumentHistory) record(set argumentSet) argumentHistory {
 		if len(recent) == recentArgumentLimit {
 			break
 		}
-		if !slices.Equal(existing.Args, set.Args) {
+		if !existing.same(set) {
 			recent = append(recent, existing)
 		}
 	}
@@ -139,19 +155,19 @@ func (h argumentHistory) record(set argumentSet) argumentHistory {
 // pin removed by mistake is still one row away. That can push the oldest
 // recent set off the end, the same as running it again would.
 func (h argumentHistory) togglePin(set argumentSet) argumentHistory {
-	if len(set.Args) == 0 {
+	if set.empty() {
 		return h
 	}
-	if index := h.pinnedIndex(set.Args); index >= 0 {
+	if index := h.pinnedIndex(set); index >= 0 {
 		unpinned := h.Pinned[index]
 		h.Pinned = slices.Delete(slices.Clone(h.Pinned), index, index+1)
 		return h.record(unpinned)
 	}
-	if index := h.recentIndex(set.Args); index >= 0 {
+	if index := h.recentIndex(set); index >= 0 {
 		set = h.Recent[index]
 		h.Recent = slices.Delete(slices.Clone(h.Recent), index, index+1)
 	}
-	set.Args = slices.Clone(set.Args)
+	set.Env, set.Args = slices.Clone(set.Env), slices.Clone(set.Args)
 	h.Pinned = append(slices.Clone(h.Pinned), set)
 	return h
 }

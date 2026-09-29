@@ -37,7 +37,10 @@ type Profile struct {
 	Provider    string   `json:"provider"`
 	Command     string   `json:"command"`
 	DefaultArgs []string `json:"default_args,omitempty"`
-	Notes       string   `json:"notes,omitempty"`
+	// DefaultEnv is NAME=value pairs a launch sets when nothing else has; see
+	// env.go.
+	DefaultEnv []string `json:"default_env,omitempty"`
+	Notes      string   `json:"notes,omitempty"`
 	// Indicator names the mechanism that tells the user which profile owns the
 	// screen once the CLI starts. Empty means none; see indicator.go.
 	Indicator string `json:"indicator,omitempty"`
@@ -307,7 +310,7 @@ func profileCommand(args []string, cfg *Config, path string, stdout io.Writer) e
 }
 
 func launch(profile Profile, args []string, plain bool, stdout, stderr io.Writer) error {
-	return launchProfileCommand(profile.Command, profileRunArgs(profile, args, plain), profile, stdout, stderr)
+	return launchProfileCommand(profile.Command, profileRunArgs(profile, args, plain), plain, profile, stdout, stderr)
 }
 
 func launchExclusive(profile Profile, args []string, stdout, stderr io.Writer) error {
@@ -374,15 +377,50 @@ func isPlainFlag(arg string) bool {
 // deliberately performs no expansion or command evaluation. The parsed values
 // are passed straight to exec.Command as individual arguments.
 func parseArguments(value string) ([]string, error) {
-	var args []string
+	words, err := splitWords(value)
+	if err != nil {
+		return nil, err
+	}
+	args := make([]string, 0, len(words))
+	for _, word := range words {
+		args = append(args, word.text)
+	}
+	return args, nil
+}
+
+// word is one word of a typed line. assignment says whether it reads as
+// NAME=value the way a shell would take it: the name and its = unquoted and
+// unescaped, so 'FOO=1' and FOO\=1 stay arguments.
+type word struct {
+	text       string
+	assignment bool
+}
+
+func splitWords(value string) ([]word, error) {
+	var words []word
 	var current strings.Builder
 	var quote rune
 	escaped, started := false, false
+	// equals is where the first bare = landed, and plain whether everything
+	// before it was typed bare; together they decide assignment.
+	equals, plain := -1, true
+	finish := func() {
+		text := current.String()
+		words = append(words, word{text: text, assignment: plain && equals > 0 && validEnvName(text[:equals])})
+		current.Reset()
+		started, equals, plain = false, -1, true
+	}
+	quoted := func(char rune) {
+		if equals < 0 {
+			plain = false
+		}
+		current.WriteRune(char)
+		started = true
+	}
 	for _, char := range value {
 		if escaped {
-			current.WriteRune(char)
+			quoted(char)
 			escaped = false
-			started = true
 			continue
 		}
 		if char == '\\' && quote != '\'' {
@@ -395,8 +433,7 @@ func parseArguments(value string) ([]string, error) {
 				quote = 0
 				started = true
 			} else {
-				current.WriteRune(char)
-				started = true
+				quoted(char)
 			}
 			continue
 		}
@@ -406,11 +443,12 @@ func parseArguments(value string) ([]string, error) {
 			started = true
 		case unicode.IsSpace(char):
 			if started {
-				args = append(args, current.String())
-				current.Reset()
-				started = false
+				finish()
 			}
 		default:
+			if char == '=' && equals < 0 {
+				equals = current.Len()
+			}
 			current.WriteRune(char)
 			started = true
 		}
@@ -422,9 +460,9 @@ func parseArguments(value string) ([]string, error) {
 		return nil, errors.New("default arguments contain an unclosed quote")
 	}
 	if started {
-		args = append(args, current.String())
+		finish()
 	}
-	return args, nil
+	return words, nil
 }
 
 func formatArguments(args []string) string {
@@ -464,7 +502,7 @@ func runLockedCommand(cmd *exec.Cmd, workdir, title string, signals *signalForwa
 	return runCommandWithLock(cmd, lockDir, unlock, title, signals)
 }
 
-func launchProfileCommand(command string, args []string, profile Profile, stdout, stderr io.Writer) error {
+func launchProfileCommand(command string, args []string, plain bool, profile Profile, stdout, stderr io.Writer) error {
 	// Before the lock: seeding an OpenCode instance can take seconds.
 	signals := forwardSignals()
 	defer signals.stop()
@@ -482,7 +520,7 @@ func launchProfileCommand(command string, args []string, profile Profile, stdout
 	}
 	// The environment depends on the lock directory: an isolated OpenCode
 	// instance points its data/state homes at the instance, not the profile.
-	cmd.Env = launchEnvironment(profile, workdir, lockDir, os.Environ())
+	cmd.Env = withLaunchEnv(launchEnvironment(profile, workdir, lockDir, os.Environ()), profile, plain, nil)
 	// A fresh OpenCode store holds no sessions; bring in the one being reopened.
 	prepareOpenCodeInstance(profile, workdir, lockDir, commandFolder(cmd), args, stderr)
 	cmd, err = wrapLaunch(cmd, profile, lockDir)

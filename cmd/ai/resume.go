@@ -116,7 +116,7 @@ func launchInFolder(profile Profile, args []string, folder string, stdout, stder
 	if err != nil {
 		return err
 	}
-	cmd.Env = launchEnvironment(profile, workdir, lockDir, os.Environ())
+	cmd.Env = withLaunchEnv(launchEnvironment(profile, workdir, lockDir, os.Environ()), profile, false, nil)
 	// A fresh OpenCode store holds no sessions; bring in the one being reopened.
 	prepareOpenCodeInstance(profile, workdir, lockDir, commandFolder(cmd), args, stderr)
 	cmd, err = wrapLaunch(cmd, profile, lockDir)

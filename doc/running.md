@@ -210,3 +210,7 @@ provider setup or an environment variable. The launcher preserves ordinary
 environment variables, including `DEEPSEEK_API_KEY`, but removes shared
 `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, XDG paths, and any inherited `AI_PROFILE` or
 `AI_PROVIDER` before adding the selected profile's values.
+
+A profile can also carry default variables, and a single TUI launch can set its
+own. How those layer with your shell and with the values above is in
+[launch-env.md](launch-env.md).

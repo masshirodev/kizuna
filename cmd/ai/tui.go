@@ -684,7 +684,7 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				name:        profile.Name,
 				provider:    profile.Provider,
 				command:     profile.Command,
-				defaultArgs: formatArguments(profile.DefaultArgs),
+				defaultArgs: formatLaunchLine(profile.DefaultEnv, profile.DefaultArgs),
 				notes:       profile.Notes,
 				original:    profile.Name,
 				running:     profileIsRunning(profile),
@@ -1529,7 +1529,7 @@ func (m tuiModel) updateParams(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearStatus()
 		return m, nil
 	case "enter":
-		args, err := parseArguments(m.params)
+		env, args, err := parseLaunchLine(m.params)
 		if err != nil {
 			m.setStatus(statusErr, err.Error())
 			return m, nil
@@ -1540,9 +1540,9 @@ func (m tuiModel) updateParams(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mode = tuiList
-		cmd := m.execProfile(profile, profileRunArgs(profile, args, false), false)
-		if cmd != nil && len(args) > 0 {
-			set := argumentSet{Args: args, Profile: profile.Name, Provider: profile.Provider, Used: m.clock()}
+		cmd := m.execProfileWith(profile, profileRunArgs(profile, args, false), env, false, m.workingDir)
+		set := argumentSet{Env: env, Args: args, Profile: profile.Name, Provider: profile.Provider, Used: m.clock()}
+		if cmd != nil && !set.empty() {
 			if _, err := updateArgumentHistory(func(history argumentHistory) argumentHistory {
 				return history.record(set)
 			}); err != nil {
@@ -1593,7 +1593,7 @@ func (m *tuiModel) pickArgumentRow(row int) {
 		return
 	}
 	m.argumentRow = row
-	m.params, m.paramsTail = formatArguments(entries[row].Args), 0
+	m.params, m.paramsTail = entries[row].line(), 0
 }
 
 // toggleArgumentPin pins or unpins the highlighted row, or, with no row
@@ -1605,16 +1605,16 @@ func (m *tuiModel) toggleArgumentPin() {
 	if entries := m.arguments.entries(); m.argumentRow >= 0 && m.argumentRow < len(entries) {
 		set = entries[m.argumentRow]
 	} else {
-		args, err := parseArguments(m.params)
+		env, args, err := parseLaunchLine(m.params)
 		if err != nil {
 			m.setStatus(statusErr, err.Error())
 			return
 		}
-		if len(args) == 0 {
+		set.Env, set.Args = env, args
+		if set.empty() {
 			m.setStatus(statusErr, "type some arguments, or pick a row, to pin")
 			return
 		}
-		set.Args = args
 	}
 	history, err := updateArgumentHistory(func(history argumentHistory) argumentHistory {
 		return history.togglePin(set)
@@ -1624,8 +1624,8 @@ func (m *tuiModel) toggleArgumentPin() {
 		return
 	}
 	m.arguments = history
-	pinned := history.pinnedIndex(set.Args)
-	label := formatArguments(set.Args)
+	pinned := history.pinnedIndex(set)
+	label := set.line()
 	if pinned >= 0 {
 		m.setStatus(statusOK, "pinned "+label)
 	} else {
@@ -1634,7 +1634,7 @@ func (m *tuiModel) toggleArgumentPin() {
 	if m.argumentRow < 0 {
 		return
 	}
-	switch recent := history.recentIndex(set.Args); {
+	switch recent := history.recentIndex(set); {
 	case pinned >= 0:
 		m.argumentRow = pinned
 	case recent >= 0:
@@ -1933,9 +1933,12 @@ func (m *tuiModel) saveForm() error {
 	if m.form.provider == "" || m.form.command == "" {
 		return errors.New("provider and command are required")
 	}
-	defaultArgs, err := parseArguments(m.form.defaultArgs)
+	defaultEnv, defaultArgs, err := parseLaunchLine(m.form.defaultArgs)
 	if err != nil {
 		return err
+	}
+	if owned := ownedNamesIn(Profile{Name: m.form.name, Provider: m.form.provider}, defaultEnv); len(owned) > 0 {
+		return fmt.Errorf("%s is set by ai-session for this profile, so a default cannot change it; type it with p for one launch", strings.Join(owned, ", "))
 	}
 	cfg, err := loadConfig(m.configPath)
 	if err != nil {
@@ -1957,6 +1960,7 @@ func (m *tuiModel) saveForm() error {
 			Provider:    m.form.provider,
 			Command:     m.form.command,
 			DefaultArgs: defaultArgs,
+			DefaultEnv:  defaultEnv,
 			Notes:       strings.TrimSpace(m.form.notes),
 		})
 	} else {
@@ -1987,13 +1991,12 @@ func (m *tuiModel) saveForm() error {
 		}
 		for index := range cfg.Profiles {
 			if cfg.Profiles[index].Name == m.form.original {
-				cfg.Profiles[index] = Profile{
-					Name:        m.form.name,
-					Provider:    m.form.provider,
-					Command:     m.form.command,
-					DefaultArgs: defaultArgs,
-					Notes:       strings.TrimSpace(m.form.notes),
-				}
+				// Edited in place, so what the form does not show — the
+				// indicator, the tmux shim — survives the save.
+				edited := &cfg.Profiles[index]
+				edited.Name, edited.Provider, edited.Command = m.form.name, m.form.provider, m.form.command
+				edited.DefaultArgs, edited.DefaultEnv = defaultArgs, defaultEnv
+				edited.Notes = strings.TrimSpace(m.form.notes)
 				break
 			}
 		}
@@ -2057,6 +2060,13 @@ func (m *tuiModel) execProfile(profile Profile, args []string, exclusive bool) t
 // the session being reopened belongs to the folder its instance started in,
 // not to whatever folder the TUI is currently pointed at.
 func (m *tuiModel) execProfileIn(profile Profile, args []string, exclusive bool, folder string) tea.Cmd {
+	return m.execProfileWith(profile, args, nil, exclusive, folder)
+}
+
+// execProfileWith also sets env, the variables typed at the p prompt. An
+// exclusive run is a login, which takes neither those nor the defaults, the
+// same as it takes no default arguments.
+func (m *tuiModel) execProfileWith(profile Profile, args, env []string, exclusive bool, folder string) tea.Cmd {
 	workdir, err := ensureProfileState(profile)
 	if err != nil {
 		m.setStatus(statusErr, err.Error())
@@ -2078,6 +2088,9 @@ func (m *tuiModel) execProfileIn(profile Profile, args []string, exclusive bool,
 	// The environment depends on the lock directory: an isolated OpenCode
 	// instance points its data/state homes at the instance, not the profile.
 	cmd.Env = launchEnvironment(profile, workdir, lockDir, os.Environ())
+	if !exclusive {
+		cmd.Env = withLaunchEnv(cmd.Env, profile, false, env)
+	}
 	if cmd, err = wrapLaunch(cmd, profile, lockDir); err != nil {
 		unlock()
 		m.setStatus(statusErr, err.Error())
