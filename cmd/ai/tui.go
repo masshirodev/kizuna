@@ -2067,7 +2067,7 @@ func (m *tuiModel) execProfileIn(profile Profile, args []string, exclusive bool,
 	// The environment depends on the lock directory: an isolated OpenCode
 	// instance points its data/state homes at the instance, not the profile.
 	cmd.Env = launchEnvironment(profile, workdir, lockDir, os.Environ())
-	if cmd, err = applyIndicator(cmd, profile, lockDir); err != nil {
+	if cmd, err = wrapLaunch(cmd, profile, lockDir); err != nil {
 		unlock()
 		m.setStatus(statusErr, err.Error())
 		return nil

@@ -1,7 +1,8 @@
-# Profile indicators and OpenUsage
+# Profile indicators, OpenUsage and ranma
 
-Seeing which account a session is paying with, from inside the CLI, and
-wiring OpenUsage into each isolated profile. Back to the [README](../README.md).
+Seeing which account a session is paying with, from inside the CLI, wiring
+OpenUsage into each isolated profile, and giving Claude Code's agent teams
+ranma panes. Back to the [README](../README.md).
 
 ## Knowing which profile you are in
 
@@ -88,3 +89,51 @@ It runs OpenUsage's supported installer with the selected profile environment,
 so Codex and Claude hooks are installed beside that profile's own state.
 Login, integration, and export are refused while any instance of the profile
 is running; see [Concurrency and locks](running.md#concurrency-and-locks).
+
+## Agent teams in ranma panes
+
+Claude Code's agent teams open a pane per teammate when they find themselves
+inside tmux. [ranma](https://github.com/masshirodev/ranma) is not tmux, but its
+**tmux shim** answers the tmux calls a program makes with ranma panes
+(`ranma tmux-shim -- CMD`; ranma's `doc/CONFIG.md`, "Programs that drive tmux").
+`ai integrate ranma <profile>` makes a profile launch under it:
+
+```sh
+ai integrate ranma max2          # on
+ai integrate ranma max2 --off    # off again
+```
+
+It sets `"tmux_shim": true` on the profile in `profiles.json`. From then on, a
+launch of that profile **from a ranma pane** — `ai max2`, `ai max2 resume`, or
+the TUI — runs as `ranma tmux-shim -- <command> <arguments>`, and for a Claude
+profile also sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, the flag Claude Code
+keeps teams behind. It is the same as typing
+
+```sh
+ranma tmux-shim -- env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 ai max2
+```
+
+by hand, which still works and needs no setting. What decides each step:
+
+- **Only inside ranma.** A ranma pane carries `RANMA_SOCKET` and `RANMA_PANE`;
+  without both there is nowhere to put a pane, and the profile launches exactly
+  as it did before. The setting says where teammates go when there is a place
+  for them, not that the profile must run in ranma.
+- **Teammates keep the profile.** The shim gives each pane it opens the
+  environment of the command it was started for, so a teammate runs on the
+  lead's `CLAUDE_CONFIG_DIR` — the same account — even though Claude Code does
+  not forward that variable itself.
+- **Not twice.** A launch whose `TMUX` already names this ranma's socket is
+  already under the shim (it was started from a shim pane, or from a shell
+  under `ranma tmux-shim`); it only gets the teams flag.
+- **Your teams setting wins.** A `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` already
+  in the environment, `0` included, is left alone. Other providers get the shim
+  and no flag: the shim is general, the flag is Claude's.
+- **Not with the tmux indicator.** `"indicator": "tmux"` starts a real tmux with
+  `TMUX` cleared, so nothing inside it could reach the shim. Turning the shim on
+  for such a profile is refused, and a launch with both set fails naming them.
+- **`ranma` must be on `PATH`**, which it is in any pane ranma started.
+
+The shim execs the command in its own place, so the PID the run lock records
+is still the CLI's, and stopping or hijacking the instance works as usual. The
+TUI's account line shows `ranma tmux shim` for a profile that has it on.
