@@ -270,7 +270,18 @@ func (m tuiModel) instanceRows(width int) []string {
 			bar, title = ink.render(cursorBarStyle, "▌ "), nameActiveStyle
 		}
 		label := fmt.Sprintf("Instance %d (PID %d)  ", index+1, instance.pid)
-		line := bar + ink.render(dimStyle, label) + ink.render(title, truncate(m.instanceTitle(instance), max(width-2-len(label), 4)))
+		// The slug is appended after the title and is what gives way first, so a
+		// long title is never cut short to keep it.
+		name := ""
+		if instance.session.name != "" && instance.session.name != instance.session.title {
+			name = "  " + instance.session.name
+		}
+		room := max(width-2-len(label), 4)
+		heading := truncate(m.instanceTitle(instance), room)
+		line := bar + ink.render(dimStyle, label) + ink.render(title, heading)
+		if name != "" && lipgloss.Width(heading+name) <= room {
+			line += ink.render(dimStyle, name)
+		}
 		rows = append(rows, padStyled(ink, line, width),
 			"    "+hintStyle.Render(truncate(shortenHome(instance.folder)+" · "+formatUptime(instance.uptime(m.clock())), max(width-4, 4))))
 	}

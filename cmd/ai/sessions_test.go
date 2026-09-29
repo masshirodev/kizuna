@@ -166,6 +166,23 @@ func TestMatchClaudeSessionFallsBackToFolder(t *testing.T) {
 	}
 }
 
+func TestTitleClaudeSessionReadsTheTranscriptTitle(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	writeTranscriptLines(t, root, "claude-work", "-work-hub", "aaa",
+		`{"type":"user","cwd":"/work/hub","timestamp":"2026-09-01T10:00:00Z","message":{"content":"fix the reader"}}`,
+		`{"type":"ai-title","aiTitle":"Fix reader layout","sessionId":"aaa"}`)
+	profile := Profile{Name: "claude-work", Provider: "claude"}
+
+	got := titleClaudeSession(profile, instanceSession{id: "aaa", title: "hub-7d"})
+	if got.title != "Fix reader layout" || got.name != "hub-7d" {
+		t.Fatalf("session = %+v, want the transcript title with the slug kept as its name", got)
+	}
+	if got := titleClaudeSession(profile, instanceSession{id: "missing", title: "hub-9e"}); got.title != "hub-9e" {
+		t.Fatalf("session = %+v, want the slug when no transcript is found", got)
+	}
+}
+
 func TestDescribeInstancesLeavesUnsupportedProviders(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	instances := []profileInstance{{pid: 1, folder: "/work/hub"}}
