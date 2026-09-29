@@ -263,7 +263,9 @@ list says how many are hidden. See
 **The profile editor (`a`, `e`)** is one field per row, the active one tinted
 and carrying the cursor, and the provider as a row of chips moved with `←`/`→`.
 A command still set to the old provider's default follows the chip; one typed by
-hand is left alone. Under the fields, `LAUNCHES AS` shows the real command line,
+hand is left alone. Under the fields, `LAUNCHES AS` shows the real command line (default env
+first, see [launch-env.md](launch-env.md)), a warning for each default this
+shell already sets and would therefore beat,
 the isolated directory the provider is pointed at (`CLAUDE_CONFIG_DIR`,
 `CODEX_HOME`, the XDG triple, …), and how the running account will name itself.
 Tab moves between fields and Enter saves from any of them.
@@ -333,11 +335,15 @@ back. `m` and `s` go on to the MCP and skill box for the same profile.
 
 The `p` prompt puts the field on top and, under it, the whole command it will
 produce — the profile's stored defaults placed by the same subcommand rule the
-launch uses, so it is plain where they land. Under that it lists what it has
-been given
-before: `PINNED` sets first, marked `◆`, in the order they were pinned, then the last five sets run under
+launch uses, so it is plain where they land. Leading `NAME=value` words in the
+field are environment for this launch and lead the preview too. They win over
+everything, including ai-session's own variables, and a warning under the
+preview names any of those you override ([launch-env.md](launch-env.md)).
+Under that it lists what it has been given before: `PINNED` sets first, marked `◆`, in the order they were pinned, then the last five sets run under
 `RECENT`, newest first. Only a launch that actually started is recorded, and
-only when it carried arguments — a plain run is what Enter is for.
+only when it carried arguments or variables — a plain run is what Enter is for.
+A row's variables lead it, dimmed, and two sets that differ only in their
+variables are two rows.
 
 The list is shared by every profile and every provider, which is the point:
 the `--model` you gave one Claude account is one keypress away on the next.

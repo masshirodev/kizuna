@@ -573,7 +573,7 @@ func (m tuiModel) launchSummary(profile Profile) string {
 	case indicator == "":
 		indicator = "no indicator"
 	}
-	parts := []string{formatArguments(append([]string{profile.Command}, profile.DefaultArgs...)), cliField(profile)}
+	parts := []string{formatLaunchLine(profile.DefaultEnv, append([]string{profile.Command}, profile.DefaultArgs...)), cliField(profile)}
 	if model := profileModel(profile); model != "" {
 		parts = append(parts, "model "+model)
 	}

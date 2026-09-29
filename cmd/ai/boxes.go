@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -45,7 +46,7 @@ func (m tuiModel) formContent(width int) []string {
 		m.formLabel(formProviderField, "provider")+m.providerRow(), "",
 		m.formField(2, "command", m.form.command, valueWidth), "",
 		m.formField(3, "default args", m.form.defaultArgs, valueWidth),
-		strings.Repeat(" ", formLabelWidth)+dimStyle.Render(truncate("shell-style quotes group words; nothing is run through a shell", max(width-formLabelWidth, 8))), "",
+		strings.Repeat(" ", formLabelWidth)+dimStyle.Render(truncate("leading NAME=value words are env; shell-style quotes group words; nothing is run through a shell", max(width-formLabelWidth, 8))), "",
 		m.formField(4, "note", m.form.notes, valueWidth), "",
 	)
 	lines = append(lines, m.launchesAs(width)...)
@@ -121,12 +122,22 @@ func (m tuiModel) providerChips() string {
 // names itself once it is running.
 func (m tuiModel) launchesAs(width int) []string {
 	command := strings.TrimSpace(m.form.command + " " + m.form.defaultArgs)
-	if args, err := parseArguments(m.form.defaultArgs); err == nil {
-		command = formatArguments(append([]string{m.form.command}, args...))
+	env, args, err := parseLaunchLine(m.form.defaultArgs)
+	if err == nil {
+		command = formatLaunchLine(env, append([]string{m.form.command}, args...))
 	}
 	lines := []string{
 		sectionLabelStyle.Render("LAUNCHES AS"),
 		fieldValueStyle.Render(truncate(command, max(width-26, 8))) + dimStyle.Render("  + anything typed with p"),
+	}
+	// A default only fills a name nothing set first, so one this shell already
+	// sets will not apply from here, and one ai-session sets never will.
+	form := Profile{Name: m.form.name, Provider: m.form.provider, DefaultEnv: env}
+	if owned := ownedNamesIn(form, env); len(owned) > 0 {
+		lines = append(lines, authMissingStyle.Render(truncate(strings.Join(owned, ", ")+" is ai-session's own — a default cannot set it", width)))
+	}
+	for _, name := range shadowedDefaults(form, os.Environ()) {
+		lines = append(lines, unknownStyle.Render(truncate(name+" is already set in this shell, which wins over the default", width)))
 	}
 	const envLabel = 18
 	for _, entry := range profileEnv(Profile{Name: m.form.name, Provider: m.form.provider}) {
@@ -307,8 +318,14 @@ func (m tuiModel) paramsContent(width, rows int) []string {
 		"",
 		field,
 		truncateStyled(runs, width),
-		"",
 	}
+	if env, _, err := parseLaunchLine(m.params); err == nil {
+		if owned := ownedNamesIn(profile, env); len(owned) > 0 {
+			lines = append(lines, authMissingStyle.Render(truncate(strings.Join(owned, ", ")+
+				" overrides ai-session's own — this session leaves the profile's isolation", width)))
+		}
+	}
+	lines = append(lines, "")
 	list, cursor := m.argumentRows(width, profile)
 	lines = append(lines, windowRows(list, cursor, max(rows-4, 4))...)
 	return append(lines, "", boxFooter(width, helpEntry{"esc", "cancel"},
@@ -320,10 +337,10 @@ func (m tuiModel) paramsContent(width, rows int) []string {
 // stand after the stored defaults, which is the best guess available.
 func (m tuiModel) commandPreview(profile Profile) string {
 	command := []string{profile.Command}
-	if args, err := parseArguments(m.params); err == nil {
-		return formatArguments(append(command, profileRunArgs(profile, args, false)...))
+	if env, args, err := parseLaunchLine(m.params); err == nil {
+		return formatLaunchLine(previewEnv(profile, os.Environ(), env), append(command, profileRunArgs(profile, args, false)...))
 	}
-	line := formatArguments(append(command, profile.DefaultArgs...))
+	line := formatLaunchLine(previewEnv(profile, os.Environ(), nil), append(command, profile.DefaultArgs...))
 	if m.params == "" {
 		return line
 	}
@@ -371,7 +388,18 @@ func (m tuiModel) argumentRows(width int, current Profile) ([]string, int) {
 				account = ink.render(providerStyle(set.Provider), pad(truncate(set.Profile, profileWidth-1), profileWidth))
 				when = formatWhen(m.clock(), set.Used)
 			}
-			line := bar + pin + ink.render(args, pad(truncate(formatArguments(set.Args), argsWidth), argsWidth+2)) +
+			// The variables lead the row dimmed, as they lead the line typed.
+			cell := pad(truncate(set.line(), argsWidth), argsWidth+2)
+			envText := ""
+			if len(set.Env) > 0 {
+				envText = formatLaunchLine(set.Env, nil)
+			}
+			// Truncated inside the variables, the whole cell is variables.
+			split := len(envText)
+			if !strings.HasPrefix(cell, envText) {
+				split = len(cell)
+			}
+			line := bar + pin + ink.render(dimStyle, cell[:split]) + ink.render(args, cell[split:]) +
 				account + ink.render(dimStyle, pad(when, whenWidth))
 			if set.Provider != "" && set.Provider != current.Provider {
 				line += ink.render(authMissingStyle, "other CLI")

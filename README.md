@@ -64,6 +64,7 @@ on right now.
 | Creating, cloning, and moving profiles; app profiles | [doc/profiles.md](doc/profiles.md) |
 | Installing CLIs, logging in, running, concurrency | [doc/running.md](doc/running.md) |
 | The TUI: panels, keys, saved arguments | [doc/tui.md](doc/tui.md) |
+| Environment variables on a launch: defaults, `p`, who wins | [doc/launch-env.md](doc/launch-env.md) |
 | The launch folder tree (`c`) | [doc/launch-folder-tree.md](doc/launch-folder-tree.md) |
 | Resuming, hijacking, and handing off sessions | [doc/sessions.md](doc/sessions.md) |
 | Copying MCP servers and skills | [doc/mcp-and-skills.md](doc/mcp-and-skills.md) |

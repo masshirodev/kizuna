@@ -43,6 +43,12 @@ without invoking a shell. The same editor accepts a short note for each profile.
 Arguments typed for a single launch with `p` in the TUI are placed by the same
 rule against the stored defaults.
 
+The same field takes default environment variables as leading `NAME=value`
+words: `FOO=1 --permission-mode auto` stores `FOO=1` as `default_env` and the
+rest as `default_args`. A default variable only fills a name that the shell has
+not already set, so `FOO=2 ai max` beats it. `-p` drops it with the default
+args. See [launch-env.md](launch-env.md).
+
 The selected-profile panel shows its default arguments and note. In the profile
 editor, Enter or Tab advances through all fields; on the final field it saves.
 Escape cancels. Each field edits at its caret: the arrows, Home and End move it,
