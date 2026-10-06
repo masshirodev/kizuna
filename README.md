@@ -70,6 +70,7 @@ on right now.
 | Copying MCP servers and skills | [doc/mcp-and-skills.md](doc/mcp-and-skills.md) |
 | Seeing the active profile inside a CLI; OpenUsage; agent teams in ranma panes | [doc/integrations.md](doc/integrations.md) |
 | Update check and self-update | [doc/updates.md](doc/updates.md) |
+| Provider updates that miss the install that runs | [doc/shadowed-installs.md](doc/shadowed-installs.md) |
 | How concurrent OpenCode instances work | [doc/opencode-concurrent-instances.md](doc/opencode-concurrent-instances.md) |
 | Fresh OpenCode stores, resume by import, `ai compact` | [doc/session-store.md](doc/session-store.md) |
 

@@ -81,6 +81,9 @@ func (form profileForm) nextFormField(step int) int {
 
 type processFinishedMsg struct {
 	err error
+	// warning is something the process did not fail over but got wrong all
+	// the same, such as an update that reached an install nothing runs.
+	warning string
 }
 
 type usageLoadedMsg map[string]usageRemaining
@@ -568,6 +571,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			m.setStatus(statusErr, "process exited: "+msg.err.Error()+statusSuffix(mergeNote))
+		} else if msg.warning != "" {
+			m.setStatus(statusErr, msg.warning+statusSuffix(mergeNote))
 		} else if mergeNote != "" {
 			m.setStatus(statusOK, mergeNote)
 		} else {
@@ -2109,11 +2114,15 @@ func (m *tuiModel) execUpdate(profile Profile) tea.Cmd {
 		m.setStatus(statusErr, err.Error())
 		return nil
 	}
+	before := profileInstalls(profile)
 	cmd := exec.Command(profile.Command, args...)
 	cmd.Dir = m.workingDir
 	m.running = true
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		return processFinishedMsg{err: err}
+		if err != nil {
+			return processFinishedMsg{err: err}
+		}
+		return processFinishedMsg{warning: shadowWarning(profile.Command, before, profileInstalls(profile))}
 	})
 }
 

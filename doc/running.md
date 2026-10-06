@@ -63,6 +63,11 @@ ai update opencode-go
 This runs `codex update`, `claude update`, `agy update`, or `opencode upgrade`
 respectively.
 
+If the update changes an install other than the one the profile actually runs
+— a package-manager copy earlier on `PATH` than the vendor's native install, say
+— `ai update` and `u` say so instead of letting it pass as done. See
+[shadowed-installs.md](shadowed-installs.md).
+
 ## Run
 
 `ai run` uses the credentials already stored in that profile. A new profile has
