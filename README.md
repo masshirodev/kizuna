@@ -42,7 +42,8 @@ profile's stored defaults. See [doc/running.md](doc/running.md#run).
   OpenCode profiles can each run in several terminals at once.
 - **A TUI cockpit.** One table of every profile, sorted by quota headroom, with
   a gauge per window, its login state, and what it is running; the selected
-  account expands in place to show recent work.
+  account expands in place to show how it launches, its integrations, what it
+  is running and its recent work, and `tab` opens the full sheet.
 - **Resume anything.** `R` reopens any recent conversation in the folder it ran
   in. `h` attaches to one that is still running.
 - **Hand off when quota runs out.** `H` turns a conversation into a short brief
@@ -64,6 +65,7 @@ on right now.
 | Creating, cloning, and moving profiles; app profiles | [doc/profiles.md](doc/profiles.md) |
 | Installing CLIs, logging in, running, concurrency | [doc/running.md](doc/running.md) |
 | The TUI: panels, keys, saved arguments | [doc/tui.md](doc/tui.md) |
+| The expanded account: the glance and the sheet (`tab`) | [doc/board-expansion.md](doc/board-expansion.md) |
 | Environment variables on a launch: defaults, `p`, who wins | [doc/launch-env.md](doc/launch-env.md) |
 | The launch folder tree (`c`) | [doc/launch-folder-tree.md](doc/launch-folder-tree.md) |
 | Resuming, hijacking, and handing off sessions | [doc/sessions.md](doc/sessions.md) |

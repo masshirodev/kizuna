@@ -44,6 +44,7 @@ func paletteColumns() [][]paletteGroup {
 				{"C", "C", "clone its setup"},
 				{"x", "x", "delete"},
 				{"/", "/", "find"},
+				{"tab", "tab", "the full sheet"},
 			}},
 		},
 		{
@@ -147,8 +148,11 @@ func (m tuiModel) updatePalette(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // pressedKey is the keystroke an action stands for.
 func pressedKey(press string) tea.KeyMsg {
-	if press == "enter" {
+	switch press {
+	case "enter":
 		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(press)}
 }

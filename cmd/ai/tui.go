@@ -228,6 +228,20 @@ type tuiModel struct {
 	live     []profileInstance
 	recent   []recordedSession
 	activity activity
+	// facts is what the expansion knows about the selected account beyond its
+	// config (facts.go), read with the panels above. seconds and ruledOut
+	// carry what has been read across refreshes, so a second prompt or a
+	// handoff's first prompt is read once rather than every ten seconds.
+	facts    profileFacts
+	seconds  map[string]string
+	ruledOut map[string]bool
+	// slugs is the handle `claude agents` reported for each live instance the
+	// last time a picker asked, by PID, for the expansion's running rows.
+	slugs map[int]string
+	// sheet is whether the expansion is the full sheet (`tab`) rather than
+	// the glance. It stays as the cursor moves: it is a level the board is
+	// read at, not a box about one account.
+	sheet bool
 	// now is the clock the frame was rendered against, so uptimes and reset
 	// times are stable within a frame and fixed under test.
 	now time.Time
@@ -468,6 +482,8 @@ type cockpitLoadedMsg struct {
 	live     []profileInstance
 	recent   []recordedSession
 	activity activity
+	facts    profileFacts
+	ruled    map[string]bool
 	now      time.Time
 }
 
@@ -477,6 +493,15 @@ type cockpitLoadedMsg struct {
 func (m tuiModel) loadCockpitCmd() tea.Cmd {
 	profiles := append([]Profile(nil), m.profiles...)
 	selected, hasSelection := m.selectedProfile()
+	configPath := m.configPath
+	known := make(map[string]string, len(m.seconds))
+	for key, second := range m.seconds {
+		known[key] = second
+	}
+	ruledOut := make(map[string]bool, len(m.ruledOut))
+	for key := range m.ruledOut {
+		ruledOut[key] = true
+	}
 	return func() tea.Msg {
 		now := time.Now()
 		msg := cockpitLoadedMsg{profile: selected.Name, now: now}
@@ -484,6 +509,8 @@ func (m tuiModel) loadCockpitCmd() tea.Cmd {
 		if hasSelection {
 			msg.recent = recentSessions(selected, recentSessionLimit)
 			msg.activity = profileActivity(selected, now)
+			cfg, _ := loadConfig(configPath)
+			msg.facts, msg.ruled = loadProfileFacts(selected, cfg, msg.live, msg.recent, known, ruledOut)
 		}
 		return msg
 	}
@@ -592,7 +619,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.lineage = handedOff(readLineage())
 		if profile, ok := m.selectedProfile(); ok && profile.Name == msg.profile {
-			m.recent, m.activity = msg.recent, msg.activity
+			m.recent, m.activity, m.facts = msg.recent, msg.activity, msg.facts
+			// The lineage may have just learned which conversation a handoff
+			// became; the outgoing markers read the same file.
+			m.lineage = handedOff(readLineage())
+			if m.seconds == nil {
+				m.seconds = map[string]string{}
+			}
+			for key, second := range msg.facts.seconds {
+				m.seconds[key] = second
+			}
+			m.ruledOut = msg.ruled
 		}
 	case usageLoadedMsg:
 		selected, had := m.selectedProfile()
@@ -641,6 +678,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.selectPreview()
 	case instancesDescribedMsg:
 		m.describing = false
+		// The handles are kept for the board, which never asks the CLI for
+		// them itself; a PID is not reused while its instance is live.
+		for _, instance := range msg.instances {
+			if instance.session.name != "" && instance.session.name != instance.session.title {
+				if m.slugs == nil {
+					m.slugs = map[int]string{}
+				}
+				m.slugs[instance.pid] = instance.session.name
+			}
+		}
 		if m.mode != tuiHijack && m.mode != tuiConfirmKill {
 			return m, nil
 		}
@@ -742,6 +789,8 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "I":
 		m.openIntegrations()
+	case "tab":
+		m.sheet = !m.sheet
 	case "p":
 		if hasSelection {
 			m.openParams()
@@ -2212,7 +2261,8 @@ func (c trackedExecCommand) Run() error {
 		_ = c.cmd.Wait()
 		return err
 	}
-	_ = setProfileInstanceMeta(c.workdir, c.cmd.Dir)
+	// Every launch from the TUI hands the terminal over, so none is headless.
+	_ = setProfileInstanceMeta(c.workdir, c.cmd.Dir, false)
 	return c.cmd.Wait()
 }
 
