@@ -322,11 +322,18 @@ func launchUpdate(profile Profile, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	before := profileInstalls(profile)
 	cmd := exec.Command(profile.Command, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	if warning := shadowWarning(profile.Command, before, profileInstalls(profile)); warning != "" {
+		fmt.Fprintln(stderr, "warning: "+warning)
+	}
+	return nil
 }
 
 // profileRunArgs places a profile's default arguments into a launch. They
