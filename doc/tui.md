@@ -37,11 +37,12 @@ or a conversation does turn more room into more to read.
   figure for what is left of the 5-hour and 7-day windows with when each rolls
   over, whether it can log in, and how many instances it is running (`▶ 2`).
 - **The selected account expands in place** rather than opening a detail
-  column: under its row, how it launches (command, where the CLI is, model,
-  status line, note), what it is running, a 24-hour activity sparkline in its
-  provider's colour, and its last four conversations with `R`/`H`/`h` beside
-  them. Too narrow for the two side by side, the recent list goes under what is
-  running.
+  column, at two levels. The **glance**, while the cursor moves: when each
+  window resets, the note, model, CLI, command and environment, the
+  integration states and what is installed, what it is running beside its last
+  five conversations, and a 24-hour activity sparkline. The **sheet**, on
+  `tab`: all of that in labelled columns, with longer lists. See
+  [The board expansion](board-expansion.md).
 - **Every other account's live instances sit nested under its row**
   (`└ ▶ Migrate billing webhooks   PID 39021 · ~/work/billing · 3h05m`), so
   what is running is read beside the account running it.
@@ -70,9 +71,11 @@ reshuffling the board twice.
 The gauges take what the fixed columns leave, up to 32 cells, and are dropped —
 figures kept — once they would be shorter than 6. Past that the reset times go
 first, then the live count (the expanded row repeats it), then auth, then the
-name column narrows. A board taller than the frame loses the expansion's second
-half (running, activity, recent) before it loses rows, and then scrolls to keep
-the cursor in view.
+name column narrows. A board taller than the frame draws the fullest expansion
+that fits — the sheet when it is open, the glance, the glance on a board folded
+to make room, then only the launch line — before it loses rows, and then
+scrolls to keep the cursor in view. How the expansion's own columns narrow is
+in [The board expansion](board-expansion.md#narrow-and-short-terminals).
 
 Everything else — the profile editor, the folder tree and argument prompts, the
 delete confirmation, the clone and share boxes, the pickers, the handoff wizard
@@ -178,6 +181,8 @@ Use the arrow keys or `j`/`k` to select a profile. On the key bar:
 - `/` filters the board by name or provider. Enter keeps the filter and hands
   the keys back, so a search is a way to reach one account among many rather
   than a mode to dismiss before acting; Escape clears it.
+- `tab` opens the expansion's full sheet, and folds it back. See
+  [The board expansion](board-expansion.md).
 - `space` or `?` opens the palette.
 - `q` or Escape quits.
 

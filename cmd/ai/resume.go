@@ -124,7 +124,7 @@ func launchInFolder(profile Profile, args []string, folder string, stdout, stder
 		unlock()
 		return err
 	}
-	return runCommandWithLock(cmd, lockDir, unlock, sessionTitle(profile), signals)
+	return runCommandWithLock(cmd, lockDir, unlock, sessionTitle(profile), false, signals)
 }
 
 // runTUIResume opens the cockpit with the resume picker already up for the

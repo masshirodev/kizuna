@@ -31,7 +31,11 @@ type profileInstance struct {
 	// started is when the launch was recorded, zero for an instance whose meta
 	// file was never written or no longer parses.
 	started time.Time
-	session instanceSession
+	// headless is an instance nobody is typing into (`ai run p -p …`, a wave
+	// worker), recorded at launch. An instance started by an older build
+	// carries no flag and reads as interactive.
+	headless bool
+	session  instanceSession
 }
 
 func (instance profileInstance) uptime(now time.Time) time.Duration {
@@ -45,8 +49,33 @@ func (instance profileInstance) uptime(now time.Time) time.Duration {
 // beside .active.lock so another ai process can describe a running instance
 // without asking the provider CLI anything.
 type instanceMeta struct {
-	Folder  string `json:"folder"`
-	Started string `json:"started"`
+	Folder   string `json:"folder"`
+	Started  string `json:"started"`
+	Headless bool   `json:"headless,omitempty"`
+}
+
+// headlessLaunch is whether a provider CLI started with args runs without
+// anyone at it: Claude's `-p`/`--print`, `codex exec`, `opencode run`. The
+// subcommands are matched as whole arguments anywhere in the line, because the
+// profile's default arguments come first and may carry values of their own.
+func headlessLaunch(provider string, args []string) bool {
+	for _, arg := range args {
+		switch provider {
+		case "claude":
+			if arg == "-p" || arg == "--print" {
+				return true
+			}
+		case "codex":
+			if arg == "exec" {
+				return true
+			}
+		case "opencode", "deepseek":
+			if arg == "run" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func supportsConcurrentRuns(profile Profile) bool {
@@ -313,10 +342,11 @@ func activeProfileInstances(profile Profile) ([]profileInstance, error) {
 		}
 		meta := readInstanceMeta(lockDir)
 		instances = append(instances, profileInstance{
-			lockDir: lockDir,
-			pid:     pid,
-			folder:  meta.Folder,
-			started: meta.startedAt(),
+			lockDir:  lockDir,
+			pid:      pid,
+			folder:   meta.Folder,
+			started:  meta.startedAt(),
+			headless: meta.Headless,
 		})
 	}
 	return instances, nil
@@ -382,10 +412,11 @@ func setProfileChildPID(workdir string, pid int) error {
 	return os.WriteFile(lockPath, []byte(fmt.Sprintf("%d\n%d\n", os.Getpid(), pid)), 0600)
 }
 
-// setProfileInstanceMeta records where a launch happened. A failure here is not
-// fatal to the launch itself: the instance simply cannot be described later.
-func setProfileInstanceMeta(workdir, folder string) error {
-	data, err := json.Marshal(instanceMeta{Folder: folder, Started: time.Now().Format(time.RFC3339)})
+// setProfileInstanceMeta records where a launch happened, and whether anyone is
+// typing into it. A failure here is not fatal to the launch itself: the
+// instance simply cannot be described later.
+func setProfileInstanceMeta(workdir, folder string, headless bool) error {
+	data, err := json.Marshal(instanceMeta{Folder: folder, Started: time.Now().Format(time.RFC3339), Headless: headless})
 	if err != nil {
 		return err
 	}

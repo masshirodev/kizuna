@@ -209,10 +209,15 @@ func TestRecentSessionsPanelDatesAndPlacesEachSession(t *testing.T) {
 		{folder: "/work/hub", when: now.Add(-26 * time.Hour)},
 	}
 	view := m.View()
-	for _, want := range []string{"RECENT", "14:00", "refactor the tui view layer", "/work/lattice", "yest.", "untitled session", "R resume"} {
+	// The glance names the folder by its leaf; the sheet has room for the path.
+	for _, want := range []string{"RECENT", "14:00", "refactor the tui view layer", "lattice", "yest.", "untitled session", "R resume"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("recent panel is missing %q:\n%s", want, view)
 		}
+	}
+	m.sheet = true
+	if view := m.View(); !strings.Contains(view, "/work/lattice") {
+		t.Fatalf("the sheet does not give the recent row its folder:\n%s", view)
 	}
 }
 

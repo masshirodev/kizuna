@@ -71,6 +71,8 @@ func frameText(m tuiModel) []string {
 // lines were checked against the handoff's 1a/2a render cell for cell; the
 // differences left are data the mock invents (every account logged in, a
 // model read from settings) and the unrated accounts, which are listed by name.
+// The rows under the selected account belong to the Board expansion handoff
+// since, and TestBoardMatchesTheExpansionDesign pins them.
 // Hand-set widths — the 22 and 13 account columns, the 32-cell gauges, the
 // spaced key hints — are what a tidy-up would round away, which is why the
 // whole row is pinned rather than a few figures.
@@ -90,15 +92,6 @@ func TestBoardMatchesTheDesignFrame(t *testing.T) {
 		6:  "  codex-work            codex        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 12%  19:55    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 41%  fri      ○ login ▶ 1",
 		7:  "      └ ▶ Migrate billing webhooks   PID 39021 · ~/work/billing · 3h05m",
 		8:  "▌ claude-personal       claude       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 7%   21:40    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 22%  thu      ○ login ▶ 2",
-		11: "    RUNNING HERE                                                   RECENT",
-		12: "    ▶ Refactor cockpit layout folding                              14:02   Refactor cockpit layout folding       ~/projects/ai-session",
-		13: "      PID 48213 · ~/projects/ai-session · 1h12m                    11:37   Handoff brief: trim injected blocks   ~/projects/ai-session",
-		14: "    ▶ Draft release notes for 0.9                                  yest.   Investigate SQLITE_BUSY on resume     ~/projects/ai-session  → codex-wo",
-		17: "    24h ▁▁▁▁▁▁▁▂▂▃▅▄▂▆█▅▃▂▄▆▃▂▁▂  peak 14:00                       R resume   H hand off   h open live",
-		20: "  NO LOCAL QUOTA CACHE   these providers keep none this launcher reads",
-		21: "  antigravity-personal  antigravity  · not reported                                                                                ○ login",
-		22: "  deepseek              deepseek     · not reported                                                                                ● key",
-		23: "  opencode-go           opencode     · not reported                                                                                ○ login",
 		37: "  ✓ launched claude-personal in ~/projects/ai-session   14:02",
 		39: "  ↵ run   R resume   H hand off   p args   / find                                                                     space all actions   ? keys",
 	}

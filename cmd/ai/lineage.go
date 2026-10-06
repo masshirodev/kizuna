@@ -24,8 +24,13 @@ type lineageLink struct {
 	SourceTitle     string    `json:"source_title,omitempty"`
 	TargetProfile   string    `json:"target_profile"`
 	TargetProvider  string    `json:"target_provider"`
-	Folder          string    `json:"folder,omitempty"`
-	Brief           string    `json:"brief,omitempty"`
+	// TargetSessionID is the conversation the handoff became. It cannot be
+	// known at launch, since the target names its own session once it starts,
+	// so it is filled in later by the board, from the conversation whose first
+	// prompt is the handoff's (resolveIncoming), and is empty until then.
+	TargetSessionID string `json:"target_session_id,omitempty"`
+	Folder          string `json:"folder,omitempty"`
+	Brief           string `json:"brief,omitempty"`
 }
 
 func lineagePath() (string, error) {
@@ -57,6 +62,13 @@ func readLineage() []lineageLink {
 // destination because a bookkeeping file would not open would be the tool
 // getting its own priorities backwards.
 func appendLineage(link lineageLink) error {
+	return writeLineage(append(readLineage(), link))
+}
+
+// writeLineage replaces the whole record. It is one small JSON file written by
+// one TUI at a time; a second ai process racing it loses at most the newer of
+// two resolutions, which the next refresh finds again.
+func writeLineage(links []lineageLink) error {
 	path, err := lineagePath()
 	if err != nil {
 		return err
@@ -64,7 +76,6 @@ func appendLineage(link lineageLink) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	links := append(readLineage(), link)
 	body, err := json.MarshalIndent(links, "", "  ")
 	if err != nil {
 		return err

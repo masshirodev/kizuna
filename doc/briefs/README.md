@@ -13,8 +13,9 @@ asked for is written down before it is built, so the shape is agreed first.
 - Once a brief has been forwarded it moves to `done/`, so this folder holds only
   what is still to be sent.
 
-| Brief                                             | Kind            |
-| ------------------------------------------------- | --------------- |
-| [FOLDER-TREE.md](FOLDER-TREE.md)                   | design handoff  |
-| [OPENCODE-HANDOFF.md](OPENCODE-HANDOFF.md)         | capability      |
-| [INTEGRATIONS.md](INTEGRATIONS.md)                 | design handoff  |
+| Brief                                           | Kind           |
+| ----------------------------------------------- | -------------- |
+| [FOLDER-TREE.md](done/FOLDER-TREE.md)           | design handoff |
+| [OPENCODE-HANDOFF.md](done/OPENCODE-HANDOFF.md) | capability     |
+| [INTEGRATIONS.md](done/INTEGRATIONS.md)         | design handoff |
+| [EXPANDED-ROW.md](done/EXPANDED-ROW.md)         | design handoff |

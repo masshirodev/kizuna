@@ -724,7 +724,7 @@ func TestInstanceMetaRecordsTheLaunchFolder(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(lockDir, ".active.lock"), []byte(fmt.Sprintf("%d\n", os.Getpid())), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := setProfileInstanceMeta(lockDir, "/work/lattice"); err != nil {
+	if err := setProfileInstanceMeta(lockDir, "/work/lattice", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -749,7 +749,7 @@ func TestExclusiveUnlockRemovesInstanceMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := setProfileInstanceMeta(workdir, "/work/hub"); err != nil {
+	if err := setProfileInstanceMeta(workdir, "/work/hub", false); err != nil {
 		t.Fatal(err)
 	}
 	unlock()

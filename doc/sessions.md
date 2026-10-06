@@ -285,6 +285,12 @@ under the expanded account and in the pickers — mark the source row with
 handoff is a baton pass, not a fork, so there is never a newer branch on the
 other side to reconcile.
 
+The conversation a handoff became is recorded too, as `target_session_id`, so
+the expanded account marks it `← <account>`. It cannot be known at launch, so
+the board fills it in later, from the conversation whose first prompt is the
+handoff's — the path of the brief, or a pasted brief's heading. See
+[Where a conversation came from](board-expansion.md#where-a-conversation-came-from).
+
 ## Auto-swap
 
 `A` toggles auto-swap, which is **off by default** and persisted in
