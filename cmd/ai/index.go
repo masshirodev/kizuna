@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS turn_source (
 var sessionIndexMu sync.Mutex
 
 func sessionIndexPath() (string, error) {
-	base, err := os.UserConfigDir()
+	base, err := configBase()
 	if err != nil {
 		return "", err
 	}

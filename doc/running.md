@@ -220,3 +220,23 @@ environment variables, including `DEEPSEEK_API_KEY`, but removes shared
 A profile can also carry default variables, and a single TUI launch can set its
 own. How those layer with your shell and with the values above is in
 [launch-env.md](launch-env.md).
+
+`ai` reads its own configuration through `XDG_CONFIG_HOME`
+(`~/.config/ai/profiles.json` by default). An OpenCode profile's launch points
+that variable at the profile's `config/`, so an `ai` invocation made **from
+inside** a running OpenCode session — an agent spawning a second profile, say —
+would look for `profiles.json` under the profile. Every launch therefore also
+exports `AI_CONFIG_HOME`, the launcher's own config base, and an `ai` started
+inside the session uses it while `XDG_CONFIG_HOME` points into that base's
+`profiles/` ([agent-messaging.md](agent-messaging.md#environment-a-launch-now-carries)).
+
+A session started by an older `ai` lacks the variable and still fails with
+`unknown command, profile, or app "<name>"`. Clear `XDG_CONFIG_HOME` for that
+call, or restart the session:
+
+```sh
+env -u XDG_CONFIG_HOME ai opencode3 run --auto "…"
+```
+
+`ai` then resolves its profiles normally, and the child still receives the
+target profile's XDG paths from `ai`, so nothing about its isolation changes.

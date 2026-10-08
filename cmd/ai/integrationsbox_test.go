@@ -129,9 +129,13 @@ func TestIntegrationsCursorSkipsALockedRow(t *testing.T) {
 	if status.kind != integrationStatusLine {
 		t.Fatalf("cursor opened on %s", status.kind.name())
 	}
-	m = keys(t, m, "down", "down", "down")
+	m = keys(t, m, "down")
 	if _, status, _ := m.currentIntegration(); status.kind != integrationRanma {
-		t.Fatalf("cursor went past the shim onto %s", status.kind.name())
+		t.Fatalf("cursor stopped on %s, want it past the locked row onto the shim", status.kind.name())
+	}
+	m = keys(t, m, "down", "down")
+	if _, status, _ := m.currentIntegration(); status.kind != integrationMessaging {
+		t.Fatalf("cursor went past the last row onto %s", status.kind.name())
 	}
 }
 
@@ -146,7 +150,7 @@ func TestIntegrationsGridExplainsTheCellUnderTheCursor(t *testing.T) {
 	}
 	frameContains(t, m,
 		"INTEGRATIONS   every profile", "this TUI is not in a ranma pane",
-		"ACCOUNT                            STATUS LINE                OPENUSAGE                  RANMA SHIM",
+		"ACCOUNT                            STATUS LINE                OPENUSAGE                  RANMA SHIM                 MESSAGING",
 		// The rows are pinned whole: the 22/13 account columns and the 27-cell
 		// integrations are hand-set in the handoff, and a tidy-up that rounds
 		// them redraws the grid.

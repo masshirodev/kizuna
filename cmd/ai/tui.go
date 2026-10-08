@@ -2262,7 +2262,7 @@ func (c trackedExecCommand) Run() error {
 		return err
 	}
 	// Every launch from the TUI hands the terminal over, so none is headless.
-	_ = setProfileInstanceMeta(c.workdir, c.cmd.Dir, false)
+	_ = setProfileInstanceMeta(c.workdir, c.cmd.Dir, false, c.cmd.Env)
 	return c.cmd.Wait()
 }
 

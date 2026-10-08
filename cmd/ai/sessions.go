@@ -29,6 +29,9 @@ type instanceSession struct {
 	// repo get near-identical slugs — so the picker shows it beside the title,
 	// as the handle `claude agents` and the status line know the session by.
 	name string
+	// status is what the provider says the session is doing, "busy" or
+	// "idle". Only Claude Code reports it; empty means unknown.
+	status string
 }
 
 // sessionLookupTimeout bounds the provider CLI call made to list live
@@ -60,6 +63,7 @@ type claudeAgent struct {
 	CWD       string `json:"cwd"`
 	SessionID string `json:"sessionId"`
 	Name      string `json:"name"`
+	Status    string `json:"status"`
 }
 
 // claudeLiveSessions asks Claude Code for the sessions running under this
@@ -87,7 +91,7 @@ func claudeLiveSessions(profile Profile) []claudeAgent {
 func matchClaudeSession(agents []claudeAgent, instance profileInstance) instanceSession {
 	for _, agent := range agents {
 		if agent.PID == instance.pid {
-			return instanceSession{id: agent.SessionID, title: agent.Name}
+			return instanceSession{id: agent.SessionID, title: agent.Name, status: agent.Status}
 		}
 	}
 	if instance.folder == "" {
@@ -95,7 +99,7 @@ func matchClaudeSession(agents []claudeAgent, instance profileInstance) instance
 	}
 	for _, agent := range agents {
 		if agent.CWD == instance.folder {
-			return instanceSession{id: agent.SessionID, title: agent.Name}
+			return instanceSession{id: agent.SessionID, title: agent.Name, status: agent.Status}
 		}
 	}
 	return instanceSession{}

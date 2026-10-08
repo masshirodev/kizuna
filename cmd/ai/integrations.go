@@ -24,10 +24,11 @@ const (
 	integrationStatusLine integrationKind = iota
 	integrationOpenUsage
 	integrationRanma
+	integrationMessaging
 )
 
 // integrationKinds is the order every view lists them in.
-var integrationKinds = []integrationKind{integrationStatusLine, integrationOpenUsage, integrationRanma}
+var integrationKinds = []integrationKind{integrationStatusLine, integrationOpenUsage, integrationRanma, integrationMessaging}
 
 func (k integrationKind) name() string {
 	switch k {
@@ -35,6 +36,8 @@ func (k integrationKind) name() string {
 		return "status line"
 	case integrationOpenUsage:
 		return "openusage"
+	case integrationMessaging:
+		return "messaging"
 	default:
 		return "ranma tmux shim"
 	}
@@ -47,6 +50,8 @@ func (k integrationKind) word() string {
 		return "statusline"
 	case integrationOpenUsage:
 		return "openusage"
+	case integrationMessaging:
+		return "messaging"
 	default:
 		return "ranma"
 	}
@@ -126,6 +131,9 @@ type integrationEnv struct {
 	inRanma    bool
 	running    func(Profile) bool
 	statusLine func(Profile) statusLineOwner
+	// messaging is what `ai integrate messaging` left in a profile, as
+	// messagingDelivery reads it: "hooks", "mcp" or empty.
+	messaging func(Profile) string
 }
 
 // machineIntegrationEnv is where the TUI and the CLI read the machine from.
@@ -142,6 +150,7 @@ func liveIntegrationEnv() integrationEnv {
 		inRanma:    insideRanma(os.Environ()),
 		running:    profileIsRunning,
 		statusLine: readStatusLineOwner,
+		messaging:  messagingDelivery,
 	}
 }
 
@@ -209,9 +218,56 @@ func integrationFor(profile Profile, kind integrationKind, env integrationEnv) i
 		return tmuxStatusLine(profile, env)
 	case integrationOpenUsage:
 		return openUsageStatus(profile, env)
+	case integrationMessaging:
+		return messagingStatus(profile, env)
 	default:
 		return ranmaStatus(profile, env)
 	}
+}
+
+// messagingStatus is `ai integrate messaging`: the ai MCP server for every
+// provider with an MCP config, and for Claude Code the hooks that read the
+// inbox by itself. A Claude profile with the server and no hooks is "tools
+// only" and still offers turning it on, because on is what writes the hooks.
+func messagingStatus(profile Profile, env integrationEnv) integrationStatus {
+	status := integrationStatus{
+		kind:       integrationMessaging,
+		writes:     "the ai MCP server",
+		writesNote: "(ai mcp serve) in the profile's MCP config",
+		launch:     "exports " + instanceDirEnv + ", where its inbox is",
+		gives:      "its agents list the others and message them (ai peers, ai send)",
+		undo:       "↵ again",
+		undoNote:   "or ai integrate messaging … --off",
+		sameAs:     "ai integrate messaging " + profile.Name,
+		here:       "applies to sessions started after it",
+		hereNote:   "a session already running picks it up when it restarts",
+		checks:     []integrationCheck{{ok: env.onPath(appName), text: "ai on PATH", note: "what the server and the hooks run; otherwise this binary's own path is written"}},
+	}
+	if profile.Provider == "claude" {
+		status.writes, status.writesNote = "3 hooks and the ai MCP server", "PostToolUse, Stop, UserPromptSubmit in settings.json"
+		status.gives = "reads messages at its next tool call or before it stops"
+	}
+	delivery := ""
+	if env.messaging != nil {
+		delivery = env.messaging(profile)
+	}
+	switch {
+	case !supportsMCP(profile):
+		status.state, status.note = stateNA, profile.Provider
+		status.reason = profile.Provider + " keeps no MCP configuration ai can write"
+		status.undo, status.undoNote, status.here, status.hereNote = "", "", "", ""
+	case profile.Provider == "claude" && delivery == "mcp":
+		status.state, status.note, status.action = stateOff, "tools only", "turn on"
+		status.reason = "the ai MCP server is there, but not the hooks that read the inbox by themselves"
+	case delivery != "":
+		status.state, status.action, status.sameAs = stateOn, "turn off", status.sameAs+" --off"
+		if profile.Provider != "claude" {
+			status.note = "tools only"
+		}
+	default:
+		status.state, status.action = stateOff, "turn on"
+	}
+	return status
 }
 
 func nativeStatusLine(profile Profile, env integrationEnv) integrationStatus {

@@ -52,6 +52,10 @@ type instanceMeta struct {
 	Folder   string `json:"folder"`
 	Started  string `json:"started"`
 	Headless bool   `json:"headless,omitempty"`
+	// RanmaPane and RanmaSocket name the ranma pane the launch ran in, so a
+	// message can be typed into it (peers.go). Empty outside ranma.
+	RanmaPane   string `json:"ranma_pane,omitempty"`
+	RanmaSocket string `json:"ranma_socket,omitempty"`
 }
 
 // headlessLaunch is whether a provider CLI started with args runs without
@@ -412,11 +416,15 @@ func setProfileChildPID(workdir string, pid int) error {
 	return os.WriteFile(lockPath, []byte(fmt.Sprintf("%d\n%d\n", os.Getpid(), pid)), 0600)
 }
 
-// setProfileInstanceMeta records where a launch happened, and whether anyone is
-// typing into it. A failure here is not fatal to the launch itself: the
-// instance simply cannot be described later.
-func setProfileInstanceMeta(workdir, folder string, headless bool) error {
-	data, err := json.Marshal(instanceMeta{Folder: folder, Started: time.Now().Format(time.RFC3339), Headless: headless})
+// setProfileInstanceMeta records where a launch happened, whether anyone is
+// typing into it, and the ranma pane it runs in. A failure here is not fatal to
+// the launch itself: the instance simply cannot be described later.
+func setProfileInstanceMeta(workdir, folder string, headless bool, env []string) error {
+	meta := instanceMeta{Folder: folder, Started: time.Now().Format(time.RFC3339), Headless: headless}
+	if insideRanma(env) {
+		meta.RanmaPane, meta.RanmaSocket = envValue(env, ranmaPaneEnv), envValue(env, ranmaSocketEnv)
+	}
+	data, err := json.Marshal(meta)
 	if err != nil {
 		return err
 	}

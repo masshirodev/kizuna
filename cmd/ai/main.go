@@ -30,6 +30,13 @@ const (
 	// runs inside the launched session.
 	profileNameEnv     = "AI_PROFILE"
 	profileProviderEnv = "AI_PROVIDER"
+	// instanceDirEnv points the session at its own instance directory, which
+	// is where its inbox lives (see peers.go).
+	instanceDirEnv = "AI_INSTANCE_DIR"
+	// configHomeEnv carries the launcher's own config base into the session.
+	// An OpenCode launch repoints XDG_CONFIG_HOME at the profile, so an `ai`
+	// started inside it would otherwise look for profiles.json there.
+	configHomeEnv = "AI_CONFIG_HOME"
 )
 
 type Profile struct {
@@ -191,12 +198,16 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 		rest, off := takeFlag(args[1:], "--off")
-		if len(rest) != 2 || (rest[0] != "openusage" && rest[0] != "statusline" && rest[0] != "ranma") || (off && rest[0] != "ranma") {
-			return errors.New("usage: ai integrate <openusage|statusline|ranma> <profile> (ranma takes --off), or ai integrate list [profile]")
+		known := len(rest) == 2 && (rest[0] == "openusage" || rest[0] == "statusline" || rest[0] == "ranma" || rest[0] == "messaging")
+		if !known || (off && rest[0] != "ranma" && rest[0] != "messaging") {
+			return errors.New("usage: ai integrate <openusage|statusline|ranma|messaging> <profile> (ranma and messaging take --off), or ai integrate list [profile]")
 		}
 		profile, err := resolveProfile(cfg, rest[1])
 		if err != nil {
 			return err
+		}
+		if rest[0] == "messaging" {
+			return integrateMessaging(profile, off, stdout)
 		}
 		if rest[0] == "ranma" {
 			return setTmuxShim(profile, !off, &cfg, configPath, stdout)
@@ -210,6 +221,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return launchExternal("openusage", []string{"integrations", "install", openUsageIntegration(profile.Provider)}, profile, stdout, stderr)
 	case "compact":
 		return compactCommand(cfg, args[1:], stdout)
+	case "peers":
+		return peersCommand(cfg, args[1:], stdout)
+	case "send":
+		return sendCommand(cfg, args[1:], os.Stdin, stdout)
+	case "inbox":
+		return inboxCommand(cfg, args[1:], os.Stdin, stdout)
 	case "path":
 		path, err := profileRoot()
 		if err != nil {
@@ -558,7 +575,7 @@ func runCommandWithLock(cmd *exec.Cmd, lockDir string, unlock func() string, tit
 		_ = cmd.Wait()
 		return err
 	}
-	_ = setProfileInstanceMeta(lockDir, commandFolder(cmd), headless)
+	_ = setProfileInstanceMeta(lockDir, commandFolder(cmd), headless, cmd.Env)
 	return cmd.Wait()
 }
 
@@ -931,6 +948,7 @@ func cleanEnvironment(values []string) []string {
 		"CODEX_HOME": true, "CLAUDE_CONFIG_DIR": true,
 		"XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true, "XDG_STATE_HOME": true,
 		profileNameEnv: true, profileProviderEnv: true,
+		instanceDirEnv: true, configHomeEnv: true,
 	}
 	result := make([]string, 0, len(values))
 	for _, value := range values {
@@ -956,6 +974,12 @@ func launchEnvironment(profile Profile, workdir, lockDir string, values []string
 		cleaned = withoutEnv(cleaned, antigravityCacheEnv)
 	}
 	markers := []string{profileNameEnv + "=" + profile.Name, profileProviderEnv + "=" + profile.Provider}
+	if lockDir != "" {
+		markers = append(markers, instanceDirEnv+"="+lockDir)
+	}
+	if base, err := configBase(); err == nil {
+		markers = append(markers, configHomeEnv+"="+base)
+	}
 	if usesIsolatedDataDir(profile) && isIsolatedInstanceDir(lockDir) {
 		return append(cleaned, append(markers,
 			"XDG_CONFIG_HOME="+filepath.Join(workdir, "config"),
@@ -992,8 +1016,30 @@ func findProfile(cfg Config, name string) (Profile, error) {
 	return Profile{}, fmt.Errorf("profile %q not found", name)
 }
 
-func configPath() (string, error) {
+// configBase is the directory ai's own files live under, normally the user's
+// config dir. Inside a launched session that redirects XDG_CONFIG_HOME into a
+// profile, the launcher's base (configHomeEnv) wins instead. It is trusted only
+// while XDG_CONFIG_HOME really sits inside that base's profiles, so a stray
+// variable cannot point a test, or a shell that set its own XDG_CONFIG_HOME,
+// at the real profiles.
+func configBase() (string, error) {
 	base, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	if home := os.Getenv(configHomeEnv); home != "" && home != base && pathInside(base, filepath.Join(home, appName, "profiles")) {
+		return home, nil
+	}
+	return base, nil
+}
+
+func pathInside(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+func configPath() (string, error) {
+	base, err := configBase()
 	if err != nil {
 		return "", err
 	}
@@ -1001,7 +1047,7 @@ func configPath() (string, error) {
 }
 
 func profileRoot() (string, error) {
-	base, err := os.UserConfigDir()
+	base, err := configBase()
 	if err != nil {
 		return "", err
 	}
@@ -1096,9 +1142,14 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  ai run <profile> resume [session-id]")
 	fmt.Fprintln(w, "  ai <profile> resume [session-id]        reopen a recent conversation")
 	fmt.Fprintln(w, "  ai env <profile>")
+	fmt.Fprintln(w, "  ai peers [--json] [repo]                every running agent: where it works, busy or idle, its pane")
+	fmt.Fprintln(w, "  ai send [--type|--no-type] <id> [text]  leave a running agent a message (text from stdin if left out)")
+	fmt.Fprintln(w, "  ai inbox [--peek] [id]                  read this agent's messages")
+	fmt.Fprintln(w, "  ai mcp serve                            the same three as an MCP server")
 	fmt.Fprintln(w, "  ai integrate openusage <profile>")
 	fmt.Fprintln(w, "  ai integrate statusline <profile>       show the profile inside the CLI")
 	fmt.Fprintln(w, "  ai integrate ranma <profile> [--off]    in a ranma pane, open tmux panes (agent teams) as ranma panes")
+	fmt.Fprintln(w, "  ai integrate messaging <profile> [--off] let its agents find and message the others")
 	fmt.Fprintln(w, "  ai integrate list [profile]             what each profile has, and what it could have")
 	fmt.Fprintln(w, "  ai path")
 	fmt.Fprintln(w, "  ai version                              build revision and update check")

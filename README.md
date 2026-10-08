@@ -50,6 +50,10 @@ profile's stored defaults. See [doc/running.md](doc/running.md#run).
   and starts another account on it in the same folder — or copies the brief to
   the clipboard and opens that account, for a provider that cannot be started
   on a prompt.
+- **Agents that find each other.** `ai peers` lists every running agent across
+  profiles, with the repository and checkout it is in. `ai send` leaves one a
+  message it reads at its next tool call. See
+  [doc/agent-messaging.md](doc/agent-messaging.md).
 - **Shared setup.** Clone a profile, or copy MCP servers and skills between
   profiles, even when they use different providers.
 - **Portable.** Export a profile as an `age`-encrypted bundle and import it
@@ -75,6 +79,7 @@ on right now.
 | Provider updates that miss the install that runs | [doc/shadowed-installs.md](doc/shadowed-installs.md) |
 | How concurrent OpenCode instances work | [doc/opencode-concurrent-instances.md](doc/opencode-concurrent-instances.md) |
 | Fresh OpenCode stores, resume by import, `ai compact` | [doc/session-store.md](doc/session-store.md) |
+| Agents finding and messaging each other: `ai peers`, `ai send` | [doc/agent-messaging.md](doc/agent-messaging.md) |
 
 ## License
 
