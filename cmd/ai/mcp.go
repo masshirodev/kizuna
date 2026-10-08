@@ -1052,3 +1052,51 @@ func codexKey(name string) string {
 	}
 	return name
 }
+
+// removeMCPServer deletes one server from a profile's config, leaving every
+// other key as it was. A server that is not there is not an error: the caller
+// wants it gone, and it is.
+func removeMCPServer(profile Profile, name string) error {
+	path, err := mcpConfigFile(profile)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var updated []byte
+	switch profile.Provider {
+	case "codex":
+		updated = []byte(removeCodexMCPTables(string(data), name))
+	case "opencode":
+		if sanitized := sanitizeJSONC(data); !bytes.Equal(bytes.TrimSpace(sanitized), bytes.TrimSpace(data)) {
+			return fmt.Errorf("write %s: config has comments or trailing commas this launcher cannot preserve; remove the %q server by hand", path, name)
+		}
+		updated, err = removeJSONMCPEntry(data, "mcp", name)
+	default:
+		updated, err = removeJSONMCPEntry(data, "mcpServers", name)
+	}
+	if err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if bytes.Equal(updated, data) {
+		return nil
+	}
+	return writeFileAtomic(path, updated)
+}
+
+func removeJSONMCPEntry(data []byte, key, name string) ([]byte, error) {
+	entries, err := jsonObjectField(data, key)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := entries[name]; !ok {
+		return data, nil
+	}
+	delete(entries, name)
+	return setJSONField(data, key, orderedJSONObject(entries))
+}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 )
 
@@ -16,6 +17,9 @@ import (
 // its name.
 
 func mcpCommand(args []string, cfg Config, stdout io.Writer) error {
+	if len(args) == 1 && args[0] == "serve" {
+		return mcpServeCommand(cfg, os.Stdin, stdout)
+	}
 	args, replace := takeFlag(args, "--replace")
 	if len(args) == 0 || args[0] == "list" {
 		if len(args) != 2 {

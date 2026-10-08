@@ -2212,7 +2212,7 @@ func (c trackedExecCommand) Run() error {
 		_ = c.cmd.Wait()
 		return err
 	}
-	_ = setProfileInstanceMeta(c.workdir, c.cmd.Dir)
+	_ = setProfileInstanceMeta(c.workdir, c.cmd.Dir, c.cmd.Env)
 	return c.cmd.Wait()
 }
 

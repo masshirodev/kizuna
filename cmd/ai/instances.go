@@ -47,6 +47,10 @@ func (instance profileInstance) uptime(now time.Time) time.Duration {
 type instanceMeta struct {
 	Folder  string `json:"folder"`
 	Started string `json:"started"`
+	// RanmaPane and RanmaSocket name the ranma pane the launch ran in, so a
+	// message can be typed into it (peers.go). Empty outside ranma.
+	RanmaPane   string `json:"ranma_pane,omitempty"`
+	RanmaSocket string `json:"ranma_socket,omitempty"`
 }
 
 func supportsConcurrentRuns(profile Profile) bool {
@@ -384,8 +388,12 @@ func setProfileChildPID(workdir string, pid int) error {
 
 // setProfileInstanceMeta records where a launch happened. A failure here is not
 // fatal to the launch itself: the instance simply cannot be described later.
-func setProfileInstanceMeta(workdir, folder string) error {
-	data, err := json.Marshal(instanceMeta{Folder: folder, Started: time.Now().Format(time.RFC3339)})
+func setProfileInstanceMeta(workdir, folder string, env []string) error {
+	meta := instanceMeta{Folder: folder, Started: time.Now().Format(time.RFC3339)}
+	if insideRanma(env) {
+		meta.RanmaPane, meta.RanmaSocket = envValue(env, ranmaPaneEnv), envValue(env, ranmaSocketEnv)
+	}
+	data, err := json.Marshal(meta)
 	if err != nil {
 		return err
 	}

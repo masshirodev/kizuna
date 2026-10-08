@@ -194,7 +194,7 @@ func githubToken(ctx context.Context) (string, error) {
 }
 
 func updateCachePath() (string, error) {
-	base, err := os.UserConfigDir()
+	base, err := configBase()
 	if err != nil {
 		return "", err
 	}

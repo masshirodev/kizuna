@@ -157,3 +157,11 @@ by hand, which still works and needs no setting. What decides each step:
 The shim execs the command in its own place, so the PID the run lock records
 is still the CLI's, and stopping or hijacking the instance works as usual. The
 TUI's account line shows `ranma tmux shim` for a profile that has it on.
+
+## Messaging between agents
+
+`ai integrate messaging <profile>` (`--off` to undo) gives a profile's agents
+the `ai` MCP server, so they can list the other running agents and message
+them. A Claude Code profile also gets hooks that read its inbox by itself.
+`ai integrate list` and the integrations box do not show it yet. The whole
+feature is in [agent-messaging.md](agent-messaging.md).

@@ -26,7 +26,7 @@ const (
 
 // repoDir is the managed clone self-update rebuilds from by default.
 func repoDir() (string, error) {
-	base, err := os.UserConfigDir()
+	base, err := configBase()
 	if err != nil {
 		return "", err
 	}

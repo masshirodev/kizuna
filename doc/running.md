@@ -224,8 +224,14 @@ own. How those layer with your shell and with the values above is in
 (`~/.config/ai/profiles.json` by default). An OpenCode profile's launch points
 that variable at the profile's `config/`, so an `ai` invocation made **from
 inside** a running OpenCode session — an agent spawning a second profile, say —
-looks for `profiles.json` under the profile, finds none, and fails with
-`unknown command, profile, or app "<name>"`. Clear the variable for that call:
+would look for `profiles.json` under the profile. Every launch therefore also
+exports `AI_CONFIG_HOME`, the launcher's own config base, and an `ai` started
+inside the session uses it while `XDG_CONFIG_HOME` points into that base's
+`profiles/` ([agent-messaging.md](agent-messaging.md#environment-a-launch-now-carries)).
+
+A session started by an older `ai` lacks the variable and still fails with
+`unknown command, profile, or app "<name>"`. Clear `XDG_CONFIG_HOME` for that
+call, or restart the session:
 
 ```sh
 env -u XDG_CONFIG_HOME ai opencode3 run --auto "…"
