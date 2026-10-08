@@ -73,6 +73,7 @@ on right now.
 | Provider updates that miss the install that runs | [doc/shadowed-installs.md](doc/shadowed-installs.md) |
 | How concurrent OpenCode instances work | [doc/opencode-concurrent-instances.md](doc/opencode-concurrent-instances.md) |
 | Fresh OpenCode stores, resume by import, `ai compact` | [doc/session-store.md](doc/session-store.md) |
+| Agents finding and messaging each other (proposal) | [doc/agent-messaging.md](doc/agent-messaging.md) |
 
 ## License
 
