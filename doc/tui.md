@@ -301,8 +301,9 @@ computed from the same splits the writers use, so the box cannot describe a
 rewrite the copy then does not make.
 
 **The integrations box (`I`)** shows what the selected profile has of the
-things `ai integrate` writes, which are the status line, OpenUsage's hooks and
-ranma's tmux shim ([integrations.md](integrations.md)), and it acts on them.
+things `ai integrate` writes, which are the status line, OpenUsage's hooks,
+ranma's tmux shim ([integrations.md](integrations.md)) and messaging between
+agents ([agent-messaging.md](agent-messaging.md)), and it acts on them.
 It has two scopes, and `a` flips between them the way the resume picker flips
 between this account and all accounts:
 
@@ -382,7 +383,7 @@ history.
 
 **A box is sized to the terminal, not to what it happens to be showing.** Every
 box grows in width with the window up to a ceiling of its own, border included — the resume
-picker at 140, the handoff wizard, the share box and the integrations box at 124, the palette at 120,
+picker at 140, the integrations box at 151, the handoff wizard and the share box at 124, the palette at 120,
 the arguments prompt at 104, the editor at 92, and the boxes that ask one
 question at 88 — and gives back six columns to the board behind it. The width a
 wide terminal adds to a picker goes to the preview rather than the list: a
@@ -440,8 +441,17 @@ disagree, the repository won, and these are the places:
 
 - **The integrations box lists one order everywhere.** The integrations
   handoff put the shim second in the per-profile list and third in the grid.
-  Both scopes follow the grid's order (status line, OpenUsage, ranma), so a row
-  does not move when the scope flips.
+  Both scopes follow the grid's order (status line, OpenUsage, ranma,
+  messaging), so a row does not move when the scope flips.
+- **Messaging is a fourth integration the handoff did not draw.** It was added
+  as a fourth grid column at the handoff's own 27-column cell, rather than
+  squeezing the three the handoff pinned. That is why the box's ceiling is 151
+  (124 plus one cell), and a terminal narrower than that clips the messaging
+  column first. A Claude profile with the ai MCP server but no hooks reads
+  `○ off  tools only` and still offers `↵ turn on`, because turning on is what
+  writes the hooks. The board's expansion does not list messaging: its sheet
+  has no spare row for a fourth integration without pushing the frame past its
+  height, so it waits for a redraw of the expansion.
 - **The integrations box has no `←→ pane` key.** The mock's per-profile footer
   offers one, but the explanation pane has nothing to select or scroll, so
   moving focus into it would do nothing. `a` takes that place in the footer

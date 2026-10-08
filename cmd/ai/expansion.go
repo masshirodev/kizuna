@@ -232,6 +232,14 @@ func integrationName(kind integrationKind) string {
 	return kind.name()
 }
 
+// onExpansion is whether the board's expansion lists an integration. The
+// expansion handoff drew three, and its sheet has no spare row for a fourth
+// without pushing the frame past its height, so messaging is shown by the
+// integrations box (I) and `ai peers` until the expansion is redrawn for it.
+func onExpansion(kind integrationKind) bool {
+	return kind != integrationMessaging
+}
+
 // integrationsGlance is each integration that applies, with its state in a
 // word, the way the box reads it.
 func (m tuiModel) integrationsGlance(profile Profile) string {
@@ -241,7 +249,7 @@ func (m tuiModel) integrationsGlance(profile Profile) string {
 	}
 	var parts []string
 	for _, status := range facts.integrations {
-		if status.state == stateNA {
+		if status.state == stateNA || !onExpansion(status.kind) {
 			continue
 		}
 		parts = append(parts, modelStyle.Render(integrationName(status.kind))+" "+glanceState(status))
@@ -686,7 +694,7 @@ func (m tuiModel) sheetIntegrations(profile Profile) []string {
 	locked := false
 	var notes []string
 	for _, status := range facts.integrations {
-		if status.state == stateNA {
+		if status.state == stateNA || !onExpansion(status.kind) {
 			continue
 		}
 		lines = append(lines, label(integrationName(status.kind))+sheetState(status))

@@ -20,7 +20,10 @@ import (
 // disagrees with. doc/tui.md, "The boxes".
 
 const (
-	integrationsModalWidth = 124
+	// The grid's fourth column (messaging) was appended at the handoff's cell
+	// width rather than squeezing the three it drew, so the ceiling grew from
+	// 124 by exactly one cell. A narrower terminal clips the last column.
+	integrationsModalWidth = 151
 	// integrationListWidth is the per-profile list: a bar, the integration's
 	// name, and its state. Everything else goes to the pane that explains it.
 	integrationListWidth = 40
@@ -282,6 +285,18 @@ func (m tuiModel) actOnIntegration() (tea.Model, tea.Cmd) {
 				m.setStatus(statusOK, profile.Name+" launches under ranma's tmux shim from a ranma pane")
 			}
 		}
+	case integrationMessaging:
+		turningOff := status.state == stateOn
+		m.writeIntegration(func(*Config) error {
+			return integrateMessaging(profile, turningOff, io.Discard)
+		})
+		if m.statusKind != statusErr {
+			if turningOff {
+				m.setStatus(statusOK, profile.Name+" no longer reads its inbox, and has no ai messaging tools")
+			} else {
+				m.setStatus(statusOK, profile.Name+"'s agents can find and message the others; running sessions get it when they restart")
+			}
+		}
 	case integrationStatusLine:
 		m.writeIntegration(func(cfg *Config) error {
 			return installIndicator(profile, cfg, m.configPath, io.Discard)
@@ -492,7 +507,7 @@ func (m tuiModel) integrationGridContent(width, rows int) []string {
 	lines := []string{
 		spread(boxTitle("integrations")+dimStyle.Render("   every profile"), dimStyle.Render(where), width), "",
 		columnHeaderStyle.Render("  " + pad("ACCOUNT", integrationAccountWidth-2) + pad("STATUS LINE", integrationCellWidth) +
-			pad("OPENUSAGE", integrationCellWidth) + "RANMA SHIM"), "",
+			pad("OPENUSAGE", integrationCellWidth) + pad("RANMA SHIM", integrationCellWidth) + "MESSAGING"), "",
 	}
 	var table []string
 	for index, profile := range m.integrations.profiles {

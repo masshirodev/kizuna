@@ -181,3 +181,34 @@ func TestIntegrateOpenUsageRefusesAProviderItHasNothingFor(t *testing.T) {
 		t.Fatalf("err = %v, want the provider named", err)
 	}
 }
+
+func TestMessagingStatusReadsWhatIntegrateLeft(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	claude := Profile{Name: "claude-max", Provider: "claude", Command: "claude"}
+	opencode := Profile{Name: "opencode3", Provider: "opencode", Command: "opencode"}
+	deepseek := Profile{Name: "deepseek", Provider: "deepseek", Command: "opencode"}
+	envWith := func(delivery map[string]string) integrationEnv {
+		env := testIntegrationEnv("ai", false, nil, nil)
+		env.messaging = func(profile Profile) string { return delivery[profile.Name] }
+		return env
+	}
+
+	if status := stateOf(t, claude, integrationMessaging, envWith(nil)); status.state != stateOff || status.action != "turn on" {
+		t.Fatalf("nothing written = %+v, want off with turn on", status)
+	}
+	status := stateOf(t, claude, integrationMessaging, envWith(map[string]string{"claude-max": "hooks"}))
+	if status.state != stateOn || status.action != "turn off" || !strings.HasSuffix(status.sameAs, "--off") {
+		t.Fatalf("hooks written = %+v, want on with turn off", status)
+	}
+	// A Claude profile with the server but no hooks still has something to
+	// turn on: the hooks are what make it read by itself.
+	if status := stateOf(t, claude, integrationMessaging, envWith(map[string]string{"claude-max": "mcp"})); status.state != stateOff || status.note != "tools only" || status.action != "turn on" {
+		t.Fatalf("server without hooks = %+v", status)
+	}
+	if status := stateOf(t, opencode, integrationMessaging, envWith(map[string]string{"opencode3": "mcp"})); status.state != stateOn || status.note != "tools only" {
+		t.Fatalf("opencode with the server = %+v, want on, tools only", status)
+	}
+	if status := stateOf(t, deepseek, integrationMessaging, envWith(nil)); status.state != stateNA {
+		t.Fatalf("deepseek = %+v, want n/a: it has no MCP config of its own", status)
+	}
+}

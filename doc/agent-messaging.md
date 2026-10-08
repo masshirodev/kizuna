@@ -112,6 +112,9 @@ ai integrate messaging max --off    # off again
   entry is recognised as ai's by `inbox --hook` in its command, and `--off`
   removes exactly those entries, plus any event left with no hooks.
 - Sessions already running pick the hooks up when they restart.
+- The integrations box (`I`) shows the same thing as its `messaging` row and
+  toggles it with `↵`. A Claude profile with the server but not the hooks
+  reads `○ off  tools only`.
 
 The command written is `ai`'s absolute path from `PATH` (falling back to the
 running binary), so a reinstall to the same place keeps working.
@@ -148,8 +151,11 @@ keeps it, so a leftover variable cannot point anything at the real profiles.
   offer has not been looked at.
 - **No busy/idle for those three**, so the automatic nudge never fires for
   them. `--type` does it by hand.
-- **The TUI does not show messaging yet.** The integrations box was laid out
-  for three integrations, and a fourth is a layout change for its own card.
+- **The board's expansion does not list messaging.** The integrations box
+  (`I`) shows and toggles it as its fourth row and column, but the expansion's
+  sheet has no row to spare for it ([tui.md](tui.md)).
+- **Headless runs** (`claude -p`, `codex exec`, `opencode run`) are listed as
+  `headless`, and nothing is typed into them: they have no prompt.
 - **Mail to an instance that exits** goes with its instance directory. `ai
   send` only reaches live instances, so nothing is sent into the void, but
   unread mail at exit is lost. The exception is an exclusive-lock profile,
