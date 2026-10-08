@@ -523,7 +523,7 @@ func runLockedCommand(cmd *exec.Cmd, workdir, title string, signals *signalForwa
 	if err != nil {
 		return err
 	}
-	return runCommandWithLock(cmd, lockDir, unlock, title, signals)
+	return runCommandWithLock(cmd, lockDir, unlock, title, false, signals)
 }
 
 func launchProfileCommand(command string, args []string, plain bool, profile Profile, stdout, stderr io.Writer) error {
@@ -552,10 +552,10 @@ func launchProfileCommand(command string, args []string, plain bool, profile Pro
 		unlock()
 		return err
 	}
-	return runCommandWithLock(cmd, lockDir, unlock, sessionTitle(profile), signals)
+	return runCommandWithLock(cmd, lockDir, unlock, sessionTitle(profile), headlessLaunch(profile.Provider, args), signals)
 }
 
-func runCommandWithLock(cmd *exec.Cmd, lockDir string, unlock func() string, title string, signals *signalForwarder) error {
+func runCommandWithLock(cmd *exec.Cmd, lockDir string, unlock func() string, title string, headless bool, signals *signalForwarder) error {
 	defer func() {
 		if note := unlock(); note != "" {
 			fmt.Fprintln(os.Stderr, note)
@@ -575,7 +575,7 @@ func runCommandWithLock(cmd *exec.Cmd, lockDir string, unlock func() string, tit
 		_ = cmd.Wait()
 		return err
 	}
-	_ = setProfileInstanceMeta(lockDir, commandFolder(cmd), cmd.Env)
+	_ = setProfileInstanceMeta(lockDir, commandFolder(cmd), headless, cmd.Env)
 	return cmd.Wait()
 }
 

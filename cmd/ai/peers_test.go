@@ -30,7 +30,7 @@ func livePeerInstance(t *testing.T, root string, profile Profile, run, folder st
 	if err := os.WriteFile(filepath.Join(lockDir, ".active.lock"), []byte(fmt.Sprintf("%d\n", sleeper.Process.Pid)), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := setProfileInstanceMeta(lockDir, folder, nil); err != nil {
+	if err := setProfileInstanceMeta(lockDir, folder, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	return lockDir
@@ -303,13 +303,13 @@ func TestConfigBaseFollowsTheLauncherOnlyFromInsideAProfile(t *testing.T) {
 func TestInstanceMetaRecordsTheRanmaPane(t *testing.T) {
 	lockDir := t.TempDir()
 	env := []string{ranmaSocketEnv + "=/run/ranma/1.sock", ranmaPaneEnv + "=13"}
-	if err := setProfileInstanceMeta(lockDir, "/work/ranma", env); err != nil {
+	if err := setProfileInstanceMeta(lockDir, "/work/ranma", false, env); err != nil {
 		t.Fatal(err)
 	}
 	if meta := readInstanceMeta(lockDir); meta.RanmaPane != "13" || meta.RanmaSocket != "/run/ranma/1.sock" {
 		t.Fatalf("meta = %+v, want the pane and socket", meta)
 	}
-	if err := setProfileInstanceMeta(lockDir, "/work/ranma", []string{ranmaPaneEnv + "=13"}); err != nil {
+	if err := setProfileInstanceMeta(lockDir, "/work/ranma", false, []string{ranmaPaneEnv + "=13"}); err != nil {
 		t.Fatal(err)
 	}
 	if meta := readInstanceMeta(lockDir); meta.RanmaPane != "" {

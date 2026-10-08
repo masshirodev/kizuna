@@ -42,9 +42,12 @@ type peer struct {
 	Worktree bool   `json:"worktree,omitempty"`
 	Branch   string `json:"branch,omitempty"`
 	// State is "busy" or "idle" where the provider says so, empty otherwise.
-	State   string `json:"state,omitempty"`
-	Session string `json:"session,omitempty"`
-	Title   string `json:"title,omitempty"`
+	State string `json:"state,omitempty"`
+	// Headless is a run nobody types into (`claude -p`, `codex exec`,
+	// `opencode run`): it has no prompt to nudge, and ends by itself.
+	Headless bool   `json:"headless,omitempty"`
+	Session  string `json:"session,omitempty"`
+	Title    string `json:"title,omitempty"`
 	// Name is Claude Code's slug for the session (`ranma-18`), the handle its
 	// own peer messaging uses.
 	Name    string    `json:"name,omitempty"`
@@ -90,6 +93,7 @@ func collectPeers(cfg Config) []peer {
 				Title:    instance.session.title,
 				Name:     instance.session.name,
 				Started:  instance.started,
+				Headless: instance.headless,
 				Delivery: delivery,
 				Unread:   len(inboxMessages(instance.lockDir)),
 				Self:     self != "" && filepath.Clean(self) == filepath.Clean(instance.lockDir),
@@ -224,8 +228,12 @@ func peersCommand(cfg Config, args []string, stdout io.Writer) error {
 		if p.Self {
 			id += " (you)"
 		}
+		state := dash(p.State)
+		if p.Headless {
+			state = "headless"
+		}
 		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			id, p.Provider, p.where(), dash(p.Branch), dash(p.State), dash(p.paneLabel()), p.mailLabel(), p.Title)
+			id, p.Provider, p.where(), dash(p.Branch), state, dash(p.paneLabel()), p.mailLabel(), p.Title)
 	}
 	return writer.Flush()
 }

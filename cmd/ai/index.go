@@ -139,6 +139,27 @@ func indexedRecentSessions(profile Profile, limit int) ([]recordedSession, bool)
 	return limitEachKind(records, limit), true
 }
 
+// indexedSessionCounts is how many conversations the index holds for the
+// profile, interactive and headless apart. It reads the rows as the last
+// refresh left them rather than refreshing again: it runs right after
+// recentSessions, which has just brought them up to date.
+func indexedSessionCounts(profile Profile) sessionCounts {
+	sessionIndexMu.Lock()
+	defer sessionIndexMu.Unlock()
+	db, err := openSessionIndex()
+	if err != nil {
+		return sessionCounts{}
+	}
+	defer db.Close()
+	var counts sessionCounts
+	if db.QueryRow(`SELECT COALESCE(SUM(headless = 0), 0), COALESCE(SUM(headless = 1), 0) FROM session WHERE profile = ?`,
+		profile.Name).Scan(&counts.interactive, &counts.headless) != nil {
+		return sessionCounts{}
+	}
+	counts.known = true
+	return counts
+}
+
 // limitEachKind keeps the newest limit interactive and the newest limit
 // headless records, in their existing order. It runs after live sessions join,
 // which can be newer than anything the index returned.

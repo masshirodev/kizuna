@@ -190,7 +190,7 @@ func sendMessage(cfg Config, target, text string, options sendOptions) (sendResu
 		// Hooks read the inbox on their own while the agent works. An idle
 		// agent needs a prompt to wake it, and only a known-idle one is safe
 		// to type into: a busy one may be showing a permission dialog.
-		shouldType = p.State == "idle"
+		shouldType = p.State == "idle" && !p.Headless
 	}
 	if shouldType {
 		if err := typeNudge(p, m.From); err != nil {
@@ -227,6 +227,9 @@ func nudgeText(from string) string {
 }
 
 func typeNudge(p peer, from string) error {
+	if p.Headless {
+		return errors.New("it is a headless run, with no prompt to type at")
+	}
 	text := nudgeText(from)
 	switch {
 	case p.Pane != "":

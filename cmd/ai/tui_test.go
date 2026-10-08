@@ -81,13 +81,13 @@ func TestViewShowsSelectedModelWhenKnown(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", root)
 	writeProfileFile(t, root, `{"model":"opus"}`, "claude-personal", "claude", "settings.json")
 	m := wideModel(testProfiles())
-	if view := m.View(); !strings.Contains(view, "model opus") {
+	if view := m.View(); !strings.Contains(view, "MODEL opus") {
 		t.Fatalf("selected profile does not name its model:\n%s", view)
 	}
-	// A profile with no discoverable model says nothing about one, rather than
+	// A profile with no discoverable model says the CLI picks, rather than
 	// naming a model it cannot vouch for.
 	m.cursor = 1
-	if view := m.View(); strings.Contains(view, "model ") {
+	if view := m.View(); !strings.Contains(view, "MODEL default") || strings.Contains(view, "MODEL opus") {
 		t.Fatalf("a profile with no discoverable model named one:\n%s", view)
 	}
 }
@@ -943,7 +943,7 @@ func TestPaletteOnlyOffersKeysTheListHandles(t *testing.T) {
 				// Answering means one of: opening something, saying why not, or
 				// handing back work to run.
 				if cmd == nil && got.mode == base.mode && got.status == "" && got.searching == base.searching &&
-					got.autoSwap == base.autoSwap {
+					got.autoSwap == base.autoSwap && got.sheet == base.sheet {
 					t.Errorf("action %q (%s) does nothing in the list", action.key, action.desc)
 				}
 			}

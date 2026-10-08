@@ -110,7 +110,8 @@ confused with a provider's own `-p`.
 Codex and Claude profiles can be launched concurrently from multiple terminals.
 Every launch creates a temporary directory beneath the profile's `instances/`
 directory for its PID lock and an `instance.json` recording the folder it was
-launched in, while all instances continue to use the profile's
+launched in, when, and whether it is headless (`-p`, `exec`, `run` — the board
+marks those `◇`), while all instances continue to use the profile's
 single `CODEX_HOME` or `CLAUDE_CONFIG_DIR`. This means one login per profile and
 the same settings and session history in every instance. The instance directory
 is removed when the CLI exits and reclaimed automatically after a crash.

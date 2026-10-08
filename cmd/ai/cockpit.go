@@ -319,9 +319,24 @@ func (m tuiModel) boardView(frame layout) []string {
 		rows--
 	}
 
-	lines, cursor := m.boardLines(visible, columns, frame.width, true)
-	if len(lines) > rows {
-		lines, cursor = m.boardLines(visible, columns, frame.width, false)
+	// The fullest expansion that fits is drawn: the sheet when it is open,
+	// then the glance, then the glance on a folded board, then the one launch
+	// line, and only then does the board scroll.
+	type attempt struct {
+		level expansionLevel
+		fold  bool
+	}
+	attempts := []attempt{{expandGlance, false}, {expandGlance, true}, {expandCompact, false}}
+	if m.sheet {
+		attempts = append([]attempt{{expandSheet, true}}, attempts...)
+	}
+	var lines []string
+	cursor := 0
+	for _, try := range attempts {
+		lines, cursor = m.boardLines(visible, columns, frame.width, try.level, try.fold)
+		if len(lines) <= rows {
+			break
+		}
 	}
 	lines = windowRows(lines, cursor, rows)
 	lines = padToRows(lines, rows, -1)
@@ -334,10 +349,12 @@ func (m tuiModel) boardView(frame layout) []string {
 	return lines[:min(len(lines), frame.body)]
 }
 
-// boardLines draws the table and reports which line the cursor is on. full
-// asks for the selected row's whole expansion; without it the row keeps only
-// the one line saying how it launches.
-func (m tuiModel) boardLines(visible []Profile, c boardColumns, width int, full bool) ([]string, int) {
+// boardLines draws the table at one expansion level and reports which line the
+// cursor is on. A folded board makes room for the expansion: the other
+// accounts' instances are not nested under them, and the accounts with no
+// quota to show fold onto one line unless the cursor is among them. The sheet
+// is always drawn on a folded board, as the handoff drew it.
+func (m tuiModel) boardLines(visible []Profile, c boardColumns, width int, level expansionLevel, folded bool) ([]string, int) {
 	lines := []string{m.boardHeader(c, width), ""}
 	if len(visible) == 0 {
 		if len(m.profiles) == 0 {
@@ -345,13 +362,28 @@ func (m tuiModel) boardLines(visible []Profile, c boardColumns, width int, full 
 		}
 		return append(lines, emptyStateStyle.Render("Nothing matches "+m.filter)), 0
 	}
+	fold := folded
+	var unrated []string
+	for index, profile := range visible {
+		if !reportsQuota(profile.Provider) {
+			unrated = append(unrated, profile.Name)
+			if index == m.cursor {
+				fold = false
+			}
+		}
+	}
 	cursor := 0
 	unratedHeading := false
 	for index, profile := range visible {
 		if !reportsQuota(profile.Provider) && !unratedHeading {
 			unratedHeading = true
-			if index > 0 {
+			if index > 0 && !folded {
 				lines = append(lines, "")
+			}
+			if fold {
+				lines = append(lines, "  "+sectionLabelStyle.Render("NO LOCAL QUOTA CACHE")+
+					dimStyle.Render(truncate("   "+strings.Join(unrated, " · ")+"  ↓", max(width-24, 1))))
+				break
 			}
 			lines = append(lines, "  "+sectionLabelStyle.Render("NO LOCAL QUOTA CACHE")+
 				dimStyle.Render(truncate("   these providers keep none this launcher reads", max(width-24, 1))))
@@ -362,8 +394,8 @@ func (m tuiModel) boardLines(visible []Profile, c boardColumns, width int, full 
 		}
 		lines = append(lines, m.boardRow(profile, selected, c, width))
 		if selected {
-			lines = append(lines, m.expansion(profile, width, full)...)
-		} else {
+			lines = append(lines, m.expansion(profile, c, width, level)...)
+		} else if !folded {
 			lines = append(lines, m.nestedInstances(profile, width)...)
 		}
 	}
@@ -504,50 +536,6 @@ func truncateStyled(line string, width int) string {
 	return padLine(line, width)
 }
 
-// expansion is everything about the account under the cursor, drawn in place
-// under its row rather than in a column of its own: how it launches, what it
-// is running, how busy it has been, and what it was last working on.
-func (m tuiModel) expansion(profile Profile, width int, full bool) []string {
-	ink := selectedPen(true)
-	indent := strings.Repeat(" ", boardIndent)
-	inner := max(width-boardIndent, 8)
-	lines := []string{ink.render(lipgloss.NewStyle(), indent) + ink.render(modelStyle, truncate(m.launchSummary(profile), inner))}
-	if full {
-		lines = append(lines, "")
-		leftWidth := min(60, inner*44/100)
-		stacked := inner-leftWidth-3 < 40
-		recentWidth := inner - leftWidth - 3
-		if stacked {
-			recentWidth = inner
-		}
-		left, right := m.expansionRunning(profile), m.expansionRecent(profile, recentWidth)
-		if stacked {
-			// Too narrow for the two side by side: the recent list goes under
-			// what is running rather than being squeezed beside it.
-			for _, line := range append(append(left, ""), right...) {
-				lines = append(lines, indent+truncateStyled(line, inner))
-			}
-		} else {
-			rightWidth := inner - leftWidth - 3
-			for row := range max(len(left), len(right)) {
-				first, second := "", ""
-				if row < len(left) {
-					first = left[row]
-				}
-				if row < len(right) {
-					second = right[row]
-				}
-				lines = append(lines, indent+padLine(first, leftWidth)+"   "+padLine(second, rightWidth))
-			}
-		}
-		lines = append(lines, "")
-	}
-	for index, line := range lines {
-		lines[index] = tintLine(line, width)
-	}
-	return lines
-}
-
 // tintLine lays the selection tint under a line built from its own styles.
 // Each span closes its pen, so the tint is re-opened after every reset rather
 // than set once around the whole line.
@@ -585,69 +573,6 @@ func (m tuiModel) launchSummary(profile Profile) string {
 		parts = append(parts, profile.Notes)
 	}
 	return strings.Join(parts, "  ·  ")
-}
-
-func (m tuiModel) expansionRunning(profile Profile) []string {
-	lines := []string{sectionLabelStyle.Render("RUNNING HERE")}
-	running := 0
-	for _, instance := range m.live {
-		if instance.profile != profile.Name {
-			continue
-		}
-		running++
-		lines = append(lines,
-			liveStyle.Render("▶ ")+fieldValueStyle.Render(m.instanceTitle(instance)),
-			dimStyle.Render(fmt.Sprintf("  PID %d · %s · %s", instance.pid, shortenHome(instance.folder), formatUptime(instance.uptime(m.clock())))))
-	}
-	if running == 0 {
-		lines = append(lines, unknownStyle.Render(m.pending("nothing running")))
-	}
-	// The histogram is labelled by what it counts, not as quota: no provider
-	// records what a limit cost at a given hour, so this measures the one thing
-	// that is actually on disk — sessions touched per hour.
-	if m.activity.known() {
-		spark := dimStyle.Render("24h ") + providerStyle(profile.Provider).Render(sparkline(m.activity.counts[:]))
-		if !m.activity.peak.IsZero() {
-			spark += dimStyle.Render("  peak " + m.activity.peak.Local().Format("15:04"))
-		}
-		lines = append(lines, "", spark)
-	}
-	return lines
-}
-
-// expansionRecentRows is how many conversations the expanded row lists. The
-// resume picker is where the rest are; this is what the account was last on.
-const expansionRecentRows = 4
-
-func (m tuiModel) expansionRecent(profile Profile, width int) []string {
-	lines := []string{sectionLabelStyle.Render("RECENT")}
-	recent := m.withoutHeadless(m.recent)
-	if len(recent) == 0 {
-		lines = append(lines, unknownStyle.Render(m.pending("no recorded sessions")))
-	}
-	for index, record := range recent {
-		if index == expansionRecentRows {
-			break
-		}
-		title, style := record.session.title, fieldValueStyle
-		if title == "" {
-			title, style = "untitled session", unknownStyle
-		}
-		// The folder gives way before the title does: the title is what says
-		// which conversation this is, the folder only where.
-		folder := min(22, max(width-8-40, 10))
-		titleWidth := min(38, max(width-8-folder, 10))
-		line := dimStyle.Render(pad(formatWhen(m.clock(), record.activity()), 8)) +
-			style.Render(pad(truncate(title, titleWidth-2), titleWidth)) +
-			dimStyle.Render(truncate(shortenHome(record.folder), folder))
-		// A session that was handed over carries where it went, reading forwards
-		// because that is the only direction a pass has.
-		if link, passed := m.lineage[record.session.id]; passed && record.session.id != "" {
-			line += liveStyle.Render("  → " + link.TargetProfile)
-		}
-		lines = append(lines, line)
-	}
-	return append(lines, "", renderKeys(helpEntry{"R", "resume"}, helpEntry{"H", "hand off"}, helpEntry{"h", "open live"}))
 }
 
 // boardStatus is what the log shrank to: the last thing that happened, and
