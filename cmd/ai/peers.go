@@ -63,9 +63,20 @@ type peer struct {
 	Unread   int    `json:"unread,omitempty"`
 	// Self marks the instance asking.
 	Self bool `json:"self,omitempty"`
+	// Role is "lead" for an instance whose agent launched others still
+	// running, "worker" for one launched by another instance's agent, and
+	// empty for one nobody launched and that launched nobody. Lead names the
+	// launcher and Workers the instances it launched, so mail for the work
+	// goes to the lead instead of to a worker in one of its worktrees.
+	Role    string   `json:"role,omitempty"`
+	Lead    string   `json:"lead,omitempty"`
+	Workers []string `json:"workers,omitempty"`
 
 	lockDir     string
 	ranmaSocket string
+	// leadRunning is whether Lead is still live; a worker whose lead has
+	// exited is nobody's to redirect to.
+	leadRunning bool
 }
 
 // collectPeers describes every live instance across every profile. It asks
@@ -101,6 +112,7 @@ func collectPeers(cfg Config) []peer {
 			}
 			meta := readInstanceMeta(instance.lockDir)
 			p.Pane, p.ranmaSocket = meta.RanmaPane, meta.RanmaSocket
+			p.Lead = meta.Lead
 			if p.Pane == "" {
 				// Instances launched before the pane was recorded: the
 				// launcher's own environment still says where it runs.
@@ -120,6 +132,7 @@ func collectPeers(cfg Config) []peer {
 			peers = append(peers, p)
 		}
 	}
+	linkLeads(peers)
 	sort.SliceStable(peers, func(i, j int) bool {
 		if peers[i].Repo != peers[j].Repo {
 			return peers[i].Repo < peers[j].Repo
@@ -127,6 +140,31 @@ func collectPeers(cfg Config) []peer {
 		return peers[i].ID < peers[j].ID
 	})
 	return peers
+}
+
+// linkLeads fills in each instance's role from the leads recorded at launch.
+// A lead that has exited still names its worker's origin, but has no row of
+// its own to point at.
+func linkLeads(peers []peer) {
+	index := map[string]int{}
+	for i, p := range peers {
+		index[p.ID] = i
+	}
+	for i := range peers {
+		if peers[i].Lead == "" {
+			continue
+		}
+		peers[i].Role = "worker"
+		if lead, live := index[peers[i].Lead]; live && lead != i {
+			peers[i].leadRunning = true
+			peers[lead].Workers = append(peers[lead].Workers, peers[i].ID)
+		}
+	}
+	for i := range peers {
+		if len(peers[i].Workers) > 0 && peers[i].Role == "" {
+			peers[i].Role = "lead"
+		}
+	}
 }
 
 // instanceID names an instance by the directory that holds its lock, which is
@@ -222,7 +260,7 @@ func peersCommand(cfg Config, args []string, stdout io.Writer) error {
 		return nil
 	}
 	writer := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(writer, "ID\tPROVIDER\tWHERE\tBRANCH\tSTATE\tPANE\tMAIL\tTITLE")
+	fmt.Fprintln(writer, "ID\tROLE\tPROVIDER\tWHERE\tBRANCH\tSTATE\tPANE\tMAIL\tTITLE")
 	for _, p := range peers {
 		id := p.ID
 		if p.Self {
@@ -232,8 +270,8 @@ func peersCommand(cfg Config, args []string, stdout io.Writer) error {
 		if p.Headless {
 			state = "headless"
 		}
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			id, p.Provider, p.where(), dash(p.Branch), state, dash(p.paneLabel()), p.mailLabel(), p.Title)
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			id, dash(p.roleLabel()), p.Provider, p.where(), dash(p.Branch), state, dash(p.paneLabel()), p.mailLabel(), p.Title)
 	}
 	return writer.Flush()
 }
@@ -259,6 +297,23 @@ func (p peer) where() string {
 	default:
 		return p.Repo + " (main checkout)"
 	}
+}
+
+// roleLabel says who answers to whom. A worker of a worker is a lead too, and
+// says both, since its own workers answer to it.
+func (p peer) roleLabel() string {
+	var parts []string
+	if p.Lead != "" {
+		label := "worker of " + p.Lead
+		if !p.leadRunning {
+			label += " (ended)"
+		}
+		parts = append(parts, label)
+	}
+	if len(p.Workers) > 0 {
+		parts = append(parts, fmt.Sprintf("lead of %d", len(p.Workers)))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (p peer) paneLabel() string {

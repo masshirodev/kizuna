@@ -41,7 +41,7 @@ type rpcResponse struct {
 var messagingTools = []map[string]any{
 	{
 		"name":        "list_peers",
-		"description": "List every AI agent running on this machine under ai-session, across all profiles and providers: its id, the repository and checkout (main checkout or worktree) it works in, branch, busy/idle where known, and how it reads messages. Use it to find the agent already working in a repository before starting parallel work there.",
+		"description": "List every AI agent running on this machine under ai-session, across all profiles and providers: its id, the repository and checkout (main checkout or worktree) it works in, branch, busy/idle where known, how it reads messages, and its role: a \"worker\" was launched by another agent (its \"lead\") for one task, often in a worktree, and a \"lead\" lists its \"workers\". Use it to find the agent already working in a repository before starting parallel work there, and send work to the lead, not to one of its workers.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -62,6 +62,10 @@ var messagingTools = []map[string]any{
 					"type":        "string",
 					"enum":        []string{"auto", "always", "never"},
 					"description": "Whether to type a one-line nudge at the agent's prompt. auto (default) does so only when it is known to be idle.",
+				},
+				"to_worker": map[string]any{
+					"type":        "boolean",
+					"description": "Deliver to a worker another agent launched. Without it, a message to someone else's worker is refused and names the lead to send to instead.",
 				},
 			},
 		},
@@ -115,7 +119,7 @@ func handleMCPRequest(cfg Config, request rpcRequest) (any, *rpcError) {
 			"protocolVersion": version,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "ai-session", "version": currentBuild().short()},
-			"instructions":    "ai-session's directory of the agents running on this machine. list_peers shows who is working where; send_message hands work to the agent already in a checkout instead of opening a parallel worktree; read_inbox reads what others sent you.",
+			"instructions":    "ai-session's directory of the agents running on this machine. list_peers shows who is working where; send_message hands work to the agent already in a checkout instead of opening a parallel worktree, and to a lead rather than to the workers it launched; read_inbox reads what others sent you.",
 		}, nil
 	case "ping":
 		return map[string]any{}, nil
@@ -123,13 +127,23 @@ func handleMCPRequest(cfg Config, request rpcRequest) (any, *rpcError) {
 		return map[string]any{"tools": messagingTools}, nil
 	case "tools/call":
 		var params struct {
-			Name      string            `json:"name"`
-			Arguments map[string]string `json:"arguments"`
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
 		}
 		if err := json.Unmarshal(request.Params, &params); err != nil {
 			return nil, &rpcError{Code: -32602, Message: "invalid params"}
 		}
-		text, err := callMessagingTool(cfg, params.Name, params.Arguments)
+		// Flags arrive as JSON booleans and the rest as strings; the tools
+		// read them all as text.
+		arguments := make(map[string]string, len(params.Arguments))
+		for key, value := range params.Arguments {
+			if text, ok := value.(string); ok {
+				arguments[key] = text
+			} else if value != nil {
+				arguments[key] = fmt.Sprint(value)
+			}
+		}
+		text, err := callMessagingTool(cfg, params.Name, arguments)
 		if err != nil {
 			return map[string]any{"content": []map[string]string{{"type": "text", "text": err.Error()}}, "isError": true}, nil
 		}
@@ -155,7 +169,7 @@ func callMessagingTool(cfg Config, name string, arguments map[string]string) (st
 		if mode == "" {
 			mode = "auto"
 		}
-		result, err := sendMessage(cfg, arguments["target"], arguments["text"], sendOptions{typeMode: mode})
+		result, err := sendMessage(cfg, arguments["target"], arguments["text"], sendOptions{typeMode: mode, toWorker: arguments["to_worker"] == "true"})
 		if err != nil {
 			return "", err
 		}

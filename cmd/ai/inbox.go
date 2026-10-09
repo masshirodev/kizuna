@@ -135,13 +135,8 @@ func renderMessages(messages []message) string {
 // sender names whoever is sending: the instance it runs in when it runs
 // inside a launched session, otherwise the profile, otherwise a shell.
 func sender(cfg Config) string {
-	if lockDir := os.Getenv(instanceDirEnv); lockDir != "" {
-		if profile, err := findProfile(cfg, os.Getenv(profileNameEnv)); err == nil {
-			return instanceID(profile, lockDir)
-		}
-	}
-	if profile, lockDir := instanceOwningProcess(cfg, os.Getpid()); lockDir != "" {
-		return instanceID(profile, lockDir)
+	if id := enclosingInstanceID(cfg, os.Getpid()); id != "" {
+		return id
 	}
 	if name := os.Getenv(profileNameEnv); name != "" {
 		return name
@@ -149,10 +144,43 @@ func sender(cfg Config) string {
 	return "a shell outside any agent"
 }
 
+// enclosingInstanceID names the launched instance a process runs inside: the
+// one the launcher exported, or, where a CLI scrubbed the environment, the one
+// that recorded an ancestor of pid. Empty outside any instance.
+func enclosingInstanceID(cfg Config, pid int) string {
+	if lockDir := os.Getenv(instanceDirEnv); lockDir != "" {
+		if profile, err := findProfile(cfg, os.Getenv(profileNameEnv)); err == nil {
+			return instanceID(profile, lockDir)
+		}
+	}
+	if profile, lockDir := instanceOwningProcess(cfg, pid); lockDir != "" {
+		return instanceID(profile, lockDir)
+	}
+	return ""
+}
+
+// launchingInstanceID is the lead of a launch: the instance whose agent ran
+// this `ai`. The process tree is searched from the parent up, because this
+// launch's own lock already records this process.
+func launchingInstanceID() string {
+	path, err := configPath()
+	if err != nil {
+		return ""
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		return ""
+	}
+	return enclosingInstanceID(cfg, os.Getppid())
+}
+
 type sendOptions struct {
 	// typeMode is "auto" (type a nudge only where nothing else would deliver
 	// and the agent is known to be idle), "always", or "never".
 	typeMode string
+	// toWorker lets a message through to an agent another agent launched,
+	// which is otherwise refused in favour of its lead.
+	toWorker bool
 }
 
 type sendResult struct {
@@ -175,8 +203,12 @@ func sendMessage(cfg Config, target, text string, options sendOptions) (sendResu
 	if p.Self {
 		return sendResult{}, errors.New("that is this agent's own instance")
 	}
+	from := sender(cfg)
+	if p.leadRunning && p.Lead != from && !options.toWorker {
+		return sendResult{}, fmt.Errorf("%s is a worker that %s launched, and answers to it: send to the lead, %s, which owns the work (pass --worker, or to_worker, if this really is for the worker)", p.ID, p.Lead, p.Lead)
+	}
 	folder, _ := os.Getwd()
-	m := message{From: sender(cfg), FromFolder: folder, Sent: time.Now(), Text: text}
+	m := message{From: from, FromFolder: folder, Sent: time.Now(), Text: text}
 	if err := deliverMessage(p.lockDir, m); err != nil {
 		return sendResult{}, err
 	}
@@ -253,8 +285,9 @@ func typeNudge(p peer, from string) error {
 func sendCommand(cfg Config, args []string, stdin io.Reader, stdout io.Writer) error {
 	rest, always := takeFlag(args, "--type")
 	rest, never := takeFlag(rest, "--no-type")
+	rest, toWorker := takeFlag(rest, "--worker")
 	if len(rest) < 1 || (always && never) {
-		return errors.New("usage: ai send [--type|--no-type] <id|profile|session-name> [message...]  (the message is read from stdin when left out)")
+		return errors.New("usage: ai send [--type|--no-type] [--worker] <id|profile|session-name> [message...]  (the message is read from stdin when left out)")
 	}
 	text := strings.Join(rest[1:], " ")
 	if len(rest) == 1 {
@@ -264,7 +297,7 @@ func sendCommand(cfg Config, args []string, stdin io.Reader, stdout io.Writer) e
 		}
 		text = string(data)
 	}
-	options := sendOptions{typeMode: "auto"}
+	options := sendOptions{typeMode: "auto", toWorker: toWorker}
 	if always {
 		options.typeMode = "always"
 	} else if never {
@@ -322,10 +355,17 @@ func inboxCommand(cfg Config, args []string, stdin io.Reader, stdout io.Writer) 
 func writeHookResponse(lockDir string, stdin io.Reader, stdout io.Writer) {
 	var input struct {
 		HookEventName string `json:"hook_event_name"`
+		// AgentID is set when the hook fires inside one of the session's
+		// subagents, which run in the same process and share its hooks.
+		AgentID string `json:"agent_id"`
 	}
 	data, _ := io.ReadAll(io.LimitReader(stdin, 1<<20))
 	_ = json.Unmarshal(data, &input)
-	if lockDir == "" {
+	if lockDir == "" || input.AgentID != "" {
+		// The mail is the session's, not a subagent's: handed to a subagent
+		// it would be acted on by an agent the sender never meant, and lost
+		// with it when the subagent returns. The main thread's next tool
+		// call or stop reads it instead.
 		return
 	}
 	messages := drainInbox(lockDir)
@@ -335,7 +375,7 @@ func writeHookResponse(lockDir string, stdin io.Reader, stdout io.Writer) {
 	text := renderMessages(messages)
 	var response any
 	switch input.HookEventName {
-	case "Stop", "SubagentStop":
+	case "Stop":
 		response = map[string]string{"decision": "block", "reason": text}
 	case "PostToolUse", "UserPromptSubmit", "SessionStart":
 		response = map[string]any{"hookSpecificOutput": map[string]string{
