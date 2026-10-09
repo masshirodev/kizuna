@@ -144,7 +144,7 @@ func TestHeadlessLaunchKnowsEachProvidersSpelling(t *testing.T) {
 
 func TestInstanceMetaCarriesTheHeadlessFlag(t *testing.T) {
 	dir := t.TempDir()
-	if err := setProfileInstanceMeta(dir, "/work/hub", true, nil); err != nil {
+	if err := setProfileInstanceMeta(dir, "/work/hub", true, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if meta := readInstanceMeta(dir); !meta.Headless || meta.Folder != "/work/hub" {

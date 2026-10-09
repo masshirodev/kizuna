@@ -30,7 +30,7 @@ func livePeerInstance(t *testing.T, root string, profile Profile, run, folder st
 	if err := os.WriteFile(filepath.Join(lockDir, ".active.lock"), []byte(fmt.Sprintf("%d\n", sleeper.Process.Pid)), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := setProfileInstanceMeta(lockDir, folder, false, nil); err != nil {
+	if err := setProfileInstanceMeta(lockDir, folder, false, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	return lockDir
@@ -303,13 +303,13 @@ func TestConfigBaseFollowsTheLauncherOnlyFromInsideAProfile(t *testing.T) {
 func TestInstanceMetaRecordsTheRanmaPane(t *testing.T) {
 	lockDir := t.TempDir()
 	env := []string{ranmaSocketEnv + "=/run/ranma/1.sock", ranmaPaneEnv + "=13"}
-	if err := setProfileInstanceMeta(lockDir, "/work/ranma", false, env); err != nil {
+	if err := setProfileInstanceMeta(lockDir, "/work/ranma", false, env, ""); err != nil {
 		t.Fatal(err)
 	}
 	if meta := readInstanceMeta(lockDir); meta.RanmaPane != "13" || meta.RanmaSocket != "/run/ranma/1.sock" {
 		t.Fatalf("meta = %+v, want the pane and socket", meta)
 	}
-	if err := setProfileInstanceMeta(lockDir, "/work/ranma", false, []string{ranmaPaneEnv + "=13"}); err != nil {
+	if err := setProfileInstanceMeta(lockDir, "/work/ranma", false, []string{ranmaPaneEnv + "=13"}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if meta := readInstanceMeta(lockDir); meta.RanmaPane != "" {
@@ -345,7 +345,7 @@ func TestMCPServeAnswersTheHandshakeAndTheTools(t *testing.T) {
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read_inbox","arguments":{}}}`,
-		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"send_message","arguments":{"target":"nobody","text":"x"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"send_message","arguments":{"target":"nobody","text":"x","to_worker":true}}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"bogus"}`,
 	}, "\n")
 	var out bytes.Buffer
@@ -370,5 +370,121 @@ func TestParentPIDReadsThisProcess(t *testing.T) {
 	parent, ok := parentPID(os.Getpid())
 	if !ok || parent != os.Getppid() {
 		t.Fatalf("parentPID = %d, %v; want %d", parent, ok, os.Getppid())
+	}
+}
+
+func TestHookLeavesTheSessionsMailAloneInsideASubagent(t *testing.T) {
+	lockDir := t.TempDir()
+	if err := deliverMessage(lockDir, message{From: "pro2/run-3", Sent: time.Now(), Text: "for the lead"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []string{
+		`{"hook_event_name":"PostToolUse","agent_id":"a1b2","agent_type":"Explore"}`,
+		`{"hook_event_name":"SubagentStop","agent_id":"a1b2","stop_hook_active":false}`,
+	} {
+		var out bytes.Buffer
+		writeHookResponse(lockDir, strings.NewReader(event), &out)
+		if out.Len() != 0 || len(inboxMessages(lockDir)) != 1 {
+			t.Fatalf("%s: a subagent was handed the session's mail (out %q, inbox %d)", event, out.String(), len(inboxMessages(lockDir)))
+		}
+	}
+	var out bytes.Buffer
+	writeHookResponse(lockDir, strings.NewReader(`{"hook_event_name":"PostToolUse"}`), &out)
+	if !strings.Contains(out.String(), "for the lead") {
+		t.Fatalf("the main thread's next tool call should read it, got %q", out.String())
+	}
+}
+
+// setLead rewrites an instance's meta as one launched by lead.
+func setLead(t *testing.T, lockDir, folder, lead string) {
+	t.Helper()
+	if err := setProfileInstanceMeta(lockDir, folder, true, nil, lead); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPeersSayWhoLaunchedWhom(t *testing.T) {
+	root := isolatePeers(t)
+	work := Profile{Name: "work", Provider: "codex", Command: "codex"}
+	livePeerInstance(t, root, work, "run-1", "/work/ranma")
+	worker := livePeerInstance(t, root, work, "run-2", "/work/ranma-wt")
+	setLead(t, worker, "/work/ranma-wt", "work/run-1")
+	orphan := livePeerInstance(t, root, work, "run-3", "/work/other")
+	setLead(t, orphan, "/work/other", "work/run-9")
+
+	peers := map[string]peer{}
+	for _, p := range collectPeers(Config{Profiles: []Profile{work}}) {
+		peers[p.ID] = p
+	}
+	if lead := peers["work/run-1"]; lead.Role != "lead" || len(lead.Workers) != 1 || lead.Workers[0] != "work/run-2" || lead.roleLabel() != "lead of 1" {
+		t.Fatalf("lead = %+v (%q)", lead, lead.roleLabel())
+	}
+	if w := peers["work/run-2"]; w.Role != "worker" || w.Lead != "work/run-1" || !w.leadRunning || w.roleLabel() != "worker of work/run-1" {
+		t.Fatalf("worker = %+v (%q)", w, w.roleLabel())
+	}
+	if o := peers["work/run-3"]; o.Role != "worker" || o.leadRunning || o.roleLabel() != "worker of work/run-9 (ended)" {
+		t.Fatalf("orphan = %+v (%q)", o, o.roleLabel())
+	}
+
+	var out bytes.Buffer
+	if err := peersCommand(Config{Profiles: []Profile{work}}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "ROLE") || !strings.Contains(out.String(), "worker of work/run-1") {
+		t.Fatalf("the table should carry the role:\n%s", out.String())
+	}
+}
+
+func TestSendToSomeoneElsesWorkerPointsAtItsLead(t *testing.T) {
+	root := isolatePeers(t)
+	work := Profile{Name: "work", Provider: "codex", Command: "codex"}
+	lead := livePeerInstance(t, root, work, "run-1", "/work/ranma")
+	worker := livePeerInstance(t, root, work, "run-2", "/work/ranma-wt")
+	setLead(t, worker, "/work/ranma-wt", "work/run-1")
+	orphan := livePeerInstance(t, root, work, "run-3", "/work/other")
+	setLead(t, orphan, "/work/other", "work/run-9")
+	cfg := Config{Profiles: []Profile{work}}
+
+	_, err := sendMessage(cfg, "work/run-2", "fix this too", sendOptions{})
+	if err == nil || !strings.Contains(err.Error(), "send to the lead, work/run-1") {
+		t.Fatalf("a message to another agent's worker should name its lead, got %v", err)
+	}
+	if len(inboxMessages(worker)) != 0 {
+		t.Fatal("a refused message was delivered anyway")
+	}
+	if _, err := sendMessage(cfg, "work/run-2", "really for you", sendOptions{toWorker: true}); err != nil {
+		t.Fatalf("--worker should let it through: %v", err)
+	}
+	if _, err := sendMessage(cfg, "work/run-3", "your lead is gone", sendOptions{}); err != nil {
+		t.Fatalf("a worker whose lead ended has nobody to redirect to: %v", err)
+	}
+
+	t.Setenv(instanceDirEnv, lead)
+	t.Setenv(profileNameEnv, "work")
+	if _, err := sendMessage(cfg, "work/run-2", "from your lead", sendOptions{}); err != nil {
+		t.Fatalf("a lead should reach its own worker: %v", err)
+	}
+	if got := len(inboxMessages(worker)); got != 2 {
+		t.Fatalf("worker inbox = %d, want the two allowed messages", got)
+	}
+}
+
+func TestLaunchRecordsTheInstanceThatStartedIt(t *testing.T) {
+	root := isolatePeers(t)
+	work := Profile{Name: "work", Provider: "codex", Command: "codex"}
+	if err := os.MkdirAll(filepath.Join(root, appName), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveConfig(filepath.Join(root, appName, "profiles.json"), Config{Profiles: []Profile{work}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := launchingInstanceID(); got != "" {
+		t.Fatalf("outside any instance the lead = %q, want none", got)
+	}
+	lead := livePeerInstance(t, root, work, "run-1", "/work/ranma")
+	t.Setenv(instanceDirEnv, lead)
+	t.Setenv(profileNameEnv, "work")
+	if got := launchingInstanceID(); got != "work/run-1" {
+		t.Fatalf("lead = %q, want work/run-1", got)
 	}
 }

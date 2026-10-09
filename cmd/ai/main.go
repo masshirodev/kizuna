@@ -575,7 +575,7 @@ func runCommandWithLock(cmd *exec.Cmd, lockDir string, unlock func() string, tit
 		_ = cmd.Wait()
 		return err
 	}
-	_ = setProfileInstanceMeta(lockDir, commandFolder(cmd), headless, cmd.Env)
+	_ = setProfileInstanceMeta(lockDir, commandFolder(cmd), headless, cmd.Env, launchingInstanceID())
 	return cmd.Wait()
 }
 

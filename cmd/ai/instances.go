@@ -56,6 +56,11 @@ type instanceMeta struct {
 	// message can be typed into it (peers.go). Empty outside ranma.
 	RanmaPane   string `json:"ranma_pane,omitempty"`
 	RanmaSocket string `json:"ranma_socket,omitempty"`
+	// Lead is the id of the instance whose agent started this launch, such as
+	// the coordinator of a wave whose workers each run in a worktree. Empty
+	// for a launch nobody's agent made. peers.go shows it, so another agent
+	// talks to the lead rather than to one of its workers.
+	Lead string `json:"lead,omitempty"`
 }
 
 // headlessLaunch is whether a provider CLI started with args runs without
@@ -417,10 +422,11 @@ func setProfileChildPID(workdir string, pid int) error {
 }
 
 // setProfileInstanceMeta records where a launch happened, whether anyone is
-// typing into it, and the ranma pane it runs in. A failure here is not fatal to
-// the launch itself: the instance simply cannot be described later.
-func setProfileInstanceMeta(workdir, folder string, headless bool, env []string) error {
-	meta := instanceMeta{Folder: folder, Started: time.Now().Format(time.RFC3339), Headless: headless}
+// typing into it, the ranma pane it runs in, and the instance that launched it.
+// A failure here is not fatal to the launch itself: the instance simply cannot
+// be described later.
+func setProfileInstanceMeta(workdir, folder string, headless bool, env []string, lead string) error {
+	meta := instanceMeta{Folder: folder, Started: time.Now().Format(time.RFC3339), Headless: headless, Lead: lead}
 	if insideRanma(env) {
 		meta.RanmaPane, meta.RanmaSocket = envValue(env, ranmaPaneEnv), envValue(env, ranmaSocketEnv)
 	}

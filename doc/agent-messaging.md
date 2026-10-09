@@ -26,10 +26,10 @@ directory and the inboxes.
 
 ```
 $ ai peers
-ID                        PROVIDER  WHERE                       BRANCH                STATE  PANE      MAIL   TITLE
-max/run-3656556723 (you)  claude    ai-session (main checkout)  feat/agent-messaging  busy   ranma 14  hooks  Ai-session inter-agent messaging
-max/run-2705011154        claude    ranma (main checkout)       main                  idle   ranma 13  hooks  Ranma SSH inside scratchpad
-pro2/run-1381902169       claude    ranma (main checkout)       main                  busy   ranma 1   —      Tmux appearance and layout import
+ID                        ROLE                          PROVIDER  WHERE                       BRANCH                STATE     PANE      MAIL   TITLE
+max/run-3656556723 (you)  —                             claude    ai-session (main checkout)  feat/agent-messaging  busy      ranma 14  hooks  Ai-session inter-agent messaging
+max/run-2705011154        lead of 1                     claude    ranma (main checkout)       main                  idle      ranma 13  hooks  Ranma SSH inside scratchpad
+opencode3/run-48213377    worker of max/run-2705011154  opencode  ranma (worktree wave-c31)   wave/c31              headless  —         mcp
 ```
 
 `ai peers ranma` keeps the agents in one repository, named by its name or any
@@ -38,6 +38,7 @@ path inside it. `ai peers --json` prints the same thing for an agent to read.
 | Column | Where it comes from |
 | ------ | ------------------- |
 | ID | `<profile>/<run-dir>` for a concurrent instance, the profile name for one holding its profile's exclusive lock (Antigravity) |
+| ROLE | Who launched whom ([below](#leads-and-workers)): `lead of N`, `worker of <id>`, `worker of <id> (ended)` once its lead has exited |
 | WHERE | `git rev-parse` in the launch folder. The git common dir names the repository, so a worktree and its main checkout match as one repo, and the column says which one this is. A folder outside any repository shows the folder |
 | STATE | `busy` or `idle` from `claude agents --json`. Other providers do not say, and show `—` |
 | PANE | The ranma pane the launch ran in, recorded in `instance.json` (`ranma_pane`, `ranma_socket`). Instances started before this was recorded are read from the launcher's `/proc/<pid>/environ`. `tmux` for a launch inside the tmux status bar |
@@ -47,6 +48,44 @@ path inside it. `ai peers --json` prints the same thing for an agent to read.
 `(you)` marks the instance asking. That comes from `AI_INSTANCE_DIR`, or, where
 a CLI scrubbed the environment, from finding the instance whose recorded CLI
 PID is one of this process's ancestors.
+
+## Leads and workers
+
+An agent that launches other agents through `ai` (a wave coordinator running
+`ai opencode3 run --auto …` per card, each in its own worktree) is their
+**lead**, and they are its **workers**. Before 2026-10-09 `ai peers` listed
+them all as equals, so an agent looking for "whoever is in ranma" found a
+headless worker in a wave worktree and handed it work meant for the agent that
+owns the repo, which the worker could not act on and its lead never saw.
+
+- **Recorded at launch.** The launcher asks which instance it is running inside:
+  the inherited `AI_INSTANCE_DIR` (before it is replaced with the new
+  instance's own), or, where a CLI scrubbed the environment, the instance that
+  recorded one of the launcher's ancestors. Its id goes into the new instance's
+  `instance.json` as `lead`. A launch from a plain shell has none. Instances
+  started by an older build have no `lead` and list as having no role.
+- **Shown by `ai peers`.** The `ROLE` column, and `role`, `lead` and `workers` in
+  `--json` and `list_peers`. A worker of a worker is both, `worker of …, lead of
+  N`.
+- **Enforced by `ai send`.** A message to a worker whose lead is still running is
+  refused, naming the lead to send to instead, unless it comes from that lead
+  or carries `--worker` (`to_worker: true` in the MCP tool). A worker whose
+  lead has ended is nobody's to redirect to, and is reached normally.
+
+### Claude Code subagents
+
+Subagents a Claude Code session starts with its Agent tool are not instances:
+they run inside the session's process, never appear in `ai peers`, and cannot
+be addressed. But they share the session's hooks, and **until 2026-10-09 the
+first tool call any subagent made drained the session's inbox into that
+subagent's context**. The subagent then acted on mail meant for the lead, and
+the lead never saw it. A `SubagentStop` was even answered with a block, which
+kept the subagent running on the message.
+
+Claude Code marks a hook that fires inside a subagent with `agent_id` in its
+input, so `ai inbox --hook` now leaves the inbox alone whenever `agent_id` is
+set. The mail waits for the main thread's next tool call, its `Stop`, or the
+user's next prompt.
 
 ## `ai send`
 
@@ -73,6 +112,7 @@ target:
 | Nothing integrated | Waits in the inbox; `ai send` says so and how to change it |
 
 `--type` types the nudge whatever the state, and `--no-type` never types it.
+`--worker` sends to another agent's worker on purpose ([above](#leads-and-workers)).
 Typing is only automatic for an agent that reports `idle`, because text typed
 into a busy one can land in a permission dialog, and the `Enter` after it can
 answer the dialog. Even at an idle prompt, a half-written draft of the user's
@@ -91,7 +131,9 @@ current work, and ask the user before anything destructive. It also gets the
 else's. `ai inbox --hook` is what the Claude Code hooks run. It reads the hook
 event from stdin and answers `PostToolUse` and `UserPromptSubmit` with
 `additionalContext`, and `Stop` with `{"decision":"block","reason":…}`, which
-is how a hook gives Claude Code something to do before it stops. The Stop loop
+is how a hook gives Claude Code something to do before it stops. An event from
+inside a subagent (`agent_id` set) gets nothing and leaves the inbox as it was
+([above](#claude-code-subagents)). The Stop loop
 ends by itself, because the inbox is empty the next time round. An event it
 does not know puts the messages back. In hook mode every failure is silent and
 exits 0, because a hook must never break the agent it runs in.
@@ -126,7 +168,7 @@ A stdio MCP server, one JSON-RPC object per line, with three tools:
 | Tool | Does |
 | ---- | ---- |
 | `list_peers` | `ai peers --json`, optionally filtered by `repo` |
-| `send_message` | `ai send`; `type_into_pane` is `auto` (default), `always` or `never` |
+| `send_message` | `ai send`; `type_into_pane` is `auto` (default), `always` or `never`; `to_worker` is `--worker` |
 | `read_inbox` | `ai inbox` for the instance the server runs inside |
 
 Its `instructions` tell the agent what it is for: find the agent already in a
