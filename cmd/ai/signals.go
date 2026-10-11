@@ -34,6 +34,10 @@ type signalForwarder struct {
 	mu      sync.Mutex
 	process *os.Process
 	pending []os.Signal
+	// stoppedBy is the last SIGTERM or SIGHUP the launcher passed on, nil
+	// when none came: whether the session ended because something stopped it
+	// rather than because its user quit (restore.go).
+	stoppedBy os.Signal
 }
 
 func forwardSignals() *signalForwarder {
@@ -54,6 +58,7 @@ func (f *signalForwarder) loop() {
 				continue
 			}
 			f.mu.Lock()
+			f.stoppedBy = received
 			if f.process == nil {
 				f.pending = append(f.pending, received)
 			} else {
@@ -75,6 +80,14 @@ func (f *signalForwarder) attach(process *os.Process) {
 		_ = process.Signal(held)
 	}
 	f.pending = nil
+}
+
+// stopSignal reports the last SIGTERM or SIGHUP that arrived during the
+// launch, nil when none did.
+func (f *signalForwarder) stopSignal() os.Signal {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.stoppedBy
 }
 
 // stop restores default signal handling. Call it once the child has been
