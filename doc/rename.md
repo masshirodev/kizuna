@@ -52,6 +52,22 @@ The first `kizuna` to start, under either name, then migrates
 
 It prints one line per thing it did, on stderr, and nothing on any later run.
 
+## Telling someone who only types `ai`
+
+Those stderr lines, and the ones `install.sh` prints, land in the terminal
+the TUI is about to cover: a self-update reopens straight into it, so they are
+gone before anyone reads them. The TUI repeats the news in its status row
+instead:
+
+- on the run that did the move: *ai-session is kizuna now: open it with
+  `kizuna`*;
+- on every launch started as `ai` (the link): *opened as `ai`, which is kizuna
+  now: type `kizuna`*. It stops by itself once they type `kizuna`.
+
+The command line stays quiet when started as `ai`: the messaging hooks run
+`ai inbox --hook` until they are re-pointed, and a hook's stderr reaches the
+agent.
+
 ## Sessions that were already running
 
 A session an older binary launched keeps running until it is closed, and its

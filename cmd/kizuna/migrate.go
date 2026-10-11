@@ -43,6 +43,7 @@ func migrateLegacyConfig(w io.Writer) {
 	if !moved {
 		return
 	}
+	migratedThisRun = true
 	fmt.Fprintf(w, "kizuna: ai-session is kizuna now. Moved %s to %s; a link stays at the old path for the sessions an older ai started.\n",
 		filepath.Join(base, legacyAppName), filepath.Join(base, appName))
 	cfg, err := loadConfig(filepath.Join(base, appName, "profiles.json"))
@@ -52,6 +53,27 @@ func migrateLegacyConfig(w io.Writer) {
 	for _, line := range refreshLegacyIntegrations(cfg) {
 		fmt.Fprintln(w, "kizuna: "+line)
 	}
+}
+
+// migratedThisRun is set when this process did the move, so the TUI can say
+// so: the lines migrateLegacyConfig prints go to the terminal the TUI is
+// about to cover.
+var migratedThisRun bool
+
+// renameNotice is what the TUI says about the rename when it starts, or "".
+// A self-update reopens straight into the TUI, so the notices install.sh and
+// the migration print are painted over at once; someone who only ever types
+// `ai` would never learn the new name. Started as `ai`, it says so on every
+// launch, which stops by itself once they type `kizuna`. The CLI path stays
+// silent: hooks run `ai inbox --hook`, and their stderr reaches the agent.
+func renameNotice(argv0 string, migrated bool) string {
+	if migrated {
+		return "ai-session is kizuna now: open it with `kizuna` (`ai` still works). Settings moved to ~/.config/kizuna; doc/rename.md"
+	}
+	if filepath.Base(argv0) == legacyAppName {
+		return "opened as `ai`, which is kizuna now: type `kizuna` (`ai` is a link kept for the rename)"
+	}
+	return ""
 }
 
 // moveLegacyConfig is the filesystem half of the migration. The rename is

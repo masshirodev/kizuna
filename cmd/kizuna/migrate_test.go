@@ -178,3 +178,15 @@ func TestAPackagedBuildRefusesToUpdateItself(t *testing.T) {
 		t.Fatalf("checkForUpdate = %+v, want no check", status)
 	}
 }
+
+func TestRenameNoticeTellsAnAiUserTheNewName(t *testing.T) {
+	if got := renameNotice("/home/u/go/bin/ai", false); !strings.Contains(got, "type `kizuna`") {
+		t.Fatalf("started as ai: %q", got)
+	}
+	if got := renameNotice("/usr/bin/kizuna", true); !strings.Contains(got, "ai-session is kizuna now") {
+		t.Fatalf("the migrating run: %q", got)
+	}
+	if got := renameNotice("/usr/bin/kizuna", false); got != "" {
+		t.Fatalf("started as kizuna after the move: %q, want nothing", got)
+	}
+}

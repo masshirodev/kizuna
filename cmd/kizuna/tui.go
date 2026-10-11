@@ -453,6 +453,9 @@ func runTUI() error {
 	for _, note := range reclaimStrayIsolatedInstances(cfg) {
 		m.log = append([]logEntry{{kind: statusOK, text: note}}, m.log...)
 	}
+	if notice := renameNotice(os.Args[0], migratedThisRun); notice != "" {
+		m.log = append([]logEntry{{kind: statusOK, text: notice}}, m.log...)
+	}
 	_, err = tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }
