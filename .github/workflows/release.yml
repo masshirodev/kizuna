@@ -20,7 +20,7 @@ jobs:
     env:
       CGO_ENABLED: "0"
       # A packaged build never updates itself from source (cmd/kizuna/version.go).
-      PACKAGED: "a release build (GitHub releases, or the AUR's kizuna-bin)"
+      PACKAGED: "a GitHub release (or kizuna-bin from the AUR)"
     steps:
       - uses: actions/checkout@v4
         with:
