@@ -7,6 +7,15 @@ and publishes a GitHub release; the AUR packages in `packaging/aur/` are
 updated from that by hand. The layout follows ranma's
 (`masshirodev/ranma`, `doc/RELEASING.md`), so one maintainer keeps one habit.
 
+## CI
+
+`.github/workflows/ci.yml` runs `gofmt`, `go vet` and `go test` on every push to
+`main` and every pull request; `release.yml` runs them again on a tag before it
+publishes. The suite must pass on a clean runner, which has none of the provider
+CLIs installed and none of the processes a workstation runs: a test that needs
+a CLI present or absent says so with `stubCommands` or `scopePATH`
+(`install_test.go`) rather than trusting the machine.
+
 ## What a release contains
 
 For each of `amd64` and `arm64`, `kizuna-<version>-linux-<arch>.tar.gz`, with

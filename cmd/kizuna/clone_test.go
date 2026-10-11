@@ -85,7 +85,9 @@ func TestCloneWithStateCarriesTheAccountButNotTheLocks(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", root)
 	claudeProfileState(t, root, "max")
-	writeProfileFile(t, root, "1234\n", "max", instancesDirectory, "run-a", ".active.lock")
+	// Above any kernel's pid_max, so no process on the machine running the
+	// test can make this instance look alive.
+	writeProfileFile(t, root, "999999999\n", "max", instancesDirectory, "run-a", ".active.lock")
 	cfg, path := cloneTestConfig(t, root, claudeProfile("max"))
 
 	var out strings.Builder

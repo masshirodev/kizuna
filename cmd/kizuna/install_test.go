@@ -6,15 +6,56 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
 
 // scopePATH makes dir the only place a command can be found, apart from the
 // system directories the test's own shell scripts need to run at all.
+// providerCommands are the CLIs a test may mean to be missing. scopePATH
+// hides the machine's own copies of them, and nothing else.
+var providerCommands = []string{"claude", "codex", "opencode", "agy"}
+
+// scopePATH puts dir first on PATH, followed by the system's own tools minus
+// the provider CLIs: a test that means one to be missing must not depend on
+// whether the machine running it has it installed in /usr/bin.
 func scopePATH(t *testing.T, dir string) {
 	t.Helper()
-	t.Setenv("PATH", strings.Join([]string{dir, "/bin", "/usr/bin"}, string(os.PathListSeparator)))
+	tools := t.TempDir()
+	for _, system := range []string{"/usr/bin", "/bin"} {
+		entries, err := os.ReadDir(system)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if slices.Contains(providerCommands, entry.Name()) {
+				continue
+			}
+			link := filepath.Join(tools, entry.Name())
+			if _, err := os.Lstat(link); err == nil {
+				continue
+			}
+			if err := os.Symlink(filepath.Join(system, entry.Name()), link); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	t.Setenv("PATH", strings.Join([]string{dir, tools}, string(os.PathListSeparator)))
+}
+
+// stubCommands puts an executable that does nothing on PATH for each name, so
+// a view that says "not installed" for a missing CLI does not depend on what
+// the machine running the tests has installed.
+func stubCommands(t *testing.T, names ...string) {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scopePATH(t, dir)
 }
 
 func TestProviderInstallersPointAtEachVendorsOwnScript(t *testing.T) {
