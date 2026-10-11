@@ -189,6 +189,9 @@ func TestBoardRanksByHeadroomAndTheCursorFollowsTheAccount(t *testing.T) {
 
 func TestQuotaSaysWhenItHasNothingToShow(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// A missing CLI reads "not installed — press i", which has the dash this
+	// test looks for in the quota columns.
+	stubCommands(t, "claude", "codex")
 	m := wideModel(testProfiles())
 	if view := m.View(); !strings.Contains(view, "…") || strings.Contains(view, "—") {
 		t.Fatalf("a quota that has not loaded should read as pending, not as missing:\n%s", view)
