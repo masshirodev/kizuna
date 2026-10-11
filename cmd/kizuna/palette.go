@@ -57,7 +57,7 @@ func paletteColumns() [][]paletteGroup {
 				{"s", "s", "install skills"},
 				{"I", "I", "integrations"},
 			}},
-			{"AI-SESSION", []paletteAction{
+			{"KIZUNA", []paletteAction{
 				{"c", "c", "change launch folder"},
 				{"A", "A", "auto-swap on handoff"},
 				{"r", "r", "refresh quotas and updates"},

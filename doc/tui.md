@@ -230,7 +230,7 @@ to place the caret.
 ### The palette
 
 `space` (or `?`) opens every other action as a filterable palette, grouped by
-what it acts on — `CONVERSATION`, `PROFILE`, `PROVIDER CLI`, `AI-SESSION` —
+what it acts on — `CONVERSATION`, `PROFILE`, `PROVIDER CLI`, `KIZUNA` —
 with live context beside each: where `↵` would run, how many conversations are
 recorded, how many instances are running, the 5h figure `H` would hand off
 from, whether the profile is logged in, where its CLI is, whether auto-swap is

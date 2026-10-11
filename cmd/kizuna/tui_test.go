@@ -921,7 +921,7 @@ func TestPaletteListsEveryActionGroupedByWhatItActsOn(t *testing.T) {
 			t.Fatalf("%q opened mode %v, want the palette", key, m.mode)
 		}
 		view := m.View()
-		for _, want := range []string{"CONVERSATION", "PROFILE", "PROVIDER CLI", "AI-SESSION",
+		for _, want := range []string{"CONVERSATION", "PROFILE", "PROVIDER CLI", "KIZUNA",
 			"install the CLI", "update kizuna", "hand off to another account", "acting on", "esc close"} {
 			if !strings.Contains(view, want) {
 				t.Fatalf("palette is missing %q:\n%s", want, view)
