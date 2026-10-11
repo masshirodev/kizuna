@@ -17,8 +17,8 @@ pkgbase = kizuna-bin
 	provides = kizuna
 	conflicts = kizuna
 	source_x86_64 = https://github.com/masshirodev/kizuna/releases/download/v0.1.0/kizuna-0.1.0-linux-amd64.tar.gz
-	sha256sums_x86_64 = SKIP
+	sha256sums_x86_64 = 085144c424a99529c6e0381f0cbe01b8f96eb081c98bc422aab00ded924fd966
 	source_aarch64 = https://github.com/masshirodev/kizuna/releases/download/v0.1.0/kizuna-0.1.0-linux-arm64.tar.gz
-	sha256sums_aarch64 = SKIP
+	sha256sums_aarch64 = 0ed4c28bcdf52fe5121d717912ca4f28f731d8a81c070b29ef044315e0ec0986
 
 pkgname = kizuna-bin

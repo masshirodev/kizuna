@@ -19,8 +19,8 @@ conflicts=('kizuna')
 install=kizuna.install
 source_x86_64=("$url/releases/download/v$pkgver/kizuna-$pkgver-linux-amd64.tar.gz")
 source_aarch64=("$url/releases/download/v$pkgver/kizuna-$pkgver-linux-arm64.tar.gz")
-sha256sums_x86_64=('SKIP')
-sha256sums_aarch64=('SKIP')
+sha256sums_x86_64=('085144c424a99529c6e0381f0cbe01b8f96eb081c98bc422aab00ded924fd966')
+sha256sums_aarch64=('0ed4c28bcdf52fe5121d717912ca4f28f731d8a81c070b29ef044315e0ec0986')
 
 package() {
   cd kizuna-$pkgver-linux-*/
