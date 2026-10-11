@@ -1,20 +1,20 @@
-# Coming back from a power cut: `ai resume-all`
+# Coming back from a power cut: `kizuna resume-all`
 
-When the machine goes down with agents running, `ai resume-all` reopens every
+When the machine goes down with agents running, `kizuna resume-all` reopens every
 conversation it killed, each in a ranma pane in the workspace it used to be in.
-Card `c161-reopen-the-sessions-a` ("Reopen the sessions a power cut killed: ai
+Card `c161-reopen-the-sessions-a` ("Reopen the sessions a power cut killed: kizuna
 resume-all") on the AI Session board. Back to the [README](../README.md).
 
 It was built on 2026-10-10, after three blackouts in twenty minutes, each
 followed by finding and reopening every session by hand.
 
 ```
-$ ai resume-all -n
+$ kizuna resume-all -n
 PROFILE  STATE  WHERE   FOLDER                          TITLE                   COMMAND
-pro2     busy   main:1  /home/masshiro/projects/ranma   Fix the resize flicker  cd /home/masshiro/projects/ranma && ai pro2 --resume 3f2c…; exec "${SHELL:-sh}"
-max      idle   main:3  /home/masshiro/projects/kumiko  Hours rules             cd /home/masshiro/projects/kumiko && ai max --resume 9a01…; exec "${SHELL:-sh}"
+pro2     busy   main:1  /home/masshiro/projects/ranma   Fix the resize flicker  cd /home/masshiro/projects/ranma && kizuna pro2 --resume 3f2c…; exec "${SHELL:-sh}"
+max      idle   main:3  /home/masshiro/projects/kumiko  Hours rules             cd /home/masshiro/projects/kumiko && kizuna max --resume 9a01…; exec "${SHELL:-sh}"
 
-$ ai resume-all
+$ kizuna resume-all
 reopened pro2 Fix the resize flicker in /home/masshiro/projects/ranma (main:1)
 reopened max Hours rules in /home/masshiro/projects/kumiko (main:3)
 2 of 2 session(s) reopened
@@ -32,10 +32,10 @@ what to say to it is yours.
 
 ## How it knows
 
-Every interactive launch (`ai <profile>`, `ai <profile> resume …`, a launch
-from the TUI) writes a **restore record** to `~/.config/ai/restore/` as it
+Every interactive launch (`kizuna <profile>`, `kizuna <profile> resume …`, a launch
+from the TUI) writes a **restore record** to `~/.config/kizuna/restore/` as it
 starts, and rewrites it every 20 seconds while it runs
-(`restoreRefreshInterval` in `cmd/ai/restore.go`). A record holds:
+(`restoreRefreshInterval` in `cmd/kizuna/restore.go`). A record holds:
 
 - the profile, provider and folder;
 - the conversation's id: Claude Code's comes from the file it keeps per process
@@ -48,7 +48,7 @@ starts, and rewrites it every 20 seconds while it runs
 - the boot id and the launcher's pid, which say whether it is still alive.
 
 The records live outside the instance directories on purpose: those are
-reclaimed by the first `ai` that finds their lock dead, which after a reboot is
+reclaimed by the first `kizuna` that finds their lock dead, which after a reboot is
 whichever runs first.
 
 Headless runs (`claude -p`, `codex exec`, `opencode run`, wave workers) and CLI
@@ -79,7 +79,7 @@ Run it from a ranma pane. Each session opens with `ranma open --background`:
 in its old session and workspace (`--session main --workspace 3`, with the
 workspace's name if it had one) when it was launched inside ranma, in an empty
 workspace otherwise. Focus stays where it is. The pane runs
-`ai <profile> <reopen arguments>; exec $SHELL`, so a shell is left behind when
+`kizuna <profile> <reopen arguments>; exec $SHELL`, so a shell is left behind when
 the agent exits, as in a pane opened by hand. A session whose folder is gone is
 skipped and reported.
 
@@ -94,9 +94,9 @@ it, not at their old sizes.
 
 - A conversation switched inside the CLI (`/resume`, `/clear`) less than 20
   seconds before the cut reopens as the one before.
-- Only sessions started by an `ai` that has this feature keep records. Install
-  it (`go install ./...`, or `ai self-update`) and relaunch before the next
+- Only sessions started by a `kizuna` that has this feature keep records. Install
+  it (`go install ./...`, or `kizuna self-update`) and relaunch before the next
   blackout, or the sessions running now are not covered.
 - OpenCode's private instance stores are merged back by
-  `reclaimStrayIsolatedInstances` at the start of every `ai` command, including
+  `reclaimStrayIsolatedInstances` at the start of every `kizuna` command, including
   this one, so `--continue` finds the conversation in the profile's store.

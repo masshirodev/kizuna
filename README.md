@@ -1,11 +1,14 @@
-# ai-session
+# kizuna
 
-![ai-session demo](doc/assets/demo.gif)
+*Kizuna* (絆) is a bond: the ties between your accounts, and between the
+agents running on them.
+
+![kizuna demo](doc/assets/demo.gif)
 
 One launcher for several AI CLI accounts: Claude Code, Codex, OpenCode, and
 Antigravity. Each profile gets its own state directory, so two accounts never
 share a credential file. Each official CLI still handles its own logins and
-token refreshes. `ai` never reads, prints, or stores token contents.
+token refreshes. `kizuna` never reads, prints, or stores token contents.
 
 | Provider | Isolated through |
 | -------- | ---------------- |
@@ -16,24 +19,36 @@ token refreshes. `ai` never reads, prints, or stores token contents.
 
 ## Install
 
+On Arch, from the AUR: `kizuna-bin` (the release binary) or `kizuna-git`
+(built from `main`). Elsewhere, take a binary from the
+[releases](https://github.com/masshirodev/kizuna/releases): it is static, so
+any Linux on amd64 or arm64 runs it. Or build from source:
+
 ```sh
 ./install.sh
 ```
 
-This builds `ai` from `cmd/ai`. After that, `ai self-update` (or `U` in the
-TUI) keeps it current.
+That builds `kizuna` from `cmd/kizuna` into `$(go env GOPATH)/bin`, and after
+that `kizuna self-update` (or `U` in the TUI) keeps it current. A packaged
+kizuna leaves updating to its package manager. See
+[doc/RELEASING.md](doc/RELEASING.md).
+
+**Coming from ai-session?** kizuna is its new name, and the command was `ai`.
+Self-updating the old `ai` installs kizuna and keeps `ai` as a link to it; the
+first run moves `~/.config/ai` to `~/.config/kizuna`. See
+[doc/rename.md](doc/rename.md).
 
 ## Quickstart
 
 ```sh
-ai profile add work claude     # make a profile
-ai install work                # install its provider's CLI, if missing
-ai login work                  # log in through the official CLI
-ai work                        # run it (same as: ai run work)
-ai                             # or open the TUI
+kizuna profile add work claude # make a profile
+kizuna install work            # install its provider's CLI, if missing
+kizuna login work              # log in through the official CLI
+kizuna work                    # run it (same as: kizuna run work)
+kizuna                         # or open the TUI
 ```
 
-`ai run -p work [arguments...]` launches with only those arguments, skipping the
+`kizuna run -p work [arguments...]` launches with only those arguments, skipping the
 profile's stored defaults. See [doc/running.md](doc/running.md#run).
 
 ## What it does
@@ -50,11 +65,11 @@ profile's stored defaults. See [doc/running.md](doc/running.md#run).
   and starts another account on it in the same folder — or copies the brief to
   the clipboard and opens that account, for a provider that cannot be started
   on a prompt.
-- **Agents that find each other.** `ai peers` lists every running agent across
-  profiles, with the repository and checkout it is in. `ai send` leaves one a
+- **Agents that find each other.** `kizuna peers` lists every running agent across
+  profiles, with the repository and checkout it is in. `kizuna send` leaves one a
   message it reads at its next tool call. See
   [doc/agent-messaging.md](doc/agent-messaging.md).
-- **Back after a power cut.** `ai resume-all` reopens every session a
+- **Back after a power cut.** `kizuna resume-all` reopens every session a
   blackout killed, each in a ranma pane in its old workspace. See
   [doc/restore.md](doc/restore.md).
 - **Shared setup.** Clone a profile, or copy MCP servers and skills between
@@ -81,9 +96,11 @@ on right now.
 | Update check and self-update | [doc/updates.md](doc/updates.md) |
 | Provider updates that miss the install that runs | [doc/shadowed-installs.md](doc/shadowed-installs.md) |
 | How concurrent OpenCode instances work | [doc/opencode-concurrent-instances.md](doc/opencode-concurrent-instances.md) |
-| Fresh OpenCode stores, resume by import, `ai compact` | [doc/session-store.md](doc/session-store.md) |
-| Agents finding and messaging each other: `ai peers`, `ai send` | [doc/agent-messaging.md](doc/agent-messaging.md) |
-| Reopening every session a power cut killed: `ai resume-all` | [doc/restore.md](doc/restore.md) |
+| Fresh OpenCode stores, resume by import, `kizuna compact` | [doc/session-store.md](doc/session-store.md) |
+| Agents finding and messaging each other: `kizuna peers`, `kizuna send` | [doc/agent-messaging.md](doc/agent-messaging.md) |
+| Reopening every session a power cut killed: `kizuna resume-all` | [doc/restore.md](doc/restore.md) |
+| Coming from ai-session: what the rename moved, and what it kept | [doc/rename.md](doc/rename.md) |
+| Cutting a release, and the AUR packages | [doc/RELEASING.md](doc/RELEASING.md) |
 
 ## License
 

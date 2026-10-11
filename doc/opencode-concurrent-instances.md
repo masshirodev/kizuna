@@ -13,9 +13,9 @@ Non-goals:
   `busy_timeout=0`, two TUIs silently sharing one session, init deadlocks —
   see `anomalyco/opencode#15188`, `#21215`, `#21443`, `#29395`, `#31307`).
   The launcher must not reintroduce this by flipping
-  `supportsConcurrentRuns` (`cmd/ai/instances.go:52`) to include `opencode`.
+  `supportsConcurrentRuns` (`cmd/kizuna/instances.go:52`) to include `opencode`.
 - Covering `deepseek` profiles. They run the `opencode` binary but get no
-  isolated XDG dirs from `profileEnv` (`cmd/ai/main.go:522`), so there is no
+  isolated XDG dirs from `profileEnv` (`cmd/kizuna/main.go:522`), so there is no
   per-profile DB to isolate or merge. Unchanged: exclusive, unmerged.
 - Live two-views-on-one-session (`h` hijack of a running OpenCode session).
   Hijack reopens the conversation while the original keeps running, which for
@@ -25,26 +25,26 @@ Non-goals:
 
 ## Current layout (what the spec builds on)
 
-Per profile (`~/.config/ai/profiles/<name>/`):
+Per profile (`~/.config/kizuna/profiles/<name>/`):
 
 - `config/opencode/` — `opencode.json[c]`, plugins, `node_modules`. Read-mostly
-  during a run. `profileConfigPaths` (`cmd/ai/clone.go:60`) already treats only
+  during a run. `profileConfigPaths` (`cmd/kizuna/clone.go:60`) already treats only
   this tree as "configuration".
 - `data/opencode/` — `auth.json`, `opencode.db` (+ `-wal`/`-shm`), `log/`,
   `repos/`. The contention lives here.
 - `state/opencode/` — `model.json`, `prompt-history.jsonl`, `kv.json`,
   `locks/`. Append/overwrite at runtime; must not be shared either
   (`prompt-history.jsonl` interleaving, opencode's own `locks/`).
-- Locking: `acquireProfileRunLock` (`cmd/ai/instances.go:59`) sends OpenCode
+- Locking: `acquireProfileRunLock` (`cmd/kizuna/instances.go:59`) sends OpenCode
   down `acquireExclusiveRunLock` (`workdir/.active.lock`); a second launch
-  fails. `TestOpenCodeKeepsExclusiveRunLock` (`cmd/ai/main_test.go:460`)
+  fails. `TestOpenCodeKeepsExclusiveRunLock` (`cmd/kizuna/main_test.go:460`)
   pins this. Login/integration/export use `acquireProfileLock`, which refuses
   while any instance lock exists.
-- Session reading: `opencodeSessions` (`cmd/ai/sessions.go:230`) queries the
+- Session reading: `opencodeSessions` (`cmd/kizuna/sessions.go:230`) queries the
   profile DB's `session(id, title, directory, time_created)` directly.
-  `describeInstances` (`cmd/ai/sessions.go:37`) leaves OpenCode undescribed;
+  `describeInstances` (`cmd/kizuna/sessions.go:37`) leaves OpenCode undescribed;
   resume is `opencode --continue`, reopen is `opencode --session <id>`
-  (`cmd/ai/main.go:456,474`).
+  (`cmd/kizuna/main.go:456,474`).
 
 ## Design: one data dir per instance, merge on exit
 
@@ -72,7 +72,7 @@ And the launch env becomes, for OpenCode concurrent launches only:
 - `XDG_DATA_HOME=<instance>/data` — private per instance.
 - `XDG_STATE_HOME=<instance>/state` — private per instance.
 
-Exclusive operations (`ai login`, `ai integrate`, export, `runLockedCommand`)
+Exclusive operations (`kizuna login`, `kizuna integrate`, export, `runLockedCommand`)
 keep using the profile-wide `.active.lock` and the profile dirs, and keep
 refusing while any `instances/run-*/` lock is live (no change to
 `acquireProfileLock`).
@@ -105,7 +105,7 @@ A dead instance's dir (stale `.active.lock`, reclaimed by
 `activeProfileInstanceLocks` as today) still holds an unmerged DB. Never
 delete it silently. Next launch or next TUI refresh surfaces
 `run-XXX has an unmerged session store` and offers merge; a new
-`ai opencode merge <profile>` (name TBD) merges all quaratined instance DBs
+`kizuna opencode merge <profile>` (name TBD) merges all quaratined instance DBs
 explicitly. Merge must open the instance DB through SQLite (WAL recovery runs
 automatically) rather than file-copying it.
 

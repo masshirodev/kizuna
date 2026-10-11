@@ -9,14 +9,14 @@ same story with folders instead of settings. Both move between profiles without
 touching anything else those profiles hold:
 
 ```sh
-ai mcp list max
+kizuna mcp list max
 # context7           http    https://mcp.context7.com/mcp
 # lattice            http    https://apps.example/api/mcp
-ai mcp copy max pro context7 lattice     # named servers
-ai mcp copy max pro                      # or all of them
+kizuna mcp copy max pro context7 lattice     # named servers
+kizuna mcp copy max pro                      # or all of them
 
-ai skill list max
-ai skill copy max pro release
+kizuna skill list max
+kizuna skill copy max pro release
 ```
 
 An entry the destination already has is refused rather than overwritten, and
@@ -31,7 +31,7 @@ underneath a live process is a race whose loser is whichever wrote first.
 
 Each CLI writes MCP configuration in its own syntax, in its own file, so what
 crosses between two profiles cannot be a fragment of one provider's config — it
-has to be the server itself. `ai` reads whichever of these the source keeps, and
+has to be the server itself. `kizuna` reads whichever of these the source keeps, and
 writes whichever the destination expects:
 
 | Provider | File | Key |
@@ -76,7 +76,7 @@ be impossible to read back to check what it actually changed. And an
 because `encoding/json` cannot write those comments back and deleting them
 silently is worse than not copying.
 
-DeepSeek profiles are refused for both: `ai` sets no XDG directories for them,
+DeepSeek profiles are refused for both: `kizuna` sets no XDG directories for them,
 so they read the machine's ordinary OpenCode config rather than an isolated one
 this launcher may write into.
 
@@ -93,7 +93,7 @@ the old folder first, so a replaced skill cannot end up with a `SKILL.md` from
 one and half the scripts of another.
 
 This does copy files, and the files are whatever the skill's author put in them,
-scripts included. `ai` moves them between two directories that already belong to
+scripts included. `kizuna` moves them between two directories that already belong to
 you; it does not read them, and it is not a way to accept a skill from anyone
 else.
 

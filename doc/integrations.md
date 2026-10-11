@@ -10,38 +10,38 @@ Once the provider CLI starts it owns the screen, and nothing in its own
 interface says which account is paying for the session. Two markers cover that:
 
 - **The terminal title.** A launch sets the window or tab title to
-  `ai · <profile> (<provider>)` and restores the previous title on exit, using
+  `kizuna · <profile> (<provider>)` and restores the previous title on exit, using
   the xterm title stack. A terminal without that stack simply keeps the title
-  `ai` set, which still names the right profile. Nothing is written when output
+  `kizuna` set, which still names the right profile. Nothing is written when output
   is redirected, so piped output stays clean.
-- **`AI_PROFILE` and `AI_PROVIDER`.** Every launched process gets both, for
+- **`KIZUNA_PROFILE` and `KIZUNA_PROVIDER`.** Every launched process gets both, for
   every provider, so a shell prompt, a CLI statusline, or a tmux status bar can
   render the profile however you like:
 
   ```sh
   # a Claude Code statusline, in the profile's own settings.json
-  echo "[$AI_PROFILE] $(basename "$PWD")"
+  echo "[$KIZUNA_PROFILE] $(basename "$PWD")"
   ```
 
-  They are also listed by `ai env <profile>`. An inherited pair is stripped
+  They are also listed by `kizuna env <profile>`. An inherited pair is stripped
   before a launch, so a session started from inside another session reports its
   own profile rather than its parent's.
 
 ## Showing the profile inside the CLI
 
 The terminal title and the TUI header both stop being visible the moment the
-provider CLI takes over the screen. `ai integrate statusline <profile>` gives a
+provider CLI takes over the screen. `kizuna integrate statusline <profile>` gives a
 profile the best indicator its provider supports:
 
 ```sh
-ai integrate statusline claude-personal
-ai integrate statusline antigravity-personal
-ai integrate statusline codex-work
+kizuna integrate statusline claude-personal
+kizuna integrate statusline antigravity-personal
+kizuna integrate statusline codex-work
 ```
 
 **Claude Code and Antigravity render it themselves.** The command merges a
 `statusLine` into that profile's own `settings.json`, keeping every other key,
-and the line reads `AI_PROFILE` out of the launch environment so it names the
+and the line reads `KIZUNA_PROFILE` out of the launch environment so it names the
 profile actually in use. An existing `statusLine` is refused rather than
 replaced: it is yours, and overwriting it would silently drop whatever it
 showed.
@@ -51,7 +51,7 @@ showed.
 status bar sits above the CLI:
 
 ```
- ai · codex-work (codex)                        ~/projects/ai-session
+ kizuna · codex-work (codex)                        ~/projects/kizuna
 ──────────────────────────────────────────────────────────────────────
 ```
 
@@ -68,7 +68,7 @@ path is capped near 108 bytes and the per-instance lock directory is long enough
 to exceed that on its own. Stopping a wrapped instance kills its tmux server,
 not just the client.
 
-Codex also configures its own terminal title, so it will overwrite the one `ai`
+Codex also configures its own terminal title, so it will overwrite the one `kizuna`
 sets; the tmux bar is the reliable indicator there.
 
 ## OpenUsage integration
@@ -77,11 +77,11 @@ OpenUsage remains the usage/limits layer. Install its official integrations
 inside each isolated profile:
 
 ```sh
-ai integrate openusage claude-personal
-ai integrate openusage codex-personal
-ai integrate openusage codex-work
-ai integrate openusage opencode-go
-ai integrate openusage deepseek
+kizuna integrate openusage claude-personal
+kizuna integrate openusage codex-personal
+kizuna integrate openusage codex-work
+kizuna integrate openusage opencode-go
+kizuna integrate openusage deepseek
 ```
 
 The launcher deliberately does not modify OpenUsage's database or copy tokens.
@@ -90,14 +90,14 @@ so Codex and Claude hooks are installed beside that profile's own state.
 Login, integration, and export are refused while any instance of the profile
 is running; see [Concurrency and locks](running.md#concurrency-and-locks).
 
-## What each profile has: `ai integrate list` and `I`
+## What each profile has: `kizuna integrate list` and `I`
 
 ```sh
-ai integrate list            # every profile
-ai integrate list max2       # one
+kizuna integrate list            # every profile
+kizuna integrate list max2       # one
 ```
 
-`ai integrate list` prints one line per profile and integration, with its
+`kizuna integrate list` prints one line per profile and integration, with its
 state in the same words the TUI uses: `● on`, `● another`, `○ off`,
 `· not read`, `▶ locked`, `— n/a`, `✗ refused`, `needs <tool>`. A short note
 follows where there is one, such as `own line`, `tmux bar` or `inert here`. In
@@ -105,9 +105,9 @@ the TUI, `I` opens the integrations box, which shows the same states for one
 profile or for every profile and acts on them
 ([tui.md](tui.md#the-boxes), "The integrations box").
 
-Neither says OpenUsage is installed, only `not read`. ai runs OpenUsage's
+Neither says OpenUsage is installed, only `not read`. kizuna runs OpenUsage's
 installer and never reads back what it wrote. OpenUsage has no Antigravity
-integration, so `ai integrate openusage` refuses an Antigravity profile
+integration, so `kizuna integrate openusage` refuses an Antigravity profile
 instead of passing the provider through and letting OpenUsage fail on it.
 
 ## Agent teams in ranma panes
@@ -116,21 +116,21 @@ Claude Code's agent teams open a pane per teammate when they find themselves
 inside tmux. [ranma](https://github.com/masshirodev/ranma) is not tmux, but its
 **tmux shim** answers the tmux calls a program makes with ranma panes
 (`ranma tmux-shim -- CMD`; ranma's `doc/CONFIG.md`, "Programs that drive tmux").
-`ai integrate ranma <profile>` makes a profile launch under it:
+`kizuna integrate ranma <profile>` makes a profile launch under it:
 
 ```sh
-ai integrate ranma max2          # on
-ai integrate ranma max2 --off    # off again
+kizuna integrate ranma max2          # on
+kizuna integrate ranma max2 --off    # off again
 ```
 
 It sets `"tmux_shim": true` on the profile in `profiles.json`. From then on, a
-launch of that profile **from a ranma pane** — `ai max2`, `ai max2 resume`, or
+launch of that profile **from a ranma pane** — `kizuna max2`, `kizuna max2 resume`, or
 the TUI — runs as `ranma tmux-shim -- <command> <arguments>`, and for a Claude
 profile also sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, the flag Claude Code
 keeps teams behind. It is the same as typing
 
 ```sh
-ranma tmux-shim -- env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 ai max2
+ranma tmux-shim -- env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 kizuna max2
 ```
 
 by hand, which still works and needs no setting. What decides each step:
@@ -160,9 +160,9 @@ TUI's account line shows `ranma tmux shim` for a profile that has it on.
 
 ## Messaging between agents
 
-`ai integrate messaging <profile>` (`--off` to undo) gives a profile's agents
-the `ai` MCP server, so they can list the other running agents and message
+`kizuna integrate messaging <profile>` (`--off` to undo) gives a profile's agents
+the `kizuna` MCP server, so they can list the other running agents and message
 them. A Claude Code profile also gets hooks that read its inbox by itself.
-`ai integrate list` and the integrations box (`I`, its fourth row and column)
+`kizuna integrate list` and the integrations box (`I`, its fourth row and column)
 show and toggle it. The board's expansion does not list it yet. The whole
 feature is in [agent-messaging.md](agent-messaging.md).

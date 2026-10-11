@@ -46,7 +46,7 @@ old prompt did.
 
 ## The design, settled
 
-**Palette: the existing tokens.** Every colour in the mock is an ai-session
+**Palette: the existing tokens.** Every colour in the mock is a kizuna
 `color*` value, so it is implemented with the token and never a literal hex:
 `#C4B5FD` accent, `#E5E7EB` text, `#9CA3AF` muted, `#52525B` faint, `#3F3F46`
 dim, `#6EE7B7` success (the launch-folder mark), `#FCA5A5` danger (an unreadable

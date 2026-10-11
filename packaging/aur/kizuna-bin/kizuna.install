@@ -1,0 +1,13 @@
+# pacman installs the binary; what an earlier ai-session left in your home is
+# yours to move, and the first run does most of it.
+post_install() {
+  cat <<'MSG'
+==> kizuna was ai-session, a command called `ai`. If you used it:
+    - the first run moves ~/.config/ai to ~/.config/kizuna and leaves a link
+      at the old path for sessions an older ai is still running;
+    - a source build in $(go env GOPATH)/bin (kizuna, or ai) comes before
+      /usr/bin on most PATHs: remove it, or it shadows this package;
+    - then re-point the hooks and MCP servers at this binary:
+        kizuna integrate messaging <profile>
+MSG
+}

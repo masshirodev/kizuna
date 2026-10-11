@@ -1,0 +1,73 @@
+# Builds the release binaries and, on a v* tag, publishes them as a GitHub
+# release. doc/RELEASING.md is the procedure.
+#
+# kizuna is pure Go, so CGO_ENABLED=0 gives a static binary that runs on any
+# Linux whatever its glibc, and the arm64 build is a cross-compile away.
+# workflow_dispatch builds the same tarballs as artifacts without releasing.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+      # A packaged build never updates itself from source (cmd/kizuna/version.go).
+      PACKAGED: "a GitHub release (or kizuna-bin from the AUR)"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: The tag matches version.go
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          have="$(sed -n 's/^const version = "\(.*\)"/\1/p' cmd/kizuna/version.go)"
+          [ "$want" = "$have" ] || { echo "tag $GITHUB_REF_NAME, version.go $have"; exit 1; }
+
+      - name: Test
+        run: go vet ./... && go test ./...
+
+      - name: Build and package
+        run: |
+          version="$(sed -n 's/^const version = "\(.*\)"/\1/p' cmd/kizuna/version.go)"
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            name="kizuna-$version-linux-$arch"
+            mkdir -p "dist/$name"
+            GOOS=linux GOARCH=$arch go build -trimpath \
+              -ldflags "-s -w -X 'main.packaged=$PACKAGED'" \
+              -o "dist/$name/kizuna" ./cmd/kizuna
+            cp -r LICENSE README.md doc "dist/$name/"
+            rm -rf "dist/$name/doc/briefs" "dist/$name/doc/handoffs"
+            tar -C dist -czf "dist/$name.tar.gz" "$name"
+            (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          done
+          "dist/kizuna-$version-linux-amd64/kizuna" version
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kizuna-${{ env.VERSION }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.tar.gz.sha256 \
+            --title "$GITHUB_REF_NAME" --generate-notes --verify-tag

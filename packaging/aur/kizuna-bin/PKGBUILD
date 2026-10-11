@@ -1,0 +1,31 @@
+# Maintainer: masshirodev <masshiro.iro.kk@gmail.com>
+# The prebuilt binary from a GitHub release. doc/RELEASING.md says how to bump it.
+pkgname=kizuna-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='One launcher for several AI CLI accounts (Claude Code, Codex, OpenCode, Antigravity), each isolated in its own profile'
+arch=('x86_64' 'aarch64')
+url='https://github.com/masshirodev/kizuna'
+license=('MIT')
+optdepends=('claude-code: Claude Code profiles'
+            'openai-codex: Codex profiles'
+            'opencode: OpenCode profiles'
+            'git: handoff briefs carry the branch and changes of the repository'
+            'tmux: the status bar for providers with no status line of their own'
+            'age: exporting and importing profile bundles'
+            'ranma: resume-all and the tmux shim open their panes in ranma')
+provides=('kizuna')
+conflicts=('kizuna')
+install=kizuna.install
+source_x86_64=("$url/releases/download/v$pkgver/kizuna-$pkgver-linux-amd64.tar.gz")
+source_aarch64=("$url/releases/download/v$pkgver/kizuna-$pkgver-linux-arm64.tar.gz")
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+  cd kizuna-$pkgver-linux-*/
+  install -Dm755 kizuna "$pkgdir/usr/bin/kizuna"
+  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+  install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgname"
+  cp -r doc "$pkgdir/usr/share/doc/$pkgname/doc"
+}

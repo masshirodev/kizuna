@@ -1,0 +1,24 @@
+pkgbase = kizuna-bin
+	pkgdesc = One launcher for several AI CLI accounts (Claude Code, Codex, OpenCode, Antigravity), each isolated in its own profile
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/masshirodev/kizuna
+	install = kizuna.install
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	optdepends = claude-code: Claude Code profiles
+	optdepends = openai-codex: Codex profiles
+	optdepends = opencode: OpenCode profiles
+	optdepends = git: handoff briefs carry the branch and changes of the repository
+	optdepends = tmux: the status bar for providers with no status line of their own
+	optdepends = age: exporting and importing profile bundles
+	optdepends = ranma: resume-all and the tmux shim open their panes in ranma
+	provides = kizuna
+	conflicts = kizuna
+	source_x86_64 = https://github.com/masshirodev/kizuna/releases/download/v0.1.0/kizuna-0.1.0-linux-amd64.tar.gz
+	sha256sums_x86_64 = SKIP
+	source_aarch64 = https://github.com/masshirodev/kizuna/releases/download/v0.1.0/kizuna-0.1.0-linux-arm64.tar.gz
+	sha256sums_aarch64 = SKIP
+
+pkgname = kizuna-bin

@@ -5,16 +5,16 @@ provider needs to run in isolation. Back to the [README](../README.md).
 
 ## Install the provider CLIs
 
-`ai-session` isolates state; it does not ship the CLIs themselves. A profile
+`kizuna` isolates state; it does not ship the CLIs themselves. A profile
 can be fully configured and still fail at launch because its command was never
 installed, and `exec`'s own message for that names neither the profile nor the
 way out. The selected-profile panel therefore shows a `cli` line — where the
-command resolves, or `not installed — press i` — and `ai install` runs the
+command resolves, or `not installed — press i` — and `kizuna install` runs the
 provider's own installer:
 
 ```sh
-ai install claude-personal   # a profile: installs its provider's CLI
-ai install codex             # or a bare provider, before any profile exists
+kizuna install claude-personal   # a profile: installs its provider's CLI
+kizuna install codex             # or a bare provider, before any profile exists
 ```
 
 | Provider | Installer |
@@ -44,20 +44,20 @@ A provider with no known installer is refused rather than guessed at.
 Log in through the isolated profile:
 
 ```sh
-ai login codex-personal
-ai login codex-work
-ai login claude-personal
-ai login antigravity-personal
-ai login opencode-go
+kizuna login codex-personal
+kizuna login codex-work
+kizuna login claude-personal
+kizuna login antigravity-personal
+kizuna login opencode-go
 ```
 
 Update a profile's CLI with its supported updater:
 
 ```sh
-ai update codex-personal
-ai update claude-personal
-ai update antigravity-personal
-ai update opencode-go
+kizuna update codex-personal
+kizuna update claude-personal
+kizuna update antigravity-personal
+kizuna update opencode-go
 ```
 
 This runs `codex update`, `claude update`, `agy update`, or `opencode upgrade`
@@ -65,13 +65,13 @@ respectively.
 
 If the update changes an install other than the one the profile actually runs
 — a package-manager copy earlier on `PATH` than the vendor's native install, say
-— `ai update` and `u` say so instead of letting it pass as done. See
+— `kizuna update` and `u` say so instead of letting it pass as done. See
 [shadowed-installs.md](shadowed-installs.md).
 
 ## Run
 
-`ai run` uses the credentials already stored in that profile. A new profile has
-no credentials until you run `ai login <profile>`; the login flow is performed
+`kizuna run` uses the credentials already stored in that profile. A new profile has
+no credentials until you run `kizuna login <profile>`; the login flow is performed
 by the official CLI and may open a browser or ask for a device code. The
 launcher intentionally does not copy the account from your normal Codex,
 Claude, or Antigravity configuration.
@@ -79,11 +79,11 @@ Claude, or Antigravity configuration.
 Run a profile:
 
 ```sh
-ai run codex-personal
-ai run codex-work exec -- "review this repository"
-ai run claude-personal
-ai run antigravity-personal
-ai run opencode-go
+kizuna run codex-personal
+kizuna run codex-work exec -- "review this repository"
+kizuna run claude-personal
+kizuna run antigravity-personal
+kizuna run opencode-go
 ```
 
 The profile's default arguments, if it has any, are placed according to what
@@ -98,11 +98,11 @@ To launch with the arguments given and no defaults at all, pass `-p` (or
 `--plain`) before the profile name:
 
 ```sh
-ai run -p opencode-go models
-ai -p opencode-go
+kizuna run -p opencode-go models
+kizuna -p opencode-go
 ```
 
-The flag belongs to `ai`, so it is read before the profile name and never
+The flag belongs to `kizuna`, so it is read before the profile name and never
 confused with a provider's own `-p`.
 
 ## Running several at once
@@ -129,7 +129,7 @@ only when newer (`time_updated`), `auth.json` only when this instance actually
 refreshed it (a stale copy never overwrites a newer one), prompt history
 appended, logs carried over. Identity, migration, and event tables never
 cross. A merge that cannot finish keeps the store and retries on the next
-start: opening `ai` reclaims stray instances left by power-offs, killed
+start: opening `kizuna` reclaims stray instances left by power-offs, killed
 terminals, and `kill -9`s before anything else runs.
 
 Two consequences. The recent list shows every live instance's sessions, but
@@ -146,7 +146,7 @@ to coordinate token refreshes across processes.
 ## Antigravity's private home
 
 Antigravity does not expose a config-home override, so its entire `HOME` is the
-profile's `home/` directory. On Linux, `ai-session` also clears
+profile's `home/` directory. On Linux, `kizuna` also clears
 `DBUS_SESSION_BUS_ADDRESS` for the child so `agy` uses its profile-local
 `~/.gemini/antigravity-cli/antigravity-oauth-token` instead of silently sharing
 one account through Secret Service. Commands run by Antigravity inherit that
@@ -164,12 +164,12 @@ are equivalent, and any following arguments are passed to the profile's
 configured command:
 
 ```sh
-ai claude-personal
-ai run claude-personal
-ai codex-work exec -- "review this repository"
+kizuna claude-personal
+kizuna run claude-personal
+kizuna codex-work exec -- "review this repository"
 ```
 
-If the bare argument is not an existing profile, `ai` returns an error instead
+If the bare argument is not an existing profile, `kizuna` returns an error instead
 of guessing a provider or creating a profile.
 
 ## Concurrency and locks
@@ -188,24 +188,24 @@ launcher PID on its first line and the child CLI PID on its second line;
 orphaned locks can therefore be reclaimed after an interrupted SSH session.
 
 The launcher's PID is a handle on the whole run. `SIGTERM` and `SIGHUP` sent
-to `ai` are passed on to the CLI, and `ai` waits for it to exit, so the lock is
+to `kizuna` are passed on to the CLI, and `kizuna` waits for it to exit, so the lock is
 released and an OpenCode store merges back exactly as on a normal exit. This
-is what a script running a session headless relies on: `ai run -p opencode3 run
+is what a script running a session headless relies on: `kizuna run -p opencode3 run
 "…" &`, then `kill` that PID. A signal that arrives while an OpenCode instance
 is still being seeded (a store of a few GB takes the better part of a minute to
 copy) is held and delivered the moment the CLI starts, so it stops at once and
 nothing is left for the next start to reclaim. `SIGINT` is not forwarded: at a
 terminal, Ctrl-C already reaches the CLI through the foreground process group.
-Before this, a `kill` of the launcher killed only `ai`, orphaned the CLI, and
+Before this, a `kill` of the launcher killed only `kizuna`, orphaned the CLI, and
 left the instance to be merged by some later start.
 
 ## Compacting an OpenCode store
 
-`ai compact <profile>` drops opencode's sync event log from an OpenCode
+`kizuna compact <profile>` drops opencode's sync event log from an OpenCode
 profile's session store and vacuums it. That log is read only to move a
 session to a remote workspace, and it can dwarf the conversations: 4.9 GB of a
 5.0 GB store on one profile here. It refuses while any instance runs or any
-process uses the store without going through `ai`, keeps a backup beside the
+process uses the store without going through `kizuna`, keeps a backup beside the
 store, and reports the size before and after. See
 [session-store.md](session-store.md).
 
@@ -214,29 +214,29 @@ store, and reports the size before and after. See
 DeepSeek should be configured in the OpenCode profile using OpenCode's normal
 provider setup or an environment variable. The launcher preserves ordinary
 environment variables, including `DEEPSEEK_API_KEY`, but removes shared
-`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, XDG paths, and any inherited `AI_PROFILE` or
-`AI_PROVIDER` before adding the selected profile's values.
+`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, XDG paths, and any inherited `KIZUNA_PROFILE` or
+`KIZUNA_PROVIDER` before adding the selected profile's values.
 
 A profile can also carry default variables, and a single TUI launch can set its
 own. How those layer with your shell and with the values above is in
 [launch-env.md](launch-env.md).
 
-`ai` reads its own configuration through `XDG_CONFIG_HOME`
-(`~/.config/ai/profiles.json` by default). An OpenCode profile's launch points
-that variable at the profile's `config/`, so an `ai` invocation made **from
+`kizuna` reads its own configuration through `XDG_CONFIG_HOME`
+(`~/.config/kizuna/profiles.json` by default). An OpenCode profile's launch points
+that variable at the profile's `config/`, so a `kizuna` invocation made **from
 inside** a running OpenCode session — an agent spawning a second profile, say —
 would look for `profiles.json` under the profile. Every launch therefore also
-exports `AI_CONFIG_HOME`, the launcher's own config base, and an `ai` started
+exports `KIZUNA_CONFIG_HOME`, the launcher's own config base, and a `kizuna` started
 inside the session uses it while `XDG_CONFIG_HOME` points into that base's
 `profiles/` ([agent-messaging.md](agent-messaging.md#environment-a-launch-now-carries)).
 
-A session started by an older `ai` lacks the variable and still fails with
+A session started by an older `kizuna` lacks the variable and still fails with
 `unknown command, profile, or app "<name>"`. Clear `XDG_CONFIG_HOME` for that
 call, or restart the session:
 
 ```sh
-env -u XDG_CONFIG_HOME ai opencode3 run --auto "…"
+env -u XDG_CONFIG_HOME kizuna opencode3 run --auto "…"
 ```
 
-`ai` then resolves its profiles normally, and the child still receives the
-target profile's XDG paths from `ai`, so nothing about its isolation changes.
+`kizuna` then resolves its profiles normally, and the child still receives the
+target profile's XDG paths from `kizuna`, so nothing about its isolation changes.
