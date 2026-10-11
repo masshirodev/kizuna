@@ -54,6 +54,9 @@ profile's stored defaults. See [doc/running.md](doc/running.md#run).
   profiles, with the repository and checkout it is in. `ai send` leaves one a
   message it reads at its next tool call. See
   [doc/agent-messaging.md](doc/agent-messaging.md).
+- **Back after a power cut.** `ai resume-all` reopens every session a
+  blackout killed, each in a ranma pane in its old workspace. See
+  [doc/restore.md](doc/restore.md).
 - **Shared setup.** Clone a profile, or copy MCP servers and skills between
   profiles, even when they use different providers.
 - **Portable.** Export a profile as an `age`-encrypted bundle and import it
@@ -80,6 +83,7 @@ on right now.
 | How concurrent OpenCode instances work | [doc/opencode-concurrent-instances.md](doc/opencode-concurrent-instances.md) |
 | Fresh OpenCode stores, resume by import, `ai compact` | [doc/session-store.md](doc/session-store.md) |
 | Agents finding and messaging each other: `ai peers`, `ai send` | [doc/agent-messaging.md](doc/agent-messaging.md) |
+| Reopening every session a power cut killed: `ai resume-all` | [doc/restore.md](doc/restore.md) |
 
 ## License
 

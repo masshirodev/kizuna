@@ -223,6 +223,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return compactCommand(cfg, args[1:], stdout)
 	case "peers":
 		return peersCommand(cfg, args[1:], stdout)
+	case "resume-all":
+		return resumeAllCommand(cfg, args[1:], stdout)
 	case "send":
 		return sendCommand(cfg, args[1:], os.Stdin, stdout)
 	case "inbox":
@@ -523,7 +525,7 @@ func runLockedCommand(cmd *exec.Cmd, workdir, title string, signals *signalForwa
 	if err != nil {
 		return err
 	}
-	return runCommandWithLock(cmd, lockDir, unlock, title, false, signals)
+	return runCommandWithLock(cmd, lockDir, unlock, title, false, signals, nil)
 }
 
 func launchProfileCommand(command string, args []string, plain bool, profile Profile, stdout, stderr io.Writer) error {
@@ -552,10 +554,16 @@ func launchProfileCommand(command string, args []string, plain bool, profile Pro
 		unlock()
 		return err
 	}
-	return runCommandWithLock(cmd, lockDir, unlock, sessionTitle(profile), headlessLaunch(profile.Provider, args), signals)
+	var restore *Profile
+	if restorable(profile, args) {
+		restore = &profile
+	}
+	return runCommandWithLock(cmd, lockDir, unlock, sessionTitle(profile), headlessLaunch(profile.Provider, args), signals, restore)
 }
 
-func runCommandWithLock(cmd *exec.Cmd, lockDir string, unlock func() string, title string, headless bool, signals *signalForwarder) error {
+// restore names the profile of a launch worth reopening after a power cut
+// (restore.go), nil for one that is not.
+func runCommandWithLock(cmd *exec.Cmd, lockDir string, unlock func() string, title string, headless bool, signals *signalForwarder, restore *Profile) error {
 	defer func() {
 		if note := unlock(); note != "" {
 			fmt.Fprintln(os.Stderr, note)
@@ -576,7 +584,13 @@ func runCommandWithLock(cmd *exec.Cmd, lockDir string, unlock func() string, tit
 		return err
 	}
 	_ = setProfileInstanceMeta(lockDir, commandFolder(cmd), headless, cmd.Env, launchingInstanceID())
-	return cmd.Wait()
+	if restore == nil {
+		return cmd.Wait()
+	}
+	ledger := startRestoreLedger(*restore, lockDir, cmd.Process.Pid, commandFolder(cmd), cmd.Env)
+	err := cmd.Wait()
+	ledger.finish(cutOff(signals.stopSignal(), systemStopping))
+	return err
 }
 
 // commandFolder reports where a command will run. An empty Dir means the
@@ -1142,6 +1156,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  ai run <profile> resume [session-id]")
 	fmt.Fprintln(w, "  ai <profile> resume [session-id]        reopen a recent conversation")
 	fmt.Fprintln(w, "  ai env <profile>")
+	fmt.Fprintln(w, "  ai resume-all [--busy] [-n] [--forget]  after a power cut, reopen every session it killed, each in its ranma workspace")
 	fmt.Fprintln(w, "  ai peers [--json] [repo]                every running agent: where it works, busy or idle, its pane")
 	fmt.Fprintln(w, "  ai send [--type|--no-type] <id> [text]  leave a running agent a message (text from stdin if left out)")
 	fmt.Fprintln(w, "  ai inbox [--peek] [id]                  read this agent's messages")

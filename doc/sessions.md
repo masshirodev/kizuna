@@ -163,6 +163,10 @@ flow above, which is the same offer `R` makes from inside the TUI. A
 happens to start with the word keeps passing through to the provider
 untouched.
 
+After a power cut, `ai resume-all` reopens every session it killed at once,
+across profiles, each in its old ranma workspace: see
+[restore.md](restore.md).
+
 ## Hijacking a running instance
 
 `h` chooses from processes rather than from transcripts. It reads the running
