@@ -12,7 +12,7 @@ makedepends=('git' 'go')
 optdepends=('claude-code: Claude Code profiles'
             'openai-codex: Codex profiles'
             'opencode: OpenCode profiles'
-            'git: handoff briefs carry the repository'''s branch and changes'
+            'git: handoff briefs carry the branch and changes of the repository'
             'tmux: the status bar for providers with no status line of their own'
             'age: exporting and importing profile bundles'
             'ranma: resume-all and the tmux shim open their panes in ranma')
