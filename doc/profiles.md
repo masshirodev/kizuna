@@ -6,12 +6,12 @@ another program a stable path to one. Back to the [README](../README.md).
 ## Create profiles
 
 ```sh
-ai profile add codex-personal codex
-ai profile add codex-work codex
-ai profile add claude-personal claude
-ai profile add antigravity-personal antigravity
-ai profile add opencode-go opencode
-ai profile add deepseek opencode
+kizuna profile add codex-personal codex
+kizuna profile add codex-work codex
+kizuna profile add claude-personal claude
+kizuna profile add antigravity-personal antigravity
+kizuna profile add opencode-go opencode
+kizuna profile add deepseek opencode
 ```
 
 ## Default arguments and notes
@@ -30,7 +30,7 @@ is about to start, so where they land depends on what starts it:
   that is not a subcommand, or a run whose arguments are only flags keeps the
   defaults first, exactly as before.
 
-`ai run -p <profile> [arguments...]` (or the shorthand `ai -p <profile>
+`kizuna run -p <profile> [arguments...]` (or the shorthand `kizuna -p <profile>
 [arguments...]`) drops the defaults for that one launch: the CLI gets the
 arguments given and nothing else. The flag comes before the profile name, so it
 cannot collide with a provider's own `-p` after it (opencode's `auth login -p`).
@@ -46,7 +46,7 @@ rule against the stored defaults.
 The same field takes default environment variables as leading `NAME=value`
 words: `FOO=1 --permission-mode auto` stores `FOO=1` as `default_env` and the
 rest as `default_args`. A default variable only fills a name that the shell has
-not already set, so `FOO=2 ai max` beats it. `-p` drops it with the default
+not already set, so `FOO=2 kizuna max` beats it. `-p` drops it with the default
 args. See [launch-env.md](launch-env.md).
 
 The selected-profile panel shows its default arguments and note. In the profile
@@ -59,17 +59,17 @@ and Ctrl-U clears back to the start (see [Typing in a field](tui.md#typing-in-a-
 A regular profile is for you, launched interactively. An **app profile**
 is for something else — a program of your own that spawns an agent CLI as a
 subprocess and points it at a state directory through its *own* static
-config, never asking `ai` what that path currently means. `ai run` can
-re-resolve a profile name on every launch; a program that isn't `ai` can't,
+config, never asking `kizuna` what that path currently means. `kizuna run` can
+re-resolve a profile name on every launch; a program that isn't `kizuna` can't,
 so app profiles exist to give it a path that never changes while what it
 actually points at does.
 
 ```sh
-ai profile add gemini-work antigravity
-ai profile add gemini-personal antigravity
-ai app add shiori gemini-work gemini-personal
-ai app path shiori
-# /home/you/.config/ai/profiles/apps/shiori
+kizuna profile add gemini-work antigravity
+kizuna profile add gemini-personal antigravity
+kizuna app add shiori gemini-work gemini-personal
+kizuna app path shiori
+# /home/you/.config/kizuna/profiles/apps/shiori
 ```
 
 Paste that path into shiori's own config wherever it expects an agent's home
@@ -78,13 +78,13 @@ directory (`HOME` for Antigravity, `CLAUDE_CONFIG_DIR` for Claude Code,
 listed becomes active. To switch which one shiori actually uses:
 
 ```sh
-ai app use shiori gemini-personal
+kizuna app use shiori gemini-personal
 ```
 
-`ai app path shiori` never changes; what it resolves to does. Nothing is
+`kizuna app path shiori` never changes; what it resolves to does. Nothing is
 copied and no new credential store is created — the app profile is a symlink
-at `ai app path shiori`, and switching just repoints it at a different
-member's real profile directory (`ai app list` shows the current mapping).
+at `kizuna app path shiori`, and switching just repoints it at a different
+member's real profile directory (`kizuna app list` shows the current mapping).
 Members don't have to share a provider: each provider's env vars address a
 subpath of its own profile directory (`.../gemini-work/home`,
 `.../codex-work/codex`, and so on), and the symlink stands for the whole
@@ -92,53 +92,53 @@ directory, so whichever provider-shaped path shiori's config already points
 into resolves correctly as long as the active member is that provider.
 Switching to a member of a *different* provider than shiori was last
 configured for means updating shiori's own backend selection too — that part
-is shiori's integration, not something `ai` can do on its behalf.
+is shiori's integration, not something `kizuna` can do on its behalf.
 
-The roster is not fixed at creation. `ai app add` names the members an app
-starts with; `ai app member` changes them afterwards:
+The roster is not fixed at creation. `kizuna app add` names the members an app
+starts with; `kizuna app member` changes them afterwards:
 
 ```sh
-ai app member add shiori codex-work        # one or more profiles
-ai app member remove shiori gemini-work
+kizuna app member add shiori codex-work        # one or more profiles
+kizuna app member remove shiori gemini-work
 ```
 
 Neither touches the symlink, because neither can change which member is
 active — widening a roster that something else is already pointed at must not
-move what that path resolves to. Use `ai app use` for that, and note the
+move what that path resolves to. Use `kizuna app use` for that, and note the
 ordering it implies: a profile has to be a member before it can be made
 active.
 
 Two removals are refused rather than resolved. **The active member** cannot be
 removed, because dropping it would force the symlink to be repointed silently,
 which is the one thing an app profile promises not to do on its own — switch
-away with `ai app use` first. And the **last** member cannot be removed, since
+away with `kizuna app use` first. And the **last** member cannot be removed, since
 an app with an empty roster still has a link resolving to a profile it no
 longer names. Both errors say which command to reach for instead.
 
 Every name is checked before anything is written, so a call naming one bad
 profile leaves the roster exactly as it was rather than half-applied.
 
-There's no live switching: `ai app use` only has to be right for shiori's
+There's no live switching: `kizuna app use` only has to be right for shiori's
 *next* launch, not for one already running with the old target open.
 
-Ordinary `ai` commands also accept an app name in place of a profile name,
+Ordinary `kizuna` commands also accept an app name in place of a profile name,
 resolving to whichever member is currently active — useful for testing an
 app profile interactively without touching shiori at all:
 
 ```sh
-ai run shiori          # launches gemini-personal, same as ai run gemini-personal
-ai login shiori
-ai install shiori
+kizuna run shiori          # launches gemini-personal, same as kizuna run gemini-personal
+kizuna login shiori
+kizuna install shiori
 ```
 
-The terminal title, `AI_PROFILE`, and any status line still name the real
+The terminal title, `KIZUNA_PROFILE`, and any status line still name the real
 member (`gemini-personal`), not the app (`shiori`) — that's the identity
 actually paying for the session, and showing it as-is means every existing
 indicator works unchanged.
 
 App names and profile names share one namespace: you can't name an app the
 same as an existing profile (or vice versa), and `apps` itself is reserved.
-There's no `ai app rm` yet, matching plain profiles, which have no delete
+There's no `kizuna app rm` yet, matching plain profiles, which have no delete
 command either — and a profile currently used by an app can't be renamed
 from the TUI, since that would leave the app's symlink pointing nowhere. For
 the same reason, a profile that is still a member has to be removed from the
@@ -148,12 +148,12 @@ app before it can be renamed.
 
 A second account for the same provider usually wants the first one's setup: the
 same MCP servers, the same skills, the same settings, the same default
-arguments. `ai profile clone` makes that profile without making it by hand.
+arguments. `kizuna profile clone` makes that profile without making it by hand.
 
 ```sh
-ai profile clone max spare
+kizuna profile clone max spare
 # cloned max into spare (claude)
-# configuration copied; credentials were not — run 'ai login spare'
+# configuration copied; credentials were not — run 'kizuna login spare'
 ```
 
 **A clone copies the setup, not the account.** That is the whole decision this
@@ -188,7 +188,7 @@ now. It exists for the case where the export/import round trip below is not
 what you want, and it says what it did rather than being the quiet default:
 
 ```sh
-ai profile clone max spare --with-state
+kizuna profile clone max spare --with-state
 # credentials came with it; do not run both accounts at once
 ```
 
@@ -202,8 +202,8 @@ Install [`age`](https://age-encryption.org/) on both computers, then export the
 profile as an encrypted bundle:
 
 ```sh
-ai profile export codex-work codex-work.ai-profile.age
-ai profile import codex-work.ai-profile.age
+kizuna profile export codex-work codex-work.kizuna.age
+kizuna profile import codex-work.kizuna.age
 ```
 
 The export includes only that profile's metadata and isolated CLI state. `age`

@@ -39,7 +39,7 @@ uncapped it filled every row, so the pane showed one message instead of a
 conversation. A turn the pane cuts ends in an ellipsis.
 
 Under the title the pane names the account and the **conversation id** in full —
-the id `ai <profile> resume <id>` takes, which was previously nowhere to read —
+the id `kizuna <profile> resume <id>` takes, which was previously nowhere to read —
 and dates the session by its last activity, the same fact the list is ordered by.
 
 `/` searches the list by title, folder, account, or id, and `a` switches between
@@ -94,7 +94,7 @@ the account that recorded it, which is the one the row was read from.
 
 ## The session index
 
-Every list above reads `~/.config/ai/sessions.db`, one table of every profile's
+Every list above reads `~/.config/kizuna/sessions.db`, one table of every profile's
 conversations. A refresh stats each source and re-reads only the ones whose
 fingerprint moved (a transcript's size and modification time, an OpenCode
 session's `time_updated`), so the first build on the workstation took 335 ms
@@ -152,9 +152,9 @@ instead of opening a picker.
 The same picker is one command away without opening the cockpit first:
 
 ```sh
-ai codex-work resume            # the recent-sessions modal for that profile
-ai codex-work resume ses_abc    # one conversation, reopened in its folder
-ai run codex-work resume        # the run spelling works too
+kizuna codex-work resume            # the recent-sessions modal for that profile
+kizuna codex-work resume ses_abc    # one conversation, reopened in its folder
+kizuna run codex-work resume        # the run spelling works too
 ```
 
 With nothing recorded — an account that has not run yet — `resume` falls back to the provider's own
@@ -163,7 +163,7 @@ flow above, which is the same offer `R` makes from inside the TUI. A
 happens to start with the word keeps passing through to the provider
 untouched.
 
-After a power cut, `ai resume-all` reopens every session it killed at once,
+After a power cut, `kizuna resume-all` reopens every session it killed at once,
 across profiles, each in its old ranma workspace: see
 [restore.md](restore.md).
 
@@ -237,7 +237,7 @@ you are — `leaving`, `going to`, `brief`, `open`. `←` goes back a step, and
 
 Nothing is copied into either CLI's state directory. The conversation stays
 where it was recorded; what moves is a markdown file under
-`~/.config/ai/handoffs/`.
+`~/.config/kizuna/handoffs/`.
 
 The brief has three parts:
 
@@ -283,7 +283,7 @@ Destinations are ranked by the quota window that runs out soonest, since a
 weekly allowance with room is no help at the moment the five-hour one is spent.
 An account whose quota is unknown sorts below a measured one.
 
-A handoff is recorded in `~/.config/ai/lineage.json`, and the recent lists —
+A handoff is recorded in `~/.config/kizuna/lineage.json`, and the recent lists —
 under the expanded account and in the pickers — mark the source row with
 `→ <account>`. The chain reads forwards only: a
 handoff is a baton pass, not a fork, so there is never a newer branch on the

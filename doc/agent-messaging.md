@@ -1,7 +1,7 @@
 # Agents finding and messaging each other
 
-`ai peers` lists every agent running under any profile, with the repository and
-checkout it works in. `ai send` leaves one of them a message, and the receiver
+`kizuna peers` lists every agent running under any profile, with the repository and
+checkout it works in. `kizuna send` leaves one of them a message, and the receiver
 reads it at its next tool call or before it stops. Card
 `c144-agents-finding-and` ("Agents finding and messaging each other across
 profiles") on the AI Session board. Back to the [README](../README.md).
@@ -12,28 +12,28 @@ working. Instead of making a worktree, the second agent hands the bug to the
 agent already in the main checkout ("when you are done, also fix this, here is
 the repro") and moves on.
 
-## Why ai-session, and not Claude Code's own messaging
+## Why kizuna, and not Claude Code's own messaging
 
 Claude Code has native peer messaging (`ListAgents`, `SendMessage`), but it
-**only sees sessions under the same `CLAUDE_CONFIG_DIR`**, which ai-session
+**only sees sessions under the same `CLAUDE_CONFIG_DIR`**, which kizuna
 gives each profile on purpose. On 2026-10-08 a `max` session listed the other
 `max` sessions and not a `pro2` session that had been in `~/projects/ranma`
 for 18 hours. Codex, OpenCode and Antigravity have no peer messaging at all.
 The launcher is the one process that sees every profile, so it keeps the
 directory and the inboxes.
 
-## `ai peers`
+## `kizuna peers`
 
 ```
-$ ai peers
+$ kizuna peers
 ID                        ROLE                          PROVIDER  WHERE                       BRANCH                STATE     PANE      MAIL   TITLE
-max/run-3656556723 (you)  —                             claude    ai-session (main checkout)  feat/agent-messaging  busy      ranma 14  hooks  Ai-session inter-agent messaging
+max/run-3656556723 (you)  —                             claude    kizuna (main checkout)  feat/agent-messaging  busy      ranma 14  hooks  Ai-session inter-agent messaging
 max/run-2705011154        lead of 1                     claude    ranma (main checkout)       main                  idle      ranma 13  hooks  Ranma SSH inside scratchpad
 opencode3/run-48213377    worker of max/run-2705011154  opencode  ranma (worktree wave-c31)   wave/c31              headless  —         mcp
 ```
 
-`ai peers ranma` keeps the agents in one repository, named by its name or any
-path inside it. `ai peers --json` prints the same thing for an agent to read.
+`kizuna peers ranma` keeps the agents in one repository, named by its name or any
+path inside it. `kizuna peers --json` prints the same thing for an agent to read.
 
 | Column | Where it comes from |
 | ------ | ------------------- |
@@ -45,29 +45,29 @@ path inside it. `ai peers --json` prints the same thing for an agent to read.
 | MAIL | How a message reaches it (below), and how many are unread |
 | TITLE | The conversation's title, as in the `h` picker ([sessions.md](sessions.md#hijacking-a-running-instance)) |
 
-`(you)` marks the instance asking. That comes from `AI_INSTANCE_DIR`, or, where
+`(you)` marks the instance asking. That comes from `KIZUNA_INSTANCE_DIR`, or, where
 a CLI scrubbed the environment, from finding the instance whose recorded CLI
 PID is one of this process's ancestors.
 
 ## Leads and workers
 
-An agent that launches other agents through `ai` (a wave coordinator running
-`ai opencode3 run --auto …` per card, each in its own worktree) is their
-**lead**, and they are its **workers**. Before 2026-10-09 `ai peers` listed
+An agent that launches other agents through `kizuna` (a wave coordinator running
+`kizuna opencode3 run --auto …` per card, each in its own worktree) is their
+**lead**, and they are its **workers**. Before 2026-10-09 `kizuna peers` listed
 them all as equals, so an agent looking for "whoever is in ranma" found a
 headless worker in a wave worktree and handed it work meant for the agent that
 owns the repo, which the worker could not act on and its lead never saw.
 
 - **Recorded at launch.** The launcher asks which instance it is running inside:
-  the inherited `AI_INSTANCE_DIR` (before it is replaced with the new
+  the inherited `KIZUNA_INSTANCE_DIR` (before it is replaced with the new
   instance's own), or, where a CLI scrubbed the environment, the instance that
   recorded one of the launcher's ancestors. Its id goes into the new instance's
   `instance.json` as `lead`. A launch from a plain shell has none. Instances
   started by an older build have no `lead` and list as having no role.
-- **Shown by `ai peers`.** The `ROLE` column, and `role`, `lead` and `workers` in
+- **Shown by `kizuna peers`.** The `ROLE` column, and `role`, `lead` and `workers` in
   `--json` and `list_peers`. A worker of a worker is both, `worker of …, lead of
   N`.
-- **Enforced by `ai send`.** A message to a worker whose lead is still running is
+- **Enforced by `kizuna send`.** A message to a worker whose lead is still running is
   refused, naming the lead to send to instead, unless it comes from that lead
   or carries `--worker` (`to_worker: true` in the MCP tool). A worker whose
   lead has ended is nobody's to redirect to, and is reached normally.
@@ -75,7 +75,7 @@ owns the repo, which the worker could not act on and its lead never saw.
 ### Claude Code subagents
 
 Subagents a Claude Code session starts with its Agent tool are not instances:
-they run inside the session's process, never appear in `ai peers`, and cannot
+they run inside the session's process, never appear in `kizuna peers`, and cannot
 be addressed. But they share the session's hooks, and **until 2026-10-09 the
 first tool call any subagent made drained the session's inbox into that
 subagent's context**. The subagent then acted on mail meant for the lead, and
@@ -83,15 +83,15 @@ the lead never saw it. A `SubagentStop` was even answered with a block, which
 kept the subagent running on the message.
 
 Claude Code marks a hook that fires inside a subagent with `agent_id` in its
-input, so `ai inbox --hook` now leaves the inbox alone whenever `agent_id` is
+input, so `kizuna inbox --hook` now leaves the inbox alone whenever `agent_id` is
 set. The mail waits for the main thread's next tool call, its `Stop`, or the
 user's next prompt.
 
-## `ai send`
+## `kizuna send`
 
 ```
-ai send pro2/run-1381902169 "Second ranma bug: … Repro: … Fix it in the main checkout after the current one."
-echo "…" | ai send ranma-18      # text from stdin
+kizuna send pro2/run-1381902169 "Second ranma bug: … Repro: … Fix it in the main checkout after the current one."
+echo "…" | kizuna send ranma-18      # text from stdin
 ```
 
 A target is an ID, a profile with exactly one instance running, or Claude
@@ -109,7 +109,7 @@ target:
 | Claude Code, messaging integrated, busy | Read at its next tool call (`PostToolUse` hook) |
 | Claude Code, messaging integrated, idle | A one-line nudge is typed at its prompt, which wakes it, and the `UserPromptSubmit` hook hands it the message on that same prompt |
 | Anything with the MCP server only | Waits until the agent calls `read_inbox` |
-| Nothing integrated | Waits in the inbox; `ai send` says so and how to change it |
+| Nothing integrated | Waits in the inbox; `kizuna send` says so and how to change it |
 
 `--type` types the nudge whatever the state, and `--no-type` never types it.
 `--worker` sends to another agent's worker on purpose ([above](#leads-and-workers)).
@@ -122,13 +122,13 @@ idle agent, and why `--no-type` exists.
 The receiver reads the message framed as coming from another agent, not from
 the user. It is told to treat it as a colleague's request, fit it around its
 current work, and ask the user before anything destructive. It also gets the
-`ai send <sender>` line to reply with.
+`kizuna send <sender>` line to reply with.
 
-## `ai inbox`
+## `kizuna inbox`
 
-`ai inbox` prints this instance's unread messages and moves them to
-`inbox/read/`. `--peek` leaves them unread, and `ai inbox <id>` reads someone
-else's. `ai inbox --hook` is what the Claude Code hooks run. It reads the hook
+`kizuna inbox` prints this instance's unread messages and moves them to
+`inbox/read/`. `--peek` leaves them unread, and `kizuna inbox <id>` reads someone
+else's. `kizuna inbox --hook` is what the Claude Code hooks run. It reads the hook
 event from stdin and answers `PostToolUse` and `UserPromptSubmit` with
 `additionalContext`, and `Stop` with `{"decision":"block","reason":…}`, which
 is how a hook gives Claude Code something to do before it stops. An event from
@@ -138,38 +138,38 @@ ends by itself, because the inbox is empty the next time round. An event it
 does not know puts the messages back. In hook mode every failure is silent and
 exits 0, because a hook must never break the agent it runs in.
 
-## `ai integrate messaging <profile>`
+## `kizuna integrate messaging <profile>`
 
 ```
-ai integrate messaging max          # on
-ai integrate messaging max --off    # off again
+kizuna integrate messaging max          # on
+kizuna integrate messaging max --off    # off again
 ```
 
 - **Every provider with an MCP config** (Claude Code, Codex, OpenCode,
-  Antigravity) gets the `ai` MCP server, `ai mcp serve`. It is written the same
-  way `ai mcp copy` writes servers, so the rest of the file stays as it was.
+  Antigravity) gets the `kizuna` MCP server, `kizuna mcp serve`. It is written the same
+  way `kizuna mcp copy` writes servers, so the rest of the file stays as it was.
 - **Claude Code** also gets three hooks in the profile's `settings.json`:
   `PostToolUse` (matcher `*`), `Stop` and `UserPromptSubmit`, each running
-  `<ai> inbox --hook` with a 10-second timeout. The install is idempotent. An
-  entry is recognised as ai's by `inbox --hook` in its command, and `--off`
+  `<kizuna> inbox --hook` with a 10-second timeout. The install is idempotent. An
+  entry is recognised as kizuna's by `inbox --hook` in its command, and `--off`
   removes exactly those entries, plus any event left with no hooks.
 - Sessions already running pick the hooks up when they restart.
 - The integrations box (`I`) shows the same thing as its `messaging` row and
   toggles it with `↵`. A Claude profile with the server but not the hooks
   reads `○ off  tools only`.
 
-The command written is `ai`'s absolute path from `PATH` (falling back to the
+The command written is `kizuna`'s absolute path from `PATH` (falling back to the
 running binary), so a reinstall to the same place keeps working.
 
-## `ai mcp serve`
+## `kizuna mcp serve`
 
 A stdio MCP server, one JSON-RPC object per line, with three tools:
 
 | Tool | Does |
 | ---- | ---- |
-| `list_peers` | `ai peers --json`, optionally filtered by `repo` |
-| `send_message` | `ai send`; `type_into_pane` is `auto` (default), `always` or `never`; `to_worker` is `--worker` |
-| `read_inbox` | `ai inbox` for the instance the server runs inside |
+| `list_peers` | `kizuna peers --json`, optionally filtered by `repo` |
+| `send_message` | `kizuna send`; `type_into_pane` is `auto` (default), `always` or `never`; `to_worker` is `--worker` |
+| `read_inbox` | `kizuna inbox` for the instance the server runs inside |
 
 Its `instructions` tell the agent what it is for: find the agent already in a
 checkout before opening a parallel worktree there.
@@ -178,17 +178,17 @@ checkout before opening a parallel worktree there.
 
 | Variable | Value | Why |
 | -------- | ----- | --- |
-| `AI_INSTANCE_DIR` | the instance's lock directory | where its inbox is |
-| `AI_CONFIG_HOME` | the launcher's config base (normally `~/.config`) | an OpenCode launch repoints `XDG_CONFIG_HOME` at the profile, so an `ai` started inside it would otherwise find no `profiles.json` |
+| `KIZUNA_INSTANCE_DIR` | the instance's lock directory | where its inbox is |
+| `KIZUNA_CONFIG_HOME` | the launcher's config base (normally `~/.config`) | an OpenCode launch repoints `XDG_CONFIG_HOME` at the profile, so a `kizuna` started inside it would otherwise find no `profiles.json` |
 
-`AI_CONFIG_HOME` is only believed while `XDG_CONFIG_HOME` really points inside
+`KIZUNA_CONFIG_HOME` is only believed while `XDG_CONFIG_HOME` really points inside
 that base's `profiles/`. A shell or a test that set its own `XDG_CONFIG_HOME`
 keeps it, so a leftover variable cannot point anything at the real profiles.
 
 ## Not done yet
 
 - **OpenCode, Codex and Antigravity read their inbox only when asked** (the MCP
-  tool, `ai inbox`, or a typed nudge). No hook makes them read it on their own:
+  tool, `kizuna inbox`, or a typed nudge). No hook makes them read it on their own:
   an OpenCode plugin on session events could, and what Codex and Antigravity
   offer has not been looked at.
 - **No busy/idle for those three**, so the automatic nudge never fires for
@@ -198,7 +198,7 @@ keeps it, so a leftover variable cannot point anything at the real profiles.
   sheet has no row to spare for it ([tui.md](tui.md)).
 - **Headless runs** (`claude -p`, `codex exec`, `opencode run`) are listed as
   `headless`, and nothing is typed into them: they have no prompt.
-- **Mail to an instance that exits** goes with its instance directory. `ai
+- **Mail to an instance that exits** goes with its instance directory. `kizuna
   send` only reaches live instances, so nothing is sent into the void, but
   unread mail at exit is lost. The exception is an exclusive-lock profile,
   whose inbox sits in the profile directory and survives to the next launch.

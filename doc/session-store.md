@@ -39,7 +39,7 @@ machine (`select count(*) from workspace` = 0).
    credentials, model and prompt history, but no copy of the profile's
    database.
 2. **Resume and Handoff keep working** for every session they work for today.
-3. ai-session keeps **its own index of sessions, for every provider**. It holds
+3. kizuna keeps **its own index of sessions, for every provider**. It holds
    titles, folders, times and the spoken text. The recent lists, the preview
    pane, the handoff brief and search read the index instead of each
    provider's store.
@@ -116,7 +116,7 @@ as it is.
 
 ### 3. `sessions.db`: the index
 
-`~/.config/ai/sessions.db`, SQLite through the driver ai-session already uses:
+`~/.config/kizuna/sessions.db`, SQLite through the driver kizuna already uses:
 
 ```sql
 CREATE TABLE session (
@@ -170,8 +170,8 @@ deleting `sessions.db` costs one slow refresh, never data.
 
 ### 4. Shrinking the existing archives (one-off, and then a command)
 
-`ai compact <profile>` (not `ai opencode compact`: a profile named `opencode`
-exists, and `ai opencode …` already launches it):
+`kizuna compact <profile>` (not `kizuna opencode compact`: a profile named `opencode`
+exists, and `kizuna opencode …` already launches it):
 
 1. Refuse while the profile has any live instance, or any `opencode` process
    whose `XDG_DATA_HOME` is the profile's data dir (a direct launch, the way
@@ -191,8 +191,8 @@ from the table sizes above.
 
 | Phase | What | Visible result |
 | --- | --- | --- |
-| P0 | `ai compact`, and run it on opencode2 and opencode3 while no wave uses them | the archives shrink; seeding gets fast even before P1 |
-| P1 | fresh instances plus resume import | no seed copy at all; `LAUNCHER=ai` becomes the wave default |
+| P0 | `kizuna compact`, and run it on opencode2 and opencode3 while no wave uses them | the archives shrink; seeding gets fast even before P1 |
+| P1 | fresh instances plus resume import | no seed copy at all; `LAUNCHER=kizuna` becomes the wave default |
 | P2 | `sessions.db`, and ingesters and readers for Claude, Codex and OpenCode | lists and previews read one indexed table |
 | P3 | Antigravity ingester (protobuf decode) | Antigravity sessions in the pickers, and resumable |
 
@@ -237,7 +237,7 @@ deleted?
 
 - `seedIsolatedInstance` copies `auth.json`, `model.json` and prompt history,
   and no store. `snapshotSQLiteDB` is gone with the copy.
-- `cmd/ai/opencode_resume.go`: `openCodeResumeTarget` reads
+- `cmd/kizuna/opencode_resume.go`: `openCodeResumeTarget` reads
   `-s/--session[=]` and `-c/--continue`. `prepareOpenCodeInstance` runs in
   both launch paths that take an instance (`launchProfileCommand`,
   `launchInFolder`) and never fails a launch: a session it cannot bring in is
@@ -253,7 +253,7 @@ deleted?
 
 ## As built (P0)
 
-- `cmd/ai/compact.go`: `ai compact <profile>` takes the exclusive profile lock
+- `cmd/kizuna/compact.go`: `kizuna compact <profile>` takes the exclusive profile lock
   (refused while any instance runs) and then the merge lock, and refuses while
   any process has the profile's data dir as its `XDG_DATA_HOME`
   (`/proc/*/environ`, Linux only). It backs up with `VACUUM INTO` to
@@ -262,7 +262,7 @@ deleted?
 
 ## As built (P2)
 
-- `cmd/ai/index.go`: `session` (with `headless`), `turn`, and `turn_source`
+- `cmd/kizuna/index.go`: `session` (with `headless`), `turn`, and `turn_source`
   (the fingerprint the cached turns were read at). `recentSessions` refreshes
   the profile's rows and answers from the index; `scannedRecentSessions` is the
   old reader, kept as the fallback when the index cannot be opened.
@@ -287,7 +287,7 @@ deleted?
   carries title, workspace and last-modified time as plain columns, so listing
   decodes nothing. What is protobuf is each conversation's `steps`, which is
   where the turns and the start time are.
-- `cmd/ai/antigravity.go`: a schema-less wire-format walker (`protoString`,
+- `cmd/kizuna/antigravity.go`: a schema-less wire-format walker (`protoString`,
   `protoVarint`) follows field paths read off the operator's own conversations:
   user text at step type 14 `19.2`, reply at type 15 `20.1`, start time at the
   first step's metadata `1.1`. Thinking (`20.3`) and tool arguments (`20.7.3`)

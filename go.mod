@@ -1,4 +1,4 @@
-module github.com/masshiro/ai-session
+module github.com/masshirodev/kizuna
 
 go 1.26
 

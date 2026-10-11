@@ -1,8 +1,8 @@
 # The TUI
 
-Running `ai` with no arguments opens the cockpit. Back to the [README](../README.md).
+Running `kizuna` with no arguments opens the cockpit. Back to the [README](../README.md).
 
-The layout is the **gauge board** — direction 2a of the `ai-session Redesign`
+The layout is the **gauge board** — direction 2a of the `kizuna Redesign`
 Claude Design handoff, carried through every screen in its third turn. Every box
 uses one vocabulary: an accent border, an uppercase accent title with the thing
 it acts on beside it, uppercase faint section labels, `▌` and a tinted row for
@@ -89,7 +89,7 @@ to read.
 Auth is the column before `LIVE`:
 
 - `● ok` — the provider's credential file exists in the isolated state
-  directory, so `ai run` can use it.
+  directory, so `kizuna run` can use it.
 - `● key` — a `deepseek` profile with `DEEPSEEK_API_KEY` exported, or an
   Antigravity profile with `modelProvider: "gemini"` and `GEMINI_API_KEY`.
   These authenticate from the environment rather than a stored OAuth file.
@@ -98,7 +98,7 @@ Auth is the column before `LIVE`:
   not guess.
 
 The check only tests whether the file exists, and reads the API key variable
-only to see whether it is empty; `ai-session` still never opens or prints
+only to see whether it is empty; `kizuna` still never opens or prints
 credentials. A profile whose token has expired therefore keeps showing `● ok`
 until the official CLI asks you to log in again.
 
@@ -128,7 +128,7 @@ been read yet; `—` means a window is expired or unavailable. This is
 intentionally profile-local and does not use OpenUsage, so multiple accounts for
 the same provider stay separate. Credential files are never opened.
 
-The TUI starts in the directory where you ran `ai`. Press `c` to set another
+The TUI starts in the directory where you ran `kizuna`. Press `c` to set another
 launch folder without leaving the TUI: a tree of directories opens at your home
 folder and down to the current launch folder, with the folder under the cursor
 read out beside it. `↑↓` move, `↵` opens a folder, `←` closes it or steps to its
@@ -223,7 +223,7 @@ fields had a caret.
 - In the argument prompt, moving the caret through a recalled set keeps it
   recalled, so a pin still acts on it. Typing into it makes it a new set.
 
-The editor is `cmd/ai/lineedit.go`. A field stores its caret as the number of
+The editor is `cmd/kizuna/lineedit.go`. A field stores its caret as the number of
 characters after it. Zero means the end, so code that fills a field never has
 to place the caret.
 
@@ -247,7 +247,7 @@ The keys it lists, all of which also work straight from the board:
 | Conversation | `↵` `p` `R` `h` `H` | run here · run with arguments · resume · open a live instance (the original keeps running) · hand off |
 | Profile | `a` `e` `C` `x` `/` | add · edit · clone its setup (no credentials) · delete after confirmation · find |
 | Provider CLI | `l` `i` `u` `K` `m` `s` `I` | log in · install the CLI (after showing the command) · update it · stop an instance (Enter stops one, `a`/`y` all) · install MCP servers · install skills · integrations |
-| ai-session | `c` `A` `r` `U` `q` | change launch folder · auto-swap on handoff · refresh quotas and updates · update ai-session (after showing the checkout and steps) · quit |
+| kizuna | `c` `A` `r` `U` `q` | change launch folder · auto-swap on handoff · refresh quotas and updates · update kizuna (after showing the checkout and steps) · quit |
 
 ## The boxes
 
@@ -301,7 +301,7 @@ computed from the same splits the writers use, so the box cannot describe a
 rewrite the copy then does not make.
 
 **The integrations box (`I`)** shows what the selected profile has of the
-things `ai integrate` writes, which are the status line, OpenUsage's hooks,
+things `kizuna integrate` writes, which are the status line, OpenUsage's hooks,
 ranma's tmux shim ([integrations.md](integrations.md)) and messaging between
 agents ([agent-messaging.md](agent-messaging.md)), and it acts on them.
 It has two scopes, and `a` flips between them the way the resume picker flips
@@ -321,20 +321,20 @@ between this account and all accounts:
   when the CLI would refuse it). Going back with `a` opens the profile the grid
   was on, and the board follows.
 
-Both scopes use one set of states: `● on` (ai wrote it and reads it back),
-`● another` (a status line that is not ai's), `○ off`, `· not read` (OpenUsage:
-ai never looks), `▶ locked` (refused while the profile runs), `— n/a` (not for
+Both scopes use one set of states: `● on` (kizuna wrote it and reads it back),
+`● another` (a status line that is not kizuna's), `○ off`, `· not read` (OpenUsage:
+kizuna never looks), `▶ locked` (refused while the profile runs), `— n/a` (not for
 this provider), `✗ refused` (conflicts with another integration), `needs
 <tool>` (a prerequisite is missing), and `inert here` (the shim is set but this
-TUI is not in a ranma pane). They come from the same checks `ai integrate` and
-the launch make (`cmd/ai/integrations.go`), and `ai integrate list` prints the
+TUI is not in a ranma pane). They come from the same checks `kizuna integrate` and
+the launch make (`cmd/kizuna/integrations.go`), and `kizuna integrate list` prints the
 same states as text.
 
 Enter does what the footer says. The shim toggles in place. The status line is
 installed in place and has no undo yet. OpenUsage first shows its installer,
 with the environment it runs in, then runs it under the profile's exclusive
-lock the way `ai integrate openusage` does. That box says outright that the
-row keeps saying `not read` afterwards, since ai never reads OpenUsage's hooks
+lock the way `kizuna integrate openusage` does. That box says outright that the
+row keeps saying `not read` afterwards, since kizuna never reads OpenUsage's hooks
 back. `m` and `s` go on to the MCP and skill box for the same profile.
 
 ## Recent and pinned arguments
@@ -343,7 +343,7 @@ The `p` prompt puts the field on top and, under it, the whole command it will
 produce — the profile's stored defaults placed by the same subcommand rule the
 launch uses, so it is plain where they land. Leading `NAME=value` words in the
 field are environment for this launch and lead the preview too. They win over
-everything, including ai-session's own variables, and a warning under the
+everything, including kizuna's own variables, and a warning under the
 preview names any of those you override ([launch-env.md](launch-env.md)).
 Under that it lists what it has been given before: `PINNED` sets first, marked `◆`, in the order they were pinned, then the last five sets run under
 `RECENT`, newest first. Only a launch that actually started is recorded, and
@@ -373,7 +373,7 @@ than listing it again under `RECENT`, so it does not use up one of the five.
 Unpinning puts the set back at the front of `RECENT`, where the next five runs
 age it out like any other.
 
-The history lives in `~/.config/ai/arguments.json`, created `0600` because a
+The history lives in `~/.config/kizuna/arguments.json`, created `0600` because a
 set can carry a prompt as well as flags. Every change rereads the file first,
 so two open TUIs do not undo each other's pins, and a file that cannot be
 parsed is reported and left untouched rather than replaced with an empty
@@ -447,7 +447,7 @@ disagree, the repository won, and these are the places:
   as a fourth grid column at the handoff's own 27-column cell, rather than
   squeezing the three the handoff pinned. That is why the box's ceiling is 151
   (124 plus one cell), and a terminal narrower than that clips the messaging
-  column first. A Claude profile with the ai MCP server but no hooks reads
+  column first. A Claude profile with the kizuna MCP server but no hooks reads
   `○ off  tools only` and still offers `↵ turn on`, because turning on is what
   writes the hooks. The board's expansion does not list messaging: its sheet
   has no spare row for a fourth integration without pushing the frame past its

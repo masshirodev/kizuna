@@ -1,0 +1,59 @@
+# Maintainer: masshirodev <masshiro.iro.kk@gmail.com>
+# Built from main. doc/RELEASING.md covers the packages.
+pkgname=kizuna-git
+pkgver=0.1.0.r0.g0000000
+pkgrel=1
+pkgdesc='One launcher for several AI CLI accounts (Claude Code, Codex, OpenCode, Antigravity), each isolated in its own profile (git)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/masshirodev/kizuna'
+license=('MIT')
+depends=('glibc')
+makedepends=('git' 'go')
+optdepends=('claude-code: Claude Code profiles'
+            'openai-codex: Codex profiles'
+            'opencode: OpenCode profiles'
+            'git: handoff briefs carry the repository'''s branch and changes'
+            'tmux: the status bar for providers with no status line of their own'
+            'age: exporting and importing profile bundles'
+            'ranma: resume-all and the tmux shim open their panes in ranma')
+provides=('kizuna')
+conflicts=('kizuna')
+install=kizuna.install
+source=("kizuna::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd kizuna
+  local version
+  version="$(sed -n 's/^const version = "\(.*\)"/\1/p' cmd/kizuna/version.go)"
+  printf '%s.r%s.g%s' "$version" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+  cd kizuna
+  export GOPATH="$srcdir/gopath"
+  go mod download -modcacherw
+}
+
+build() {
+  cd kizuna
+  export GOPATH="$srcdir/gopath"
+  export CGO_CPPFLAGS="${CPPFLAGS}" CGO_CFLAGS="${CFLAGS}" CGO_CXXFLAGS="${CXXFLAGS}" CGO_LDFLAGS="${LDFLAGS}"
+  export GOFLAGS="-buildmode=pie -trimpath -mod=readonly -modcacherw"
+  # pacman updates this binary, so kizuna must not rebuild itself from source.
+  go build -ldflags "-linkmode=external -X 'main.packaged=the AUR (kizuna-git)'" -o kizuna ./cmd/kizuna
+}
+
+check() {
+  cd kizuna
+  export GOPATH="$srcdir/gopath" GOFLAGS="-mod=readonly -modcacherw"
+  go test ./cmd/kizuna -run 'Legacy|VersionLine|PackagedBuild'
+}
+
+package() {
+  cd kizuna
+  install -Dm755 kizuna "$pkgdir/usr/bin/kizuna"
+  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+  install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgname"
+  cp -r doc "$pkgdir/usr/share/doc/$pkgname/doc"
+}
