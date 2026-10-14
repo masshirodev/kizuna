@@ -163,13 +163,14 @@ running binary), so a reinstall to the same place keeps working.
 
 ## `kizuna mcp serve`
 
-A stdio MCP server, one JSON-RPC object per line, with three tools:
+A stdio MCP server, one JSON-RPC object per line, with four tools:
 
 | Tool | Does |
 | ---- | ---- |
 | `list_peers` | `kizuna peers --json`, optionally filtered by `repo` |
 | `send_message` | `kizuna send`; `type_into_pane` is `auto` (default), `always` or `never`; `to_worker` is `--worker` |
 | `read_inbox` | `kizuna inbox` for the instance the server runs inside |
+| `search_sessions` | `kizuna search --json`: past conversations in every account, by what was said; see [session-search.md](session-search.md) |
 
 Its `instructions` tell the agent what it is for: find the agent already in a
 checkout before opening a parallel worktree there.

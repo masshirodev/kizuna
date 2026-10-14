@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Search what was said</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&amp;family=IBM+Plex+Sans:wght@400;600&amp;family=Noto+Sans+JP:wght@400;700&amp;display=swap" rel="stylesheet">
+<style>body{margin:0;background:#141418}a{color:#C4B5FD}a:hover{color:#E5E7EB}code{font-family:'JetBrains Mono','Noto Sans JP',monospace;font-size:0.92em;color:#E5E7EB}</style>
+</helmet>
+<div style="width: 2560px; min-height: 5200px; box-sizing: border-box; background: #141418; color: #E5E7EB; font-family: 'IBM Plex Sans', 'Noto Sans JP', sans-serif">
+
+<section style="padding: 64px 72px 32px; display: flex; flex-direction: column; gap: 28px">
+  <div style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #8B8B95; letter-spacing: 0.08em">TURN 1 · RESUME PICKER · SEARCH WHAT WAS SAID</div>
+  <h1 style="margin: 0; font-size: 34px; font-weight: 600; color: #E5E7EB">Search what was said, from the resume picker</h1>
+  <p style="margin: 0; max-width: 1180px; font-size: 17px; line-height: 1.6; color: #9CA3AF">One box, two searches. <code>R</code> stays the resume picker; <code>ctrl+f</code> flips it between the <code>/</code> filter it has today (by title, folder, account or id) and a search of what was said, ranked by match. The two are told apart three ways at once: a mode pair in the heading, a different field (the titles filter is the small <code>/</code> line, what was said is a full-width tinted field), and an empty state that names what it searched. Sample data: query <code>sqlite busy</code>, nine hits across six accounts and five providers, at Tue 13 Oct 2026 14:05, 965 conversations indexed. The table at the foot carries it for the conformance test.</p>
+  <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px 40px; max-width: 2400px; font-size: 15px; line-height: 1.5; color: #9CA3AF">
+    <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 14px"><span style="color: #52525B">titles  </span><span style="background: #181826; color: #C4B5FD; font-weight: 700"> what was said </span><span style="color: #C4B5FD; font-weight: 700">  ctrl+f</span></span><span>Which search the box is in, drawn as the scope chip is. It sits on the right of the heading in both modes, so it never moves.</span></div>
+    <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 14px; background: #121217; padding: 0 6px"><span style="color: #C4B5FD; font-weight: 700">› </span><span style="color: #E5E7EB">sqlite busy</span><span style="background: #E5E7EB; color: #0B0B0E"> </span></span><span>The query field. Full width and tinted, only in this mode. The titles filter keeps its small <code>/</code> line.</span></div>
+    <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 14px; color: #9CA3AF">…fails with <span style="background: #3A3014; color: #FDE68A; font-weight: 700">SQLITE</span>_<span style="background: #3A3014; color: #FDE68A; font-weight: 700">BUSY</span> only…</span><span>A matched word: amber on a dark amber cell, a new tone pair (<code>colorMatch</code>). FTS5 marks tokens, so the underscore between them stays plain. Only words someone said are marked, never a title.</span></div>
+    <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 14px"><span style="color: #C4B5FD; font-weight: 700">you</span><span style="color: #9CA3AF">  “…so resume fails…”</span></span><span>Who said the snippet, then the snippet in quotation marks, so it reads as something said and not as a log line. An agent snippet is led by its provider, in that provider's colour.</span></div>
+    <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 14px; color: #52525B">CONVERSATION ·········· MATCHES</span><span><code>MATCHES</code> takes <code>FOLDER</code>'s place: how many turns matched. The folder is still in the pane's header and in the footer's <code>↵</code>.</span></div>
+    <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 14px"><span style="color: #9CA3AF">MATCH </span><span style="font-weight: 700">2 OF 5</span>  <span style="color: #26262D">━━</span><span style="color: #9CA3AF">┃</span><span style="color: #26262D">━</span><span style="color: #C4B5FD">┃</span><span style="color: #26262D">━━━━━</span><span style="color: #9CA3AF">┃</span><span style="color: #26262D">━━━━━━</span><span style="color: #9CA3AF">┃</span><span style="color: #26262D">━━</span></span><span>Where the matches sit along the conversation, in the gauge's thin bar. The match shown is in accent. <code>n</code> and <code>N</code> step through them in order.</span></div>
+    <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 14px"><span style="color: #67E8F9">━━━━━━━━━━━━━━</span><span style="color: #26262D">━━━━━━━━</span><span style="color: #67E8F9">  searched 612 of 965</span></span><span>The index is still filling, so the results are partial. Info cyan, under the list where the headless count already is, and “so far” on every count.</span></div>
+    <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 14px; color: #E5E7EB">a  .  o</span><span>The keys inside the box: <code>a</code> scope and <code>.</code> headless as today, plus <code>o</code>, best match or newest first. Provider, repository and <code>--from user</code> stay CLI flags. A box with more toggles stops being a picker.</span></div>
+  </div>
+  <ul style="margin: 0; padding-left: 20px; max-width: 1500px; font-size: 15px; line-height: 1.6; color: #9CA3AF; display: flex; flex-direction: column; gap: 4px">
+    <li><b style="color: #E5E7EB">Entry.</b> <code>ctrl+f</code> inside <code>R</code> or <code>H</code>. The palette's CONVERSATION group gains <code>search what was said</code> with <code>965 indexed</code> (or <code>612 of 965 indexed</code>) as its live note, and it opens this box in all-accounts mode. In the <code>H</code> picker the stepper keeps the heading, and the mode pair sits beside the scope on the line under it.</li>
+    <li><b style="color: #E5E7EB">Focus.</b> The box opens with the keys in the field, so typing searches. <code>↓</code> or <code>↵</code> hands them to the results and <code>/</code> takes them back, which is how the board's own <code>/</code> works. Letter keys (<code>H y n a . o</code>) only act once the results have the keys.</li>
+    <li><b style="color: #E5E7EB">Height.</b> The box takes the same 34 rows as the plain picker: heading, field, a blank line, a 28-row body, then the footer. The plain picker gives up one row to its <code>/</code> line, as the handoff picker already does, so switching modes never resizes the box.</li>
+  </ul>
+</section>
+
+<section style="padding: 24px 72px 32px; display: flex; flex-wrap: wrap; gap: 72px 72px">
+
+  <div id="2a" style="display: flex; flex-direction: column; gap: 16px; width: 1170px">
+    <div style="display: flex; align-items: center; gap: 12px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; background: #C4B5FD; color: #0B0B0E; padding: 3px 8px; border-radius: 4px">2a</span><span style="font-size: 18px; font-weight: 600">Results, best match first</span><span style="font-size: 14px; color: #8B8B95">140 wide · 146 × 40 frame · keys on the results</span></div>
+    <div style="background: #0B0B0E; border: 1px solid #1F1F24; border-radius: 8px; font-family: 'JetBrains Mono', 'Noto Sans JP', monospace; font-size: 13px; width: 150ch; overflow: hidden">
+      <sc-for list="{{ f2a }}" as="line" hint-placeholder-count="42"><div style="display: flex; height: 17px; line-height: 17px"><sc-for list="{{ line.segs }}" as="seg"><span style="{{ seg.st }}">{{ seg.t }}</span></sc-for></div></sc-for>
+    </div>
+    <ul style="margin: 0; padding-left: 20px; font-size: 15px; line-height: 1.6; color: #9CA3AF; display: flex; flex-direction: column; gap: 4px">
+      <li>The title stays <code>RESUME</code>, because <code>↵</code> still resumes. The mode pair is on the right, and the scope stays on the left where it is today.</li>
+      <li>Each hit takes two lines. The first is the title with the match count. The second is the best snippet in quotes, under who said it. Eleven hits fit at this height, enough to compare ten snippets by eye.</li>
+      <li>The pane opens on the row's best match, the turn its snippet came from, and numbers it in conversation order (match 2 of 5). The track shows where it sits among the 212 turns.</li>
+      <li>The context is the turn before and the turn after, two rows each, and the matching turn, up to six rows at full strength whoever said it. Under that, <code>HOW IT ENDED</code> gives the last two turns, one line each. That is what the pane showed before, kept as a glance.</li>
+    </ul>
+  </div>
+
+  <div id="2b" style="display: flex; flex-direction: column; gap: 16px; width: 1170px">
+    <div style="display: flex; align-items: center; gap: 12px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; background: #C4B5FD; color: #0B0B0E; padding: 3px 8px; border-radius: 4px">2b</span><span style="font-size: 18px; font-weight: 600">Newest first, a Japanese hit, command copied</span><span style="font-size: 14px; color: #8B8B95">o flipped · y pressed</span></div>
+    <div style="background: #0B0B0E; border: 1px solid #1F1F24; border-radius: 8px; font-family: 'JetBrains Mono', 'Noto Sans JP', monospace; font-size: 13px; width: 150ch; overflow: hidden">
+      <sc-for list="{{ f2b }}" as="line" hint-placeholder-count="42"><div style="display: flex; height: 17px; line-height: 17px"><sc-for list="{{ line.segs }}" as="seg"><span style="{{ seg.st }}">{{ seg.t }}</span></sc-for></div></sc-for>
+    </div>
+    <ul style="margin: 0; padding-left: 20px; font-size: 15px; line-height: 1.6; color: #9CA3AF; display: flex; flex-direction: column; gap: 4px">
+      <li><code>o</code> flips the order. The count line names the order in force and how to change it, worded the way the headless note is (<code>newest first, o best match first</code>). <code>WHEN</code> reads top to bottom again.</li>
+      <li>This match is near the start (turn 8 of 44). The track shows that at a glance, and <code>HOW IT ENDED</code> is still below it, so you see where it matched and how it ended together.</li>
+      <li>Japanese is cut and wrapped by display width, and a line never begins with 、。？ or 」.</li>
+      <li><code>y</code> copies <code>kizuna claude-max resume &lt;id&gt;</code>. The status line comes out of the box's height, as every full-height box does.</li>
+    </ul>
+  </div>
+
+  <div id="2c" style="display: flex; flex-direction: column; gap: 16px; width: 1170px">
+    <div style="display: flex; align-items: center; gap: 12px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; background: #C4B5FD; color: #0B0B0E; padding: 3px 8px; border-radius: 4px">2c</span><span style="font-size: 18px; font-weight: 600">Typing, results pending</span><span style="font-size: 14px; color: #8B8B95">keys in the field · the query moved on</span></div>
+    <div style="background: #0B0B0E; border: 1px solid #1F1F24; border-radius: 8px; font-family: 'JetBrains Mono', 'Noto Sans JP', monospace; font-size: 13px; width: 150ch; overflow: hidden">
+      <sc-for list="{{ f2c }}" as="line" hint-placeholder-count="42"><div style="display: flex; height: 17px; line-height: 17px"><sc-for list="{{ line.segs }}" as="seg"><span style="{{ seg.st }}">{{ seg.t }}</span></sc-for></div></sc-for>
+    </div>
+    <ul style="margin: 0; padding-left: 20px; font-size: 15px; line-height: 1.6; color: #9CA3AF; display: flex; flex-direction: column; gap: 4px">
+      <li>The caret means the field has the keys. On the right, the field says what it searches, so a word that turns up nothing is never blamed on the titles filter.</li>
+      <li>While you type, the last word is matched as a prefix (<code>bu</code> → <code>bu*</code>), so results arrive as you type. The count line says so.</li>
+      <li>The previous results stay in place but go dim, lose their marks and their cursor, until the new ones land. The pane says <code>searching…</code>. Nothing old is shown as if it were the answer.</li>
+      <li>The footer teaches the syntax only while the field has the keys. Plain words are always enough.</li>
+    </ul>
+  </div>
+
+  <div id="2d" style="display: flex; flex-direction: column; gap: 16px; width: 1170px">
+    <div style="display: flex; align-items: center; gap: 12px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; background: #C4B5FD; color: #0B0B0E; padding: 3px 8px; border-radius: 4px">2d</span><span style="font-size: 18px; font-weight: 600">Index still filling, one source failed</span><span style="font-size: 14px; color: #8B8B95">first run · 612 of 965</span></div>
+    <div style="background: #0B0B0E; border: 1px solid #1F1F24; border-radius: 8px; font-family: 'JetBrains Mono', 'Noto Sans JP', monospace; font-size: 13px; width: 150ch; overflow: hidden">
+      <sc-for list="{{ f2d }}" as="line" hint-placeholder-count="42"><div style="display: flex; height: 17px; line-height: 17px"><sc-for list="{{ line.segs }}" as="seg"><span style="{{ seg.st }}">{{ seg.t }}</span></sc-for></div></sc-for>
+    </div>
+    <ul style="margin: 0; padding-left: 20px; font-size: 15px; line-height: 1.6; color: #9CA3AF; display: flex; flex-direction: column; gap: 4px">
+      <li>Progress sits under the list, where the headless count is, as a cyan bar with a figure. The count above it says <code>so far</code>.</li>
+      <li>The backfill reads newest first, so the oldest conversations are the ones missing, and the progress line says so.</li>
+      <li>A source that could not be read gets its own <code>✗</code> line in warning yellow, with how many conversations it holds. Its absence is never read as “no match there”.</li>
+      <li>The pane reads the transcript off the keypress, as it does today, and says <code>reading the transcript…</code> until the read lands.</li>
+    </ul>
+  </div>
+
+  <div id="2e" style="display: flex; flex-direction: column; gap: 16px; width: 1170px">
+    <div style="display: flex; align-items: center; gap: 12px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; background: #C4B5FD; color: #0B0B0E; padding: 3px 8px; border-radius: 4px">2e</span><span style="font-size: 18px; font-weight: 600">No results while the index is still filling</span><span style="font-size: 14px; color: #8B8B95">“not yet”, never “never said”</span></div>
+    <div style="background: #0B0B0E; border: 1px solid #1F1F24; border-radius: 8px; font-family: 'JetBrains Mono', 'Noto Sans JP', monospace; font-size: 13px; width: 150ch; overflow: hidden">
+      <sc-for list="{{ f2e }}" as="line" hint-placeholder-count="42"><div style="display: flex; height: 17px; line-height: 17px"><sc-for list="{{ line.segs }}" as="seg"><span style="{{ seg.st }}">{{ seg.t }}</span></sc-for></div></sc-for>
+    </div>
+    <ul style="margin: 0; padding-left: 20px; font-size: 15px; line-height: 1.6; color: #9CA3AF; display: flex; flex-direction: column; gap: 4px">
+      <li>Three things say “not yet”: <code>yet</code> on the empty line, the progress bar, and <code>so far</code> on every count.</li>
+      <li>With no hit to read out, the pane shows <code>HOW THE QUERY WAS READ</code>: the words as they were combined (AND), and how many conversations hold each one. When one word is in none of them, that usually explains the empty list. This costs one <code>fts5vocab</code> lookup per word.</li>
+    </ul>
+  </div>
+
+  <div id="2f" style="display: flex; flex-direction: column; gap: 16px; width: 1170px">
+    <div style="display: flex; align-items: center; gap: 12px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; background: #C4B5FD; color: #0B0B0E; padding: 3px 8px; border-radius: 4px">2f</span><span style="font-size: 18px; font-weight: 600">No results, index complete, this account</span><span style="font-size: 14px; color: #8B8B95">a typo, scoped to claude-personal</span></div>
+    <div style="background: #0B0B0E; border: 1px solid #1F1F24; border-radius: 8px; font-family: 'JetBrains Mono', 'Noto Sans JP', monospace; font-size: 13px; width: 150ch; overflow: hidden">
+      <sc-for list="{{ f2f }}" as="line" hint-placeholder-count="42"><div style="display: flex; height: 17px; line-height: 17px"><sc-for list="{{ line.segs }}" as="seg"><span style="{{ seg.st }}">{{ seg.t }}</span></sc-for></div></sc-for>
+    </div>
+    <ul style="margin: 0; padding-left: 20px; font-size: 15px; line-height: 1.6; color: #9CA3AF; display: flex; flex-direction: column; gap: 4px">
+      <li>The empty state says what was searched and how much of it (all 212 of this account's conversations), then offers the next two places to look: <code>a</code> for every account, <code>ctrl+f</code> for titles.</li>
+      <li>A query FTS5 cannot parse is searched as a phrase, and the READ AS line says so: <code>searched as the phrase "…"</code>. That case is not drawn here.</li>
+    </ul>
+  </div>
+
+  <div id="2g" style="display: flex; flex-direction: column; gap: 16px; width: 1170px">
+    <div style="display: flex; align-items: center; gap: 12px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; background: #C4B5FD; color: #0B0B0E; padding: 3px 8px; border-radius: 4px">2g</span><span style="font-size: 18px; font-weight: 600">The narrow fold</span><span style="font-size: 14px; color: #8B8B95">84 × 40 frame · 78-wide box · 72 inside</span></div>
+    <div style="background: #0B0B0E; border: 1px solid #1F1F24; border-radius: 8px; font-family: 'JetBrains Mono', 'Noto Sans JP', monospace; font-size: 13px; width: 88ch; overflow: hidden">
+      <sc-for list="{{ f2g }}" as="line" hint-placeholder-count="42"><div style="display: flex; height: 17px; line-height: 17px"><sc-for list="{{ line.segs }}" as="seg"><span style="{{ seg.st }}">{{ seg.t }}</span></sc-for></div></sc-for>
+    </div>
+    <ul style="margin: 0; padding-left: 20px; max-width: 88ch; font-size: 15px; line-height: 1.6; color: #9CA3AF; display: flex; flex-direction: column; gap: 4px">
+      <li>Below 83 columns inside the box, the pane folds away as it does today. A hit keeps its snippet line, because with no pane that line is the only evidence of the match.</li>
+      <li>Each toggle shows only its current chip, and the footer drops keys from the end (<code>renderKeysFit</code>).</li>
+      <li><code>n</code> and <code>N</code> are left out here, since there is no pane for them to move.</li>
+    </ul>
+  </div>
+
+  <div id="2h" style="display: flex; flex-direction: column; gap: 16px; width: 1170px">
+    <div style="display: flex; align-items: center; gap: 12px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; background: #3F3F46; color: #E5E7EB; padding: 3px 8px; border-radius: 4px">2h</span><span style="font-size: 18px; font-weight: 600">For comparison: the titles filter, same words</span><span style="font-size: 14px; color: #8B8B95">today's / with the mode pair</span></div>
+    <div style="background: #0B0B0E; border: 1px solid #1F1F24; border-radius: 8px; font-family: 'JetBrains Mono', 'Noto Sans JP', monospace; font-size: 13px; width: 150ch; overflow: hidden">
+      <sc-for list="{{ f2h }}" as="line" hint-placeholder-count="42"><div style="display: flex; height: 17px; line-height: 17px"><sc-for list="{{ line.segs }}" as="seg"><span style="{{ seg.st }}">{{ seg.t }}</span></sc-for></div></sc-for>
+    </div>
+    <ul style="margin: 0; padding-left: 20px; font-size: 15px; line-height: 1.6; color: #9CA3AF; display: flex; flex-direction: column; gap: 4px">
+      <li>This is today's picker with three changes. The mode pair joins the heading. The <code>/</code> corner moves to its own line under the heading, as the handoff picker already draws it. The empty line names what it searched (<code>No title, folder or id matches</code>) and points to the other search.</li>
+      <li>Put side by side with 2f, an empty result can't be mistaken for the other mode's: the field's shape, the chip and the sentence all differ.</li>
+    </ul>
+  </div>
+
+</section>
+
+<section style="padding: 48px 72px 96px; display: flex; flex-direction: column; gap: 20px; border-top: 1px solid #1F1F24">
+  <div style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #8B8B95; letter-spacing: 0.08em">SAMPLE DATA</div>
+  <h2 style="margin: 0; font-size: 24px; font-weight: 600">What the frames are drawn from</h2>
+  <p style="margin: 0; max-width: 1400px; font-size: 15px; line-height: 1.6; color: #9CA3AF">The query is <code>sqlite busy</code>. Now is Tue 13 Oct 2026 14:05. The index holds 965 conversations, 14 of them headless and hidden. The ranked order is below, and newest first runs 2, 3, 7, 1, 4, 5, 6, 8, 9. In 2d the backfill has reached 612 of 965, opencode-go's store fails with 41 conversations unread, and hits 4, 6, 8 and 9 are not in yet. In 2e the query is <code>kubernetes ingress</code> (kubernetes is in 3 conversations so far, ingress in none). In 2f it is <code>sqlite busyy</code> on claude-personal (212 conversations, sqlite in 7, busyy in none). Text between square brackets is a matched token. The pane contexts are in <code>CTX1</code> (hit 1, match turns 9 14 61 140 188 of 212, opened on 14) and <code>CTX3</code> (hit 3, turns 8 21 22 40 of 44, opened on 8) in this file's script.</p>
+  <div style="font-family: 'JetBrains Mono', 'Noto Sans JP', monospace; font-size: 13px; line-height: 1.7; display: grid; grid-template-columns: 32px 70px 190px 110px 300px 170px 70px 60px 1fr 330px; gap: 0 16px; color: #9CA3AF; max-width: 2416px">
+    <span style="color: #8B8B95">#</span><span style="color: #8B8B95">WHEN</span><span style="color: #8B8B95">ACCOUNT</span><span style="color: #8B8B95">PROVIDER</span><span style="color: #8B8B95">TITLE</span><span style="color: #8B8B95">FOLDER</span><span style="color: #8B8B95">MATCHES</span><span style="color: #8B8B95">SAID BY</span><span style="color: #8B8B95">SNIPPET</span><span style="color: #8B8B95">ID</span>
+    <sc-for list="{{ sample }}" as="r" hint-placeholder-count="9"><span>{{ r.rank }}</span><span>{{ r.when }}</span><span style="color: #E5E7EB">{{ r.acct }}</span><span>{{ r.p }}</span><span style="color: #E5E7EB">{{ r.title }}</span><span>{{ r.folder }}</span><span>{{ r.n }}</span><span>{{ r.who }}</span><span>{{ r.snip }}</span><span>{{ r.id }}</span></sc-for>
+  </div>
+</section>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":2560,"height":5200}}'>
+const C = {accent:'#C4B5FD',text:'#E5E7EB',muted:'#9CA3AF',faint:'#52525B',ok:'#6EE7B7',info:'#67E8F9',warn:'#FCD34D',danger:'#FCA5A5',rule:'#1F1F24',dim:'#3F3F46',sel:'#181826',track:'#26262D',ghost:'#2A2A31',ghostBg:'#101015',field:'#121217',mFg:'#FDE68A',mBg:'#3A3014'};
+const PV = {codex:'#67E8F9',claude:'#FDBA74',antigravity:'#8AB4F8',opencode:'#D8B4FE',deepseek:'#93C5FD'};
+
+// ---- cells: one per terminal column; a wide (CJK) character is a head cell plus a continuation
+const WIDE = /[ᄀ-ᅟ⺀-〾ぁ-㏿㐀-䶿一-鿿가-힣豈-﫿︰-﹏＀-｠￠-￦]/;
+const cw = ch => WIDE.test(ch) ? 2 : 1;
+const dw = t => Array.from(String(t)).reduce((n, ch) => n + cw(ch), 0);
+const s = (t, fg, o = {}) => { const out = []; for (const ch of Array.from(String(t))) { const c = {ch, fg, bg: o.bg, b: !!o.b, rev: !!o.rev}; if (cw(ch) === 2) { c.wide = 1; out.push(c, {ch: '', fg, bg: o.bg, cont: 1}); } else out.push(c); } return out; };
+const L = (...p) => [].concat(...p);
+const sp = (n, bg) => s(' '.repeat(Math.max(n, 0)), undefined, {bg});
+const fixEdge = line => { if (line.length && line[line.length - 1].wide) line[line.length - 1] = {ch: ' ', bg: line[line.length - 1].bg}; if (line.length && line[0].cont) line[0] = {ch: ' ', bg: line[0].bg}; return line; };
+const padTo = (line, w, bg) => { line = fixEdge(line.slice(0, w)); return line.length < w ? L(line, sp(w - line.length, bg)) : line; };
+const spread = (l, r, w, bg) => L(l, sp(Math.max(w - l.length - r.length, 1), bg), r);
+const tr = (t, w) => { if (dw(t) <= w) return t; let out = '', n = 0; for (const ch of Array.from(t)) { const k = cw(ch); if (n + k > w - 1) break; out += ch; n += k; } return out + '…'; };
+const pd = (t, w) => { const n = dw(t); return n >= w ? t : t + ' '.repeat(w - n); };
+const pl = (t, w) => { const n = dw(t); return n >= w ? t : ' '.repeat(w - n) + t; };
+const withBg = (line, bg) => line.map(c => c.bg ? c : {...c, bg});
+const title = t => s(t.toUpperCase(), C.accent, {b: 1});
+const label = t => s(t, C.faint);
+const keyRun = (entries, bg) => { const out = []; entries.forEach((e, i) => { if (i) out.push(...sp(3, bg)); out.push(...s(e[0], C.accent, {b: 1, bg}), ...sp(1, bg), ...s(e[1], C.muted, {bg})); }); return out; };
+const fitKeys = (entries, w) => { while (entries.length > 1 && keyRun(entries).length > w) entries = entries.slice(0, -1); return keyRun(entries); };
+const footer = (w, cancel, entries, tail) => { const r = keyRun([cancel]); let left = fitKeys(entries, w - r.length - 2); if (tail && left.length + 3 + tail.length <= w - r.length - 2) left = L(left, sp(3), tail); return spread(left, r, w); };
+const cutCells = (cells, w, bg, fg = C.muted) => cells.length <= w ? cells : L(fixEdge(cells.slice(0, w - 1)), s('…', fg, {bg}));
+// [word] marks a matched token
+const marked = (text, fg, o = {}) => L(...text.split(/(\[[^\]]*\])/).filter(Boolean).map(p => p[0] === '[' ? (o.plain ? s(p.slice(1, -1), fg, {bg: o.bg}) : s(p.slice(1, -1), C.mFg, {bg: C.mBg, b: 1})) : s(p, fg, {bg: o.bg})));
+const plain = t => t.replace(/[\[\]]/g, '');
+const NOSTART = '、。？！」』）・';
+function wrapCells(cells, width) {
+  const lines = []; let line = [], brk = -1;
+  const trimEnd = l => { while (l.length && l[l.length - 1].ch === ' ') l.pop(); return l; };
+  const rescan = () => { brk = -1; line.forEach((x, j) => { if (x.ch === ' ') brk = j + 1; else if (x.wide && j > 0 && !NOSTART.includes(x.ch)) brk = j; }); };
+  for (const c of cells) {
+    if (c.cont) { line.push(c); continue; }
+    if (!line.length && c.ch === ' ') continue;
+    const need = c.wide ? 2 : 1;
+    if (line.length + need > width) {
+      if (c.ch === ' ') { lines.push(trimEnd(line)); line = []; brk = -1; continue; }
+      if (brk > 0) { const rest = line.slice(brk); lines.push(trimEnd(line.slice(0, brk))); line = rest; while (line.length && line[0].ch === ' ') line.shift(); }
+      else { lines.push(line); line = []; }
+      rescan();
+    }
+    if (c.wide && line.length && !NOSTART.includes(c.ch)) brk = line.length;
+    line.push(c);
+    if (c.ch === ' ') brk = line.length;
+  }
+  if (line.length) lines.push(trimEnd(line));
+  return lines;
+}
+function capLines(lines, cap, w, fg) {
+  if (lines.length <= cap) return lines;
+  lines = lines.slice(0, cap);
+  let last = lines[cap - 1];
+  if (last.length >= w) last = fixEdge(last.slice(0, w - 1));
+  lines[cap - 1] = L(last, s('…', fg));
+  return lines;
+}
+const joinPanes = (left, right, lw, rw, rows) => { const out = []; for (let r = 0; r < rows; r++) out.push(L(padTo(left[r] || [], lw), sp(1), s('│', C.rule), sp(1), padTo(right[r] || [], rw))); return out; };
+const fill = (lines, n) => { lines = lines.slice(0, n); while (lines.length < n) lines.push([]); return lines; };
+
+// ---- the board behind the box (ghosted)
+const PROFILES = [['claude-max','claude',91,78],['codex-personal','codex',82,64],['codex-work','codex',12,41],['claude-personal','claude',7,22],['antigravity-personal','antigravity'],['deepseek','deepseek'],['opencode-go','opencode']];
+function board(W, H) {
+  const out = [];
+  out.push(spread(L(s(' kizuna ', '#FFFFFF', {bg: '#7C3AED', b: 1}), sp(2), label('most headroom '), s('claude-max', PV.claude, {b: 1}), sp(1), s('78%', C.ok)), s('~/projects/kizuna', C.muted), W));
+  out.push(s('─'.repeat(W), C.rule));
+  out.push(L(sp(2), s(pd('ACCOUNT', 35), C.faint), s('5-HOUR LEFT', C.faint)), []);
+  PROFILES.forEach(([n, p, a, b], i) => { const bg = i === 3 ? C.sel : undefined; out.push(padTo(L(i === 3 ? s('▌ ', C.accent, {bg}) : sp(2, bg), s(pd(n, 22), C.text, {bg}), s(pd(p, 13), PV[p], {bg}), a !== undefined ? s('━'.repeat(Math.floor(a * 32 / 100)), C.ok, {bg}) : s('· not reported', C.dim, {bg})), W, bg)); });
+  while (out.length < H - 3) out.push([]);
+  out.push(L(sp(2), s('✓ launched claude-personal in ~/projects/kizuna', C.muted)));
+  out.push(s('─'.repeat(W), C.rule));
+  out.push(L(sp(2), spread(keyRun([['↵','run'],['R','resume'],['H','hand off'],['p','args'],['/','find']]), keyRun([['space','all actions']]), W - 4)));
+  return out.map(l => padTo(l, W));
+}
+const ghost = lines => lines.map(l => { const t = l.some(c => c.bg === C.sel); return l.map(c => ({ch: c.ch, cont: c.cont, wide: c.wide, fg: C.ghost, bg: t ? C.ghostBg : undefined, b: false})); });
+function box(content, width) {
+  const inner = width - 6;
+  return [s('╭' + '─'.repeat(width - 2) + '╮', C.accent),
+    ...content.map(l => L(s('│', C.accent), sp(2), padTo(l, inner), sp(2), s('│', C.accent))),
+    s('╰' + '─'.repeat(width - 2) + '╯', C.accent)];
+}
+function over(bgLines, bx, W, H) {
+  const w = bx[0].length, h = bx.length;
+  let top = Math.max(Math.floor((H - h) / 3), 1); if (top + h > H) top = Math.max(H - h, 0);
+  const left = Math.max(Math.floor((W - w) / 2), 0);
+  const out = bgLines.map(l => l.slice());
+  bx.forEach((l, i) => { const r = top + i; if (r < H) out[r] = L(fixEdge(out[r].slice(0, left)), l, fixEdge(out[r].slice(left + w))); });
+  return out;
+}
+const frame = (lines, W) => [sp(W + 4), ...lines.map(l => L(sp(2), padTo(l, W), sp(2))), sp(W + 4)];
+function encode(lines) {
+  return lines.map(line => {
+    const segs = []; let cur = null;
+    line.forEach(c => {
+      if (c.cont) return;
+      const cls = c.wide ? 'w2' : c.ch.charCodeAt(0) <= 126 ? 'a' : /[─━│╭╮╰╯▌┃]/.test(c.ch) ? 'l' : 'w';
+      const k = (c.fg || '') + '|' + (c.bg || '') + '|' + c.b + '|' + c.rev + '|' + cls;
+      if (cur && cur.k === k && (cls === 'a' || cls === 'l')) { cur.t += c.ch; cur.n++; }
+      else { cur = {k, t: c.ch, n: 1, c, cls}; segs.push(cur); }
+    });
+    return {segs: segs.map(g => ({t: g.t, st: {display: 'inline-block', flex: 'none', width: (g.cls === 'l' ? g.n / 1.2 : g.cls === 'w2' ? 2 : g.n) + 'ch', whiteSpace: 'pre', overflow: 'visible',
+      marginRight: g.cls === 'l' ? (g.n - g.n / 1.2) + 'ch' : 0,
+      position: g.cls === 'a' || g.cls === 'l' ? 'static' : 'relative', zIndex: g.cls === 'a' || g.cls === 'l' ? 'auto' : 1,
+      textAlign: g.cls === 'a' || g.cls === 'l' ? 'left' : 'center', transform: g.cls === 'l' ? 'scaleX(1.2)' : 'none', transformOrigin: 'left center',
+      color: g.c.rev ? '#0B0B0E' : (g.c.fg || C.text), background: g.c.rev ? C.text : (g.c.bg || 'transparent'), fontWeight: g.c.b ? 700 : 400}}))};
+  });
+}
+const screen = (content, bw, W = 146, H = 40) => encode(frame(over(ghost(board(W, H)), box(content, bw), W, H), W));
+
+// ---- sample data
+const HITS = [
+  {when:'yest.', acct:'claude-personal', p:'claude', title:'Investigate SQLITE_BUSY on resume', folder:'~/projects/kizuna', id:'3c9e0d12-7b44-4f0e-9a51-2d6c0b1e8f37', n:5, to:'codex-work', who:'you', snip:'…so resume fails with [SQLITE]_[BUSY] only while opencode is still running in the other pane?'},
+  {when:'14:02', acct:'codex-work', p:'codex', title:'Investigate SQLITE_BUSY on resume', folder:'~/projects/kizuna', id:'019a2f4e-8c1d-7e55-b0a3-5f6e2d9c4a10', n:3, who:'agent', snip:'…set [busy]_timeout so a second [sqlite] reader waits for the lock…'},
+  {when:'11:37', acct:'claude-max', p:'claude', title:'セッション検索のインデックス設計', folder:'~/projects/kizuna', id:'7a0c5e21-93bd-4c6a-8f12-e4d07b3a9c55', n:4, who:'you', snip:'backfill 中に [SQLITE]_[BUSY] が出たら、少し待ってから再試行する？'},
+  {when:'9 Oct', acct:'opencode-go', p:'opencode', title:'OpenCode store reader', folder:'~/projects/kizuna', id:'ses_4f2a91c0e8ffYq3TzR7wKd2m', n:2, who:'agent', snip:'…a read-only [sqlite] open still gets [busy] while opencode checkpoints the WAL…'},
+  {when:'2 Oct', acct:'codex-personal', p:'codex', title:'Billing webhooks retry queue', folder:'~/work/billing', id:'0199c7d2-4be0-7a13-9e6f-21c8b5d0f7a4', n:1, who:'agent', snip:'…writes go [busy] because the worker and the API share one [sqlite] file…'},
+  {when:'28 Sep', acct:'antigravity-personal', p:'antigravity', title:'Wave runner: parallel workers', folder:'~/projects/waves', id:'b18e6f03-2d7a-4e91-a5c4-9f0d3e7b2a68', n:1, who:'you', snip:'workers die with [busy] errors half the time, is it the [sqlite] file?'},
+  {when:'11:37', acct:'claude-personal', p:'claude', title:'Handoff brief: trim injected blocks', folder:'~/projects/kizuna', id:'9f13aa27-01c2-4d8e-b6f5-3a7c2e9d0b14', n:1, who:'agent', snip:'…the brief reader retries on [busy], like the [sqlite] index does…'},
+  {when:'21 Sep', acct:'deepseek', p:'deepseek', title:'Notes sync between laptops', folder:'~/notes', id:'d4c2b9e7-6a1f-4083-bc5e-7f2a0d9e3c61', n:1, who:'you', snip:'is syncthing why the [sqlite] file says [busy] sometimes?'},
+  {when:'15 Sep', acct:'claude-max', p:'claude', title:'', folder:'~/scratch', id:'e5a7f1c3-08bd-4f26-9d4a-6b3e2c1f8a07', n:1, who:'agent', snip:'…[SQLITE]_[BUSY] is result code 5, and retrying it blindly hides the cause…'},
+];
+const NEWEST = [1, 2, 6, 0, 3, 4, 5, 7, 8].map(i => HITS[i]);
+const CTX1 = {at: [9, 14, 61, 140, 188], total: 212, cur: 1, earlier: true, more: true,
+  turns: [
+    {who: 'agent', n: 13, text: 'The resume path opens the OpenCode store with mode=ro, but OpenCode is mid-write in the other pane, and a read-only open still has to wait for its write lock to clear.'},
+    {who: 'you', n: 14, match: 1, text: 'so resume fails with [SQLITE]_[BUSY] only while opencode is still running in the other pane? can we wait for the lock instead of failing straight away'},
+    {who: 'agent', n: 15, text: 'Yes. A timeout on the connection makes the reader wait for the lock rather than return at once. Five seconds covers a checkpoint; past that it is fair to report it.'},
+  ],
+  end: {at: 'yest. 20:00', turns: [{who: 'you', text: 'good, ship it, and give the handoff reader the same timeout'}, {who: 'agent', text: 'Done. Both readers wait up to 5 s before reporting the store as locked; go test ./... passes.'}]}};
+const CTX3 = {at: [8, 21, 22, 40], total: 44, cur: 0, earlier: true, more: true,
+  turns: [
+    {who: 'agent', n: 7, text: 'バックフィルは新しい会話から順に読み込みます。検索の対象は、その時点までに読み込んだ分だけです。'},
+    {who: 'you', n: 8, match: 1, text: 'backfill 中に [SQLITE]_[BUSY] が出たら、少し待ってから再試行する？それともその会話は飛ばす？'},
+    {who: 'agent', n: 9, text: '待ってから再試行します。飛ばしてしまうと「まだ読んでいない」と「何も言っていない」の区別がつかなくなるので。'},
+  ],
+  end: {at: '11:37', turns: [{who: 'you', text: 'それでいこう。進捗の表示も入れて'}, {who: 'agent', text: '入れました。「965 件中 612 件を検索済み」と出ます。'}]}};
+
+// ---- the box's parts
+const chipPair = (a, b, onFirst, key, narrow) => {
+  const on = t => s(' ' + t + ' ', C.accent, {bg: C.sel, b: 1});
+  const k = L(sp(2), s(key, C.accent, {b: 1}));
+  if (narrow) return L(on(onFirst ? a : b), k);
+  return onFirst ? L(on(a), s('  ' + b, C.faint), k) : L(s(a + '  ', C.faint), on(b), k);
+};
+const heading = (w, o) => spread(L(title('resume'), sp(3), chipPair('this account', 'all accounts', !o.all, 'a', o.narrow)), chipPair('titles', 'what was said', o.mode === 'titles', 'ctrl+f', o.narrow), w);
+function queryField(w, q, focused) {
+  const bg = C.field;
+  let l = L(s(' › ', C.accent, {bg, b: 1}), s(q, C.text, {bg}));
+  if (focused) l = L(l, s(' ', C.text, {rev: 1}));
+  const right = focused ? s('searches what was said ', C.faint, {bg}) : L(s('searches what was said   ', C.faint, {bg}), s('/', C.accent, {bg, b: 1}), s(' edit ', C.muted, {bg}));
+  return L(padTo(l, w - right.length, bg), right);
+}
+const listHeader = (w, all) => { let h = '  ' + pd('WHEN', 7) + (all ? pd('ACCOUNT', 14) : ''); h = pd(h + 'CONVERSATION', w - 7) + 'MATCHES'; return s(h, C.faint); };
+function hitRow(h, w, sel, all, stale) {
+  const bg = sel ? C.sel : undefined, fg = c => stale ? C.dim : c;
+  let a = L(sel ? s('▌ ', C.accent, {bg}) : sp(2, bg), s(pd(h.when, 7), C.dim, {bg}));
+  if (all) a = L(a, s(pd(tr(h.acct, 13), 14), fg(PV[h.p]), {bg}));
+  const cell = w - a.length - 7, marker = h.to ? ' → ' + h.to : '';
+  const shown = tr(h.title || 'untitled session', Math.max(cell - dw(marker) - 2, 6));
+  a = L(a, s(shown, fg(!h.title ? C.faint : sel ? C.accent : C.text), {bg, b: sel}), s(marker, fg(C.ok), {bg}));
+  a = L(padTo(a, w - 7, bg), s(pl(String(h.n), 7), fg(C.muted), {bg}));
+  const spk = h.who === 'you' ? s('you', fg(C.accent), {bg, b: !stale}) : s(h.p, fg(PV[h.p]), {bg});
+  let b = L(sp(9, bg), spk, sp(2, bg));
+  b = L(b, cutCells(marked('“' + h.snip + '”', fg(C.muted), {bg, plain: stale}), w - b.length, bg, fg(C.muted)));
+  return [padTo(a, w, bg), padTo(b, w, bg)];
+}
+function hitList(w, rows, o) {
+  const out = [listHeader(w, o.all), []], room = rows - 3 - o.tail.length, body = [];
+  o.hits.forEach((h, i) => body.push(...hitRow(h, w, i === o.cur, o.all, o.stale)));
+  out.push(...body.slice(0, room - (room % 2)), [], ...o.tail);
+  return out;
+}
+const progress = (done, total, bar) => { const f = Math.round(done / total * bar); return L(s('━'.repeat(f), C.info), s('━'.repeat(bar - f), C.track), s('  searched ' + done + ' of ' + total + ', newest first', C.info)); };
+function paneHeader(h, w) {
+  return [label('PREVIEW'), s(tr(h.title || 'untitled session', w), h.title ? C.text : C.faint), s(tr(h.when + ' · ' + h.folder, w), C.dim), s(tr(h.acct + ' · id ' + h.id, w), C.dim), []];
+}
+function hitPane(h, ctx, w, rows) {
+  const out = paneHeader(h, w);
+  const left = L(label('MATCH '), s((ctx.cur + 1) + ' OF ' + h.n, C.text, {b: 1}), sp(3), s('n', C.accent, {b: 1}), sp(1), s('N', C.accent, {b: 1}));
+  const right = s('turn ' + ctx.at[ctx.cur] + ' of ' + ctx.total, C.dim);
+  const tw = w - left.length - right.length - 4;
+  const track = Array.from({length: tw}, () => ({ch: '━', fg: C.track}));
+  ctx.at.forEach((t, i) => { const x = Math.round((t - 1) / (ctx.total - 1) * (tw - 1)); track[x] = {ch: '┃', fg: i === ctx.cur ? C.accent : C.muted, b: i === ctx.cur}; });
+  out.push(L(left, sp(2), track, sp(2), right), []);
+  if (ctx.earlier) out.push(s('…', C.dim));
+  ctx.turns.forEach((t, i) => {
+    if (i) out.push([]);
+    const spk = t.who === 'you' ? s('you', C.accent, {b: 1}) : s(h.p, PV[h.p]);
+    out.push(spread(spk, s('turn ' + t.n, t.match ? C.muted : C.dim), w));
+    const fg = t.who === 'you' ? C.text : t.match ? C.muted : C.faint;
+    out.push(...capLines(wrapCells(marked(t.text, fg), w), t.match ? 6 : 2, w, fg));
+  });
+  if (ctx.more) out.push(s('…', C.dim));
+  if (ctx.end) {
+    out.push([], spread(label('HOW IT ENDED'), s(ctx.end.at, C.dim), w));
+    ctx.end.turns.forEach(t => {
+      const spk = t.who === 'you' ? s(pd('you', 9), C.accent, {b: 1}) : s(pd(h.p, 9), PV[h.p]);
+      out.push(L(spk, cutCells(s(t.text, t.who === 'you' ? C.text : C.faint), w - 9, undefined, C.faint)));
+    });
+  }
+  return fill(out, rows);
+}
+function queryPane(w, q) {
+  const out = [label('HOW THE QUERY WAS READ'), []];
+  out.push(L(label(pd('read as', 14)), ...q.terms.map((t, i) => L(i ? s('  AND  ', C.faint) : [], s(t, C.text)))), []);
+  q.counts.forEach(([t, n, warn]) => out.push(L(s(pd(t, 14), C.muted), s(n, warn ? C.warn : C.text))));
+  out.push([]);
+  q.notes.forEach(n => out.push(s(n, C.dim)));
+  return out;
+}
+// the search-mode box: heading, field, blank, body, blank, footer (+ status)
+function searchBox(o) {
+  const w = o.w, lines = [heading(w, o), [], queryField(w, o.query, o.focus === 'field'), []];
+  const bodyRows = 30 - 2 - (o.status ? 2 : 0);
+  if (w >= 83) {
+    const lw = Math.min(Math.max(Math.floor((w - 3) * 48 / 100), 46), w - 3 - 34, 62), rw = w - 3 - lw;
+    lines.push(...joinPanes(o.list(lw, bodyRows), o.pane(rw, bodyRows), lw, rw, bodyRows));
+  } else lines.push(...fill(o.list(w, bodyRows), bodyRows));
+  lines.push([], o.footer(w));
+  if (o.status) lines.push([], o.status);
+  return lines;
+}
+const RESULT_KEYS = folder => [['↑↓','choose'],['↵','resume in ' + folder],['H','hand off'],['n N','next match'],['y','copy command']];
+const DONE_TAIL = order => [s('9 conversations · ' + (order === 'new' ? 'newest first, o best match first' : 'best match first, o newest first'), C.dim), s('searched all 965 · 14 headless hidden, . shows', C.dim)];
+
+// 2a — results, best match first
+const c2a = searchBox({w: 134, all: true, mode: 'said', query: 'sqlite busy', focus: 'list',
+  list: (lw, rows) => hitList(lw, rows, {hits: HITS, cur: 0, all: true, tail: DONE_TAIL('match')}),
+  pane: (rw, rows) => hitPane(HITS[0], CTX1, rw, rows),
+  footer: w => footer(w, ['esc', 'close'], RESULT_KEYS('~/projects/kizuna'))});
+
+// 2b — newest first, the Japanese hit, command copied
+const c2b = searchBox({w: 134, all: true, mode: 'said', query: 'sqlite busy', focus: 'list',
+  status: L(s('✓ ', C.ok), s('copied  ', C.muted), s('kizuna claude-max resume 7a0c5e21-93bd-4c6a-8f12-e4d07b3a9c55', C.text)),
+  list: (lw, rows) => hitList(lw, rows, {hits: NEWEST, cur: 1, all: true, tail: DONE_TAIL('new')}),
+  pane: (rw, rows) => hitPane(HITS[2], CTX3, rw, rows),
+  footer: w => footer(w, ['esc', 'close'], RESULT_KEYS('~/projects/kizuna'))});
+
+// 2c — typing, the previous results gone stale
+const c2c = searchBox({w: 134, all: true, mode: 'said', query: 'sqlite bu', focus: 'field',
+  list: (lw, rows) => hitList(lw, rows, {hits: HITS, cur: -1, all: true, stale: true, tail: [L(s('searching  ', C.muted), s('sqlite', C.text), s('  AND  ', C.faint), s('bu*', C.text), s('  …', C.muted)), s('the word being typed is matched as a prefix', C.dim)]}),
+  pane: (rw, rows) => [label('PREVIEW'), [], s('searching…', C.faint)],
+  footer: w => footer(w, ['esc', 'close'], [['↓ ↵', 'to the results']], s('"a phrase"   prefix*   OR   NOT     plain words all have to appear', C.faint))});
+
+// 2d — index filling, opencode-go unreadable, pane still reading
+const PART = [HITS[0], HITS[1], HITS[2], HITS[4], HITS[6]];
+const c2d = searchBox({w: 134, all: true, mode: 'said', query: 'sqlite busy', focus: 'list',
+  list: (lw, rows) => hitList(lw, rows, {hits: PART, cur: 1, all: true, tail: [
+    s('5 conversations so far · best match first, o newest first', C.dim),
+    progress(612, 965, 22),
+    L(s('✗ ', C.warn), s('opencode-go: its store could not be read, 41 unread', C.warn)),
+    s('14 headless hidden, . shows', C.dim)]}),
+  pane: (rw, rows) => L(paneHeader(HITS[1], rw), [s('reading the transcript…', C.faint)]),
+  footer: w => footer(w, ['esc', 'close'], RESULT_KEYS('~/projects/kizuna'))});
+
+// 2e — nothing yet, still reading
+const c2e = searchBox({w: 134, all: true, mode: 'said', query: 'kubernetes ingress', focus: 'list',
+  list: (lw, rows) => [listHeader(lw, true), [],
+    L(sp(2), s('Nothing said matches ', C.muted), s('kubernetes ingress', C.text), s(' yet', C.muted)), [],
+    L(sp(2), s('only 612 of 965 conversations are searched so far;', C.dim)),
+    L(sp(2), s('the older 353 are still being read, so this can', C.dim)),
+    L(sp(2), s('still fill in', C.dim)), [],
+    L(sp(2), progress(612, 965, 22))],
+  pane: (rw) => queryPane(rw, {terms: ['kubernetes', 'ingress'], counts: [['kubernetes', '3 conversations so far'], ['ingress', 'none so far', 1], ['both', 'none so far', 1]], notes: ['counts cover the 612 conversations read so far']}),
+  footer: w => footer(w, ['esc', 'close'], [['/', 'edit query'], ['ctrl+f', 'search titles instead']])});
+
+// 2f — nothing, index complete, this account
+const c2f = searchBox({w: 134, all: false, mode: 'said', query: 'sqlite busyy', focus: 'list',
+  list: (lw, rows) => [listHeader(lw, false), [],
+    L(sp(2), s('Nothing said matches ', C.muted), s('sqlite busyy', C.text)), [],
+    L(sp(2), s('searched all 212 of claude-personal\'s conversations', C.dim)), [],
+    L(sp(2), s('a', C.accent, {b: 1}), s(' every account', C.muted), sp(3), s('ctrl+f', C.accent, {b: 1}), s(' titles, folders, ids', C.muted))],
+  pane: (rw) => queryPane(rw, {terms: ['sqlite', 'busyy'], counts: [['sqlite', '7 conversations'], ['busyy', 'none', 1], ['both', 'none', 1]], notes: ['a word no conversation holds is most often a typo']}),
+  footer: w => footer(w, ['esc', 'close'], [['/', 'edit query'], ['a', 'every account'], ['ctrl+f', 'search titles instead']])});
+
+// 2g — the narrow fold: 84-wide frame, 78-wide box, 72 inside
+const c2g = searchBox({w: 72, narrow: true, all: true, mode: 'said', query: 'sqlite busy', focus: 'list',
+  list: (lw, rows) => hitList(lw, rows, {hits: HITS, cur: 0, all: true, tail: DONE_TAIL('match')}),
+  footer: w => footer(w, ['esc', 'close'], [['↑↓','choose'],['↵','resume in ~/projects/kizuna'],['H','hand off'],['y','copy command']])});
+
+// 2h — the titles filter with the same words, for comparison
+function titlesBox() {
+  const w = 134, lw = 62, rw = 69, rows = 29;
+  const corner = L(s('/', C.accent, {b: 1}), s('sqlite busy', C.text), s(' ', C.text, {rev: 1}), s('   searches titles, folders, accounts and ids', C.faint));
+  const list = [listHeader(lw, true).slice(0, 2 + 7 + 14).concat(s(pd('CONVERSATION', lw - 2 - 7 - 14 - 18) + 'FOLDER', C.faint)), [],
+    L(sp(2), s('No title, folder or id matches ', C.muted), s('sqlite busy', C.text)), [],
+    L(sp(2), s('ctrl+f', C.accent, {b: 1}), s(' looks in what was said instead', C.muted)), [],
+    s('  0 conversations · newest activity first · 14 headless', C.dim), s('  hidden, . shows', C.dim)];
+  return [heading(w, {all: true, mode: 'titles'}), [], corner,
+    ...joinPanes(list, [], lw, rw, rows), [],
+    footer(w, ['esc', 'close'], [['↑↓', 'choose'], ['↵', 'resume it'], ['H', 'hand this off instead']])];
+}
+
+const SCREENS = {
+  f2a: screen(c2a, 140),
+  f2b: screen(c2b, 140),
+  f2c: screen(c2c, 140),
+  f2d: screen(c2d, 140),
+  f2e: screen(c2e, 140),
+  f2f: screen(c2f, 140),
+  f2g: screen(c2g, 78, 84, 40),
+  f2h: screen(titlesBox(), 140),
+  sample: HITS.map((h, i) => ({rank: String(i + 1), when: h.when, acct: h.acct, p: h.p, title: h.title || '(untitled)', folder: h.folder, n: String(h.n), who: h.who === 'you' ? 'you' : 'agent', snip: h.snip, id: h.id})),
+};
+
+class Component extends DCLogic {
+  renderVals() { return SCREENS; }
+}
+</script>
+</body>
+</html>

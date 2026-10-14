@@ -41,9 +41,16 @@ const (
 // cursor read out on the right. The heading carries the scope — this account
 // or all of them — and the search, and the footer says exactly where Enter
 // will reopen the row.
+//
+// The mode pair on the right switches to searching what was said (ctrl+f,
+// searchbox.go); this is the titles filter, whose / line sits under the
+// heading so the two modes take the same rows.
 func (m tuiModel) recentPicker(width, rows int) []string {
-	heading := spread(boxTitle("resume")+"   "+m.scopeToggle(), m.searchCorner(), width)
-	lines := append([]string{heading, ""}, m.pickerBody(width, rows)...)
+	if m.search.on {
+		return m.searchBox(width, rows)
+	}
+	lines := []string{m.resumeHeading(width), "", m.titlesCorner(width)}
+	lines = append(lines, m.pickerBody(width, max(rows-1, minBlockRows))...)
 	where := "resume it"
 	if record, ok := m.pickedRecord(); ok {
 		where = "resume in " + shortenHome(record.folder)
@@ -58,17 +65,6 @@ func (m tuiModel) pickedRecord() (recordedSession, bool) {
 		return recordedSession{}, false
 	}
 	return visible[m.record], true
-}
-
-// scopeToggle is the this-account / all-accounts switch, the current one
-// drawn as a chip, and the key that flips it.
-func (m tuiModel) scopeToggle() string {
-	on := selectedPen(true)
-	this, all := on.render(boxTitleStyle, " this account "), sectionLabelStyle.Render("  all accounts")
-	if m.pickerAll {
-		this, all = sectionLabelStyle.Render("this account  "), on.render(boxTitleStyle, " all accounts ")
-	}
-	return this + all + helpKeyStyle.Render("  a")
 }
 
 // searchCorner is the search as the heading's right-hand side: the key that
@@ -112,23 +108,32 @@ func (m tuiModel) pickerList(width, rows int) []string {
 	}
 	header += pad("CONVERSATION", max(width-lipgloss.Width(header)-pickerFolderWidth, 8)) + "FOLDER"
 	lines := []string{sectionLabelStyle.Render(truncate(header, width)), ""}
-	footer := fmt.Sprintf("  %s · newest activity first", plural(len(visible), "conversation"))
+	footer := fmt.Sprintf("%s · newest activity first", plural(len(visible), "conversation"))
 	switch hidden := m.hiddenHeadless(); {
 	case hidden > 0:
 		footer += fmt.Sprintf(" · %d headless hidden, . shows", hidden)
 	case m.showHeadless:
 		footer += " · headless shown, . hides"
 	}
+	// The count wraps rather than being cut: its end is the key that shows
+	// what it hides.
+	var footerLines []string
+	for _, line := range wrapText(footer, max(width-2, 8)) {
+		footerLines = append(footerLines, dimStyle.Render("  "+line))
+	}
 	if len(visible) == 0 && m.recentFilter != "" {
-		lines = append(lines, emptyStateStyle.Render("Nothing matches "+m.recentFilter))
-		return lines
+		// Named for what it searched, so it cannot be mistaken for the other
+		// mode's empty result.
+		lines = append(lines, truncateStyled("  "+helpDescStyle.Render("No title, folder or id matches ")+fieldValueStyle.Render(m.recentFilter), width), "",
+			truncateStyled("  "+helpKeyStyle.Render("ctrl+f")+helpDescStyle.Render(" looks in what was said instead"), width), "")
+		return append(lines, footerLines...)
 	}
 	if len(visible) == 0 && m.hiddenHeadless() > 0 {
 		lines = append(lines, emptyStateStyle.Render("Only headless runs recorded here; . shows them"))
-		return append(lines, "", dimStyle.Render(truncate(footer, width)))
+		return append(append(lines, ""), footerLines...)
 	}
-	lines = append(lines, windowRows(m.recentRows(width), m.record, max(rows-4, 1))...)
-	return append(lines, "", dimStyle.Render(truncate(footer, width)))
+	lines = append(lines, windowRows(m.recentRows(width), m.record, max(rows-3-len(footerLines), 1))...)
+	return append(append(lines, ""), footerLines...)
 }
 
 // recentRows is one line per conversation: when, whose (when every account is
@@ -215,14 +220,19 @@ func stepper(current int) string {
 // handoffPicker is the first step: which conversation is leaving. It is the
 // resume picker with a different verb on it, deliberately — the row you would
 // have resumed is the row you are handing over.
+//
+// The stepper keeps the heading, so the scope and the mode pair share the line
+// under it.
 func (m tuiModel) handoffPicker(width, rows int) []string {
-	heading := stepper(0)
-	corner := m.scopeToggle()
-	if fitsBeside(heading, corner, width) {
-		heading = spread(heading, corner, width)
+	narrow := pickerNarrow(width)
+	lines := []string{stepper(0), "", spread(m.scopeChips(narrow), m.modeChips(narrow), width)}
+	if m.search.on {
+		lines = append(lines, m.searchField(width), "")
+		lines = append(lines, m.searchBody(width, max(rows-3, minBlockRows))...)
+		return append(lines, "", m.searchFooter(width, true))
 	}
-	lines := []string{heading, "", truncateStyled(m.searchCorner(), width)}
-	lines = append(lines, m.pickerBody(width, max(rows-1, minBlockRows))...)
+	lines = append(lines, m.titlesCorner(width))
+	lines = append(lines, m.pickerBody(width, max(rows-2, minBlockRows))...)
 	next := "choose this one"
 	if m.autoSwap {
 		next = "write the brief for the roomiest account"

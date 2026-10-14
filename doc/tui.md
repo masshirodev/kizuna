@@ -181,6 +181,8 @@ Use the arrow keys or `j`/`k` to select a profile. On the key bar:
 - `/` filters the board by name or provider. Enter keeps the filter and hands
   the keys back, so a search is a way to reach one account among many rather
   than a mode to dismiss before acting; Escape clears it.
+- `ctrl+f` searches what was said in every account's past conversations, in
+  the resume box. See [session-search.md](session-search.md).
 - `tab` opens the expansion's full sheet, and folds it back. See
   [The board expansion](board-expansion.md).
 - `space` or `?` opens the palette.
@@ -191,7 +193,7 @@ Use the arrow keys or `j`/`k` to select a profile. On the key bar:
 Every text field works the same way:
 
 - the board's `/` filter;
-- the recent-sessions filter;
+- the recent-sessions filter, and the search of what was said;
 - the argument prompt;
 - the launch folder's path field (opened with `/` in the tree);
 - the profile editor;
@@ -222,6 +224,8 @@ fields had a caret.
   one.
 - In the argument prompt, moving the caret through a recalled set keeps it
   recalled, so a pin still acts on it. Typing into it makes it a new set.
+- In the resume and handoff pickers' two fields, `Ctrl-F` switches between
+  searching titles and searching what was said; → still moves the caret.
 
 The editor is `cmd/kizuna/lineedit.go`. A field stores its caret as the number of
 characters after it. Zero means the end, so code that fills a field never has
@@ -244,7 +248,7 @@ The keys it lists, all of which also work straight from the board:
 
 | Group | Key | Action |
 | ----- | --- | ------ |
-| Conversation | `↵` `p` `R` `h` `H` | run here · run with arguments · resume · open a live instance (the original keeps running) · hand off |
+| Conversation | `↵` `p` `R` `ctrl+f` `h` `H` | run here · run with arguments · resume · search what was said (its note: how many conversations are indexed) · open a live instance (the original keeps running) · hand off |
 | Profile | `a` `e` `C` `x` `/` | add · edit · clone its setup (no credentials) · delete after confirmation · find |
 | Provider CLI | `l` `i` `u` `K` `m` `s` `I` | log in · install the CLI (after showing the command) · update it · stop an instance (Enter stops one, `a`/`y` all) · install MCP servers · install skills · integrations |
 | kizuna | `c` `A` `r` `U` `q` | change launch folder · auto-swap on handoff · refresh quotas and updates · update kizuna (after showing the checkout and steps) · quit |
@@ -254,8 +258,11 @@ The keys it lists, all of which also work straight from the board:
 **The resume picker (`R`)** is two panes: conversations on the left — when,
 what, where, plus the account once it lists every one — and the conversation
 under the cursor on the right, read from its end. The heading carries the scope
-as a toggle (`this account` / `all accounts`, `a` flips it) and the search
-(`/`, by title, folder, account, or conversation id). The footer names the
+as a toggle (`this account` / `all accounts`, `a` flips it) and the mode pair
+(`titles` / `what was said`, `ctrl+f` flips it); the titles search (`/`, by
+title, folder, account, or conversation id) is the line under the heading. The
+other mode is the search of what was said, in
+[session-search.md](session-search.md). The footer names the
 folder Enter will reopen the row in, and `H` hands that row off instead.
 Headless runs (`opencode run`, `claude -p`, the wave workers) are hidden until
 `.` shows them, in this picker and the handoff picker alike; the count under the

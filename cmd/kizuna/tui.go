@@ -178,6 +178,9 @@ type tuiModel struct {
 	recentFilter    string
 	recentTail      int
 	recentSearching bool
+	// search is the picker's search of what was said (searchbox.go), which
+	// ctrl+f switches the picker to instead of the / filter above.
+	search searchState
 	// preview is the conversation shown beside the picker list, and previews is
 	// what has already been read while this picker has been open. The cache is
 	// what makes moving the cursor down and back free: a transcript re-read on
@@ -533,6 +536,9 @@ func loadUsageCmd(profiles []Profile) tea.Cmd {
 }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if updated, cmd, handled := m.updateSearchMsg(msg); handled {
+		return updated, cmd
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -724,6 +730,9 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearStatus()
 	case "?", " ":
 		m.openPalette()
+		return m, readCoverageCmd(m.profiles)
+	case "ctrl+f":
+		return m, m.openSearchFromBoard()
 	case "a":
 		m.mode = tuiForm
 		m.form = profileForm{name: "", provider: "codex", command: "codex", isNew: true}
@@ -1020,11 +1029,16 @@ func (m *tuiModel) openRecent() tea.Cmd {
 // one that recorded the row, which is what makes the picker work when it is
 // listing several profiles at once.
 func (m tuiModel) updateRecent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.search.on {
+		return m.updateSearchKeys(msg, false)
+	}
 	if m.recentSearching {
 		return m.updateRecentSearch(msg)
 	}
 	visible := m.visibleRecent()
 	switch msg.String() {
+	case "ctrl+f":
+		return m, m.enterSearch()
 	case "up", "k":
 		if m.record > 0 {
 			m.record--
@@ -1051,39 +1065,45 @@ func (m tuiModel) updateRecent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = tuiList
 			return m, nil
 		}
-		record := visible[m.record]
-		profile, ok := m.profileForRecord(record)
-		if !ok {
-			m.mode = tuiList
-			return m, nil
-		}
-		folder, err := recordedFolder(record, m.workingDir)
-		if err != nil {
-			// The picker stays open: the other rows are still resumable, and
-			// this one is only unreachable because its folder moved.
-			m.setStatus(statusErr, err.Error())
-			return m, nil
-		}
-		// A fresh launch seeds from the profile store, so a session that only
-		// exists in a running instance's private copy would resume into
-		// nothing. The picker shows it (the live panel reads the union), but
-		// reopening waits for the merge.
-		if profile.Provider == "opencode" && !opencodeSessionInProfileDB(profile, record.session.id) {
-			m.setStatus(statusErr, "that session is still in a running instance and has not merged yet; stop that instance first")
-			return m, nil
-		}
-		args, err := reopenArgs(profile.Provider, record.session)
-		if err != nil {
-			m.setStatus(statusErr, err.Error())
-			return m, nil
-		}
-		m.mode = tuiList
-		return m, m.execProfileIn(profile, profileRunArgs(profile, args, false), false, folder)
+		return m.resumeRecord(visible[m.record])
 	case "esc", "q":
 		m.mode = tuiList
 		m.clearStatus()
 	}
 	return m, nil
+}
+
+// resumeRecord reopens one recorded conversation under the account that
+// recorded it, in the folder it ran in. Both pickers' searches reach it.
+func (m tuiModel) resumeRecord(record recordedSession) (tea.Model, tea.Cmd) {
+	profile, ok := m.profileForRecord(record)
+	if !ok {
+		m.mode = tuiList
+		return m, nil
+	}
+	folder, err := recordedFolder(record, m.workingDir)
+	if err != nil {
+		// The picker stays open: the other rows are still resumable, and
+		// this one is only unreachable because its folder moved.
+		m.setStatus(statusErr, err.Error())
+		return m, nil
+	}
+	// A fresh launch seeds from the profile store, so a session that only
+	// exists in a running instance's private copy would resume into
+	// nothing. The picker shows it (the live panel reads the union), but
+	// reopening waits for the merge.
+	if profile.Provider == "opencode" && !opencodeSessionInProfileDB(profile, record.session.id) {
+		m.setStatus(statusErr, "that session is still in a running instance and has not merged yet; stop that instance first")
+		return m, nil
+	}
+	args, err := reopenArgs(profile.Provider, record.session)
+	if err != nil {
+		m.setStatus(statusErr, err.Error())
+		return m, nil
+	}
+	m.mode = tuiList
+	m.search.on = false
+	return m, m.execProfileIn(profile, profileRunArgs(profile, args, false), false, folder)
 }
 
 // updateRecentSearch narrows either picker's list as the query is typed. Enter
@@ -1092,6 +1112,11 @@ func (m tuiModel) updateRecent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // rather than a mode to dismiss before acting.
 func (m tuiModel) updateRecentSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "ctrl+f":
+		// The picker's mode switch wins over the field's caret-forward, as it
+		// does in the search field; → still moves the caret.
+		m.recentSearching = false
+		return m, m.enterSearch()
 	case "esc", "ctrl+c":
 		m.recentSearching, m.recentFilter = false, ""
 		m.clampRecord()
@@ -1262,11 +1287,16 @@ func previewSessionCmd(profile Profile, record recordedSession) tea.Cmd {
 // quota left. The session's own account is the one the brief is built from, so
 // the picker can be listing several profiles at once.
 func (m tuiModel) updateHandoff(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.search.on {
+		return m.updateSearchKeys(msg, true)
+	}
 	if m.recentSearching {
 		return m.updateRecentSearch(msg)
 	}
 	visible := m.visibleRecent()
 	switch msg.String() {
+	case "ctrl+f":
+		return m, m.enterSearch()
 	case "up", "k":
 		if m.record > 0 {
 			m.record--

@@ -35,6 +35,7 @@ func paletteColumns() [][]paletteGroup {
 				{"↵", "enter", "run it here"},
 				{"p", "p", "run with arguments"},
 				{"R", "R", "resume a conversation"},
+				{"ctrl+f", "ctrl+f", "search what was said"},
 				{"h", "h", "open a live instance"},
 				{"H", "H", "hand off to another account"},
 			}},
@@ -153,6 +154,8 @@ func pressedKey(press string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEnter}
 	case "tab":
 		return tea.KeyMsg{Type: tea.KeyTab}
+	case "ctrl+f":
+		return tea.KeyMsg{Type: tea.KeyCtrlF}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(press)}
 }
@@ -243,6 +246,13 @@ func (m tuiModel) paletteNote(key string) (string, lipgloss.Style) {
 	case "R":
 		if selected && len(m.recent) > 0 {
 			return fmt.Sprintf("%d recorded", len(m.recent)), dimStyle
+		}
+	case "ctrl+f":
+		if coverage := m.search.coverage; coverage.known {
+			if coverage.complete() {
+				return fmt.Sprintf("%d indexed", coverage.total), dimStyle
+			}
+			return fmt.Sprintf("%d of %d indexed", coverage.searched, coverage.total), dimStyle
 		}
 	case "h", "K":
 		if running := m.runningCount(profile.Name); selected && running > 0 {

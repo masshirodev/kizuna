@@ -61,6 +61,10 @@ profile's stored defaults. See [doc/running.md](doc/running.md#run).
   is running and its recent work, and `tab` opens the full sheet.
 - **Resume anything.** `R` reopens any recent conversation in the folder it ran
   in. `h` attaches to one that is still running.
+- **Find it by what was said.** `ctrl+f` searches what was said in every
+  account's past conversations, ranked, and a hit resumes or hands off from
+  there; `kizuna search` is the same from the command line. See
+  [doc/session-search.md](doc/session-search.md).
 - **Hand off when quota runs out.** `H` turns a conversation into a short brief
   and starts another account on it in the same folder — or copies the brief to
   the clipboard and opens that account, for a provider that cannot be started
@@ -97,6 +101,7 @@ on right now.
 | Provider updates that miss the install that runs | [doc/shadowed-installs.md](doc/shadowed-installs.md) |
 | How concurrent OpenCode instances work | [doc/opencode-concurrent-instances.md](doc/opencode-concurrent-instances.md) |
 | Fresh OpenCode stores, resume by import, `kizuna compact` | [doc/session-store.md](doc/session-store.md) |
+| Searching what was said across every account: `ctrl+f`, `kizuna search` | [doc/session-search.md](doc/session-search.md) |
 | Agents finding and messaging each other: `kizuna peers`, `kizuna send` | [doc/agent-messaging.md](doc/agent-messaging.md) |
 | Reopening every session a power cut killed: `kizuna resume-all` | [doc/restore.md](doc/restore.md) |
 | Coming from ai-session: what the rename moved, and what it kept | [doc/rename.md](doc/rename.md) |

@@ -43,6 +43,12 @@ var (
 	// colorGhostCanvas is the tint a selected row keeps behind a box.
 	colorCanvas      = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#0B0B0E"}
 	colorGhostCanvas = lipgloss.AdaptiveColor{Light: "#F4F4F5", Dark: "#101015"}
+
+	// colorMatch and colorMatchCell mark a word a search matched: amber on a
+	// dark amber cell, a pair no other text uses, so a match never reads as a
+	// warning or a selection (doc/session-search.md).
+	colorMatch     = lipgloss.AdaptiveColor{Light: "#78350F", Dark: "#FDE68A"}
+	colorMatchCell = lipgloss.AdaptiveColor{Light: "#FEF3C7", Dark: "#3A3014"}
 )
 
 var (
@@ -104,6 +110,7 @@ var (
 	updateStyle      = lipgloss.NewStyle().Foreground(colorWarn)
 	dangerTextStyle  = lipgloss.NewStyle().Bold(true).Foreground(colorDanger)
 	confirmBodyStyle = lipgloss.NewStyle().Foreground(colorText)
+	matchStyle       = lipgloss.NewStyle().Bold(true).Foreground(colorMatch).Background(colorMatchCell)
 )
 
 // providerColor gives each provider a recognisable colour so a long profile
@@ -319,6 +326,8 @@ func pad(value string, width int) string {
 	return value
 }
 
+// truncate cuts by display width, not by rune count: a Japanese title is two
+// cells a character, and cutting it by runes overflowed every column it sat in.
 func truncate(value string, width int) string {
 	if width <= 0 || lipgloss.Width(value) <= width {
 		return value
@@ -326,6 +335,5 @@ func truncate(value string, width int) string {
 	if width == 1 {
 		return "…"
 	}
-	runes := []rune(value)
-	return string(runes[:width-1]) + "…"
+	return ansi.Truncate(value, width, "…")
 }

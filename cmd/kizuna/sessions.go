@@ -538,12 +538,20 @@ func decodeOpenCodePart(messageData, partData []byte) (handoffMessage, bool) {
 // readOpenCodeMessages reads one session's prose out of an OpenCode store, in
 // order. It is the OpenCode counterpart to readAllMessages: the same reduction
 // from a different shape of store.
+//
+// It waits on a lock rather than failing: the search backfill reads several
+// sessions of one store at once, beside an OpenCode that may be writing it, and
+// without a busy timeout the second reader to open the file got SQLITE_BUSY.
 func readOpenCodeMessages(dbPath, sessionID string) ([]handoffMessage, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
+		return nil, err
+	}
 	rows, err := db.Query(opencodeMessagesQuery, sessionID)
 	if err != nil {
 		return nil, err
