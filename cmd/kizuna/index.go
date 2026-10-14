@@ -42,12 +42,13 @@ CREATE TABLE IF NOT EXISTS session (
 CREATE INDEX IF NOT EXISTS session_recent ON session (profile, headless, updated DESC);
 CREATE INDEX IF NOT EXISTS session_source ON session (profile, source);
 CREATE TABLE IF NOT EXISTS turn (
+	n         INTEGER PRIMARY KEY,
 	profile   TEXT NOT NULL,
 	id        TEXT NOT NULL,
 	seq       INTEGER NOT NULL,
 	from_user INTEGER NOT NULL,
 	text      TEXT NOT NULL,
-	PRIMARY KEY (profile, id, seq)
+	UNIQUE (profile, id, seq)
 );
 CREATE TABLE IF NOT EXISTS turn_source (
 	profile     TEXT NOT NULL,
@@ -55,7 +56,14 @@ CREATE TABLE IF NOT EXISTS turn_source (
 	fingerprint TEXT NOT NULL,
 	PRIMARY KEY (profile, id)
 );
-`
+` + turnSearchSchema
+
+// sessionIndexVersion is the index's PRAGMA user_version. Version 1 gave turn
+// an INTEGER PRIMARY KEY for turn_fts to point at: an implicit rowid can be
+// renumbered by VACUUM, which would quietly point every search hit at the
+// wrong turn. The turns are a cache, so an older index drops them and the
+// backfill reads them again.
+const sessionIndexVersion = 1
 
 // sessionIndexMu serialises this process's use of the index. The TUI reads the
 // selected profile and the all-profiles union from separate goroutines, and one
@@ -87,13 +95,50 @@ func openSessionIndex() (*sql.DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	for _, stmt := range []string{`PRAGMA busy_timeout = 5000`, `PRAGMA journal_mode = WAL`, sessionIndexSchema} {
+	for _, stmt := range []string{`PRAGMA busy_timeout = 5000`, `PRAGMA journal_mode = WAL`} {
 		if _, err := db.Exec(stmt); err != nil {
 			db.Close()
 			return nil, err
 		}
 	}
+	if err := migrateSessionIndex(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return db, nil
+}
+
+// migrateSessionIndex brings an index written by an older kizuna to this
+// version's schema. Everything it drops is cached text the sources still hold.
+func migrateSessionIndex(db *sql.DB) error {
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= sessionIndexVersion {
+		_, err := db.Exec(sessionIndexSchema)
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	for _, stmt := range []string{
+		`DROP TRIGGER IF EXISTS turn_fts_insert`,
+		`DROP TRIGGER IF EXISTS turn_fts_delete`,
+		`DROP TRIGGER IF EXISTS turn_fts_update`,
+		`DROP TABLE IF EXISTS turn_fts`,
+		`DROP TABLE IF EXISTS turn`,
+		`DROP TABLE IF EXISTS turn_source`,
+		sessionIndexSchema,
+		fmt.Sprintf(`PRAGMA user_version = %d`, sessionIndexVersion),
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // indexedRecentSessions answers recentSessions from the index after bringing
@@ -402,9 +447,10 @@ func deleteIndexedSession(tx *sql.Tx, profile, id string) error {
 }
 
 // cachedSessionTurns returns a conversation's turns if they were materialized
-// from the source as it is now. Turns are cached only when something asked for
-// them (the preview, a handoff), never on refresh: reading every turn of every
-// transcript up front would put the whole 2 GB of them in the first refresh.
+// from the source as it is now. A refresh never reads them: reading every turn
+// of every transcript up front would put the whole 2 GB of them in the first
+// refresh. They are cached when something asks for them (the preview, a
+// handoff) and by the search backfill (search.go), in the background.
 func cachedSessionTurns(profileName, id string) ([]handoffMessage, bool) {
 	sessionIndexMu.Lock()
 	defer sessionIndexMu.Unlock()

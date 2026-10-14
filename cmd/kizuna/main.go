@@ -248,6 +248,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return compactCommand(cfg, args[1:], stdout)
 	case "peers":
 		return peersCommand(cfg, args[1:], stdout)
+	case "search":
+		return searchCommand(cfg, args[1:], stdout, stderr)
 	case "resume-all":
 		return resumeAllCommand(cfg, args[1:], stdout)
 	case "send":
@@ -1187,9 +1189,10 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  kizuna env <profile>")
 	fmt.Fprintln(w, "  kizuna resume-all [--busy] [-n] [--forget]  after a power cut, reopen every session it killed, each in its ranma workspace")
 	fmt.Fprintln(w, "  kizuna peers [--json] [repo]                every running agent: where it works, busy or idle, its pane")
+	fmt.Fprintln(w, "  kizuna search [--print|--json] <query>      find past conversations, in every account, by what was said in them")
 	fmt.Fprintln(w, "  kizuna send [--type|--no-type] <id> [text]  leave a running agent a message (text from stdin if left out)")
 	fmt.Fprintln(w, "  kizuna inbox [--peek] [id]                  read this agent's messages")
-	fmt.Fprintln(w, "  kizuna mcp serve                            the same three as an MCP server")
+	fmt.Fprintln(w, "  kizuna mcp serve                            the same three, and search, as an MCP server")
 	fmt.Fprintln(w, "  kizuna integrate openusage <profile>")
 	fmt.Fprintln(w, "  kizuna integrate statusline <profile>       show the profile inside the CLI")
 	fmt.Fprintln(w, "  kizuna integrate ranma <profile> [--off]    in a ranma pane, open tmux panes (agent teams) as ranma panes")

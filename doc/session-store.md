@@ -270,6 +270,9 @@ deleted?
   every transcript would have put 2 GB of Claude transcripts into the first
   refresh. A handoff reads a conversation whole and caches it; a preview uses
   the cache when it is fresh, and otherwise still reads the transcript's tail.
+  (Since 2026-10-13 the search backfill fills every conversation's turns in the
+  background, still never inside a refresh, and `turn` carries an FTS5 index:
+  [session-search.md](session-search.md).)
 - **Each kind is limited separately** (`limitEachKind`), after live OpenCode
   sessions join. A single limit let a night of runs take every slot, and the
   first draft forgot to re-apply it after the live union

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // `kizuna mcp serve` is a stdio MCP server that lets an agent find the others and
@@ -71,6 +72,22 @@ var messagingTools = []map[string]any{
 		},
 	},
 	{
+		"name":        "search_sessions",
+		"description": "Search what was said in the past conversations of every kizuna account on this machine (Claude Code, Codex, OpenCode, Antigravity), ranked by match. Only what the user and the agents said is searched, never tool calls or tool output. Use it to find where something was decided or discussed in another account's history. Plain words must all appear in one turn; \"a phrase\", prefix*, OR and NOT work as in SQLite FTS5. Each hit carries the conversation's account, title, folder, how many turns matched, its best snippet with the matched words in [brackets], who said it, and the command that resumes it. searched/total say how much of the history was readable when it ran.",
+		"inputSchema": map[string]any{
+			"type":     "object",
+			"required": []string{"query"},
+			"properties": map[string]any{
+				"query":     map[string]any{"type": "string"},
+				"profile":   map[string]any{"type": "string", "description": "Only this account (a kizuna profile name)."},
+				"repo":      map[string]any{"type": "string", "description": "Only conversations in this repository, by name or by a path inside it."},
+				"limit":     map[string]any{"type": "integer", "description": "At most this many conversations (default 20)."},
+				"from_user": map[string]any{"type": "boolean", "description": "Only what the user said."},
+				"headless":  map[string]any{"type": "boolean", "description": "Include headless runs (claude -p, opencode run, wave workers)."},
+			},
+		},
+	},
+	{
 		"name":        "read_inbox",
 		"description": "Read the messages other agents have left for you, and mark them read.",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
@@ -119,7 +136,7 @@ func handleMCPRequest(cfg Config, request rpcRequest) (any, *rpcError) {
 			"protocolVersion": version,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": appName, "version": currentBuild().short()},
-			"instructions":    "kizuna's directory of the agents running on this machine. list_peers shows who is working where; send_message hands work to the agent already in a checkout instead of opening a parallel worktree, and to a lead rather than to the workers it launched; read_inbox reads what others sent you.",
+			"instructions":    "kizuna's directory of the agents running on this machine. list_peers shows who is working where; send_message hands work to the agent already in a checkout instead of opening a parallel worktree, and to a lead rather than to the workers it launched; read_inbox reads what others sent you; search_sessions finds past conversations, in any account, by what was said in them.",
 		}, nil
 	case "ping":
 		return map[string]any{}, nil
@@ -174,6 +191,8 @@ func callMessagingTool(cfg Config, name string, arguments map[string]string) (st
 			return "", err
 		}
 		return result.Summary, nil
+	case "search_sessions":
+		return searchSessionsTool(cfg, arguments)
 	case "read_inbox":
 		lockDir := selfInstanceDir(cfg)
 		if lockDir == "" {
@@ -250,4 +269,43 @@ func parentPID(pid int) (int, bool) {
 	}
 	parent, err := strconv.Atoi(fields[1])
 	return parent, err == nil
+}
+
+// mcpSearchBudget is how long search_sessions may spend reading conversations
+// into the index before it answers from what is there. The first read of a
+// machine's history takes longer than an agent should wait on one tool call;
+// the answer then says how much was searched, and the next call reads on.
+const mcpSearchBudget = 20 * time.Second
+
+// mcpSearchLimit is how many conversations search_sessions returns unless
+// asked: enough to find one, few enough to read.
+const mcpSearchLimit = 20
+
+func searchSessionsTool(cfg Config, arguments map[string]string) (string, error) {
+	query := searchQuery{text: arguments["query"], profiles: cfg.Profiles, limit: mcpSearchLimit,
+		fromUser: arguments["from_user"] == "true", headless: arguments["headless"] == "true"}
+	if strings.TrimSpace(query.text) == "" {
+		return "", fmt.Errorf("search_sessions needs a query")
+	}
+	if name := arguments["profile"]; name != "" {
+		profile, err := resolveProfile(cfg, name)
+		if err != nil {
+			return "", err
+		}
+		query.profiles = []Profile{profile}
+	}
+	if repo := arguments["repo"]; repo != "" {
+		query.folder = repoFolderFilter(repo)
+	}
+	if limit, err := strconv.Atoi(arguments["limit"]); err == nil && limit > 0 {
+		query.limit = limit
+	}
+	coverage := backfillSessionTurnsUntil(query.profiles, nil, time.Now().Add(mcpSearchBudget))
+	result := searchSessions(query)
+	if result.err != nil {
+		return "", result.err
+	}
+	result.coverage.failed = coverage.failed
+	data, err := json.MarshalIndent(searchResultData(result), "", "  ")
+	return string(data), err
 }

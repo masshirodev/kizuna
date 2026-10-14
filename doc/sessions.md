@@ -42,6 +42,12 @@ Under the title the pane names the account and the **conversation id** in full �
 the id `kizuna <profile> resume <id>` takes, which was previously nowhere to read —
 and dates the session by its last activity, the same fact the list is ordered by.
 
+**`ctrl+f` searches what was said instead.** The heading's mode pair (`titles` /
+`what was said`) switches the picker between the filter below and a ranked
+search of every conversation's text, in any account; a hit resumes with `↵`
+and hands off with `H` exactly as a row does. See
+[session-search.md](session-search.md).
+
 `/` searches the list by title, folder, account, or id, and `a` switches between
 the selected account's sessions and every account's. The search matches what a
 row does not show as well as what it does, so a session can be found by a word
