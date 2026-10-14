@@ -15,6 +15,7 @@ asked for is written down before it is built, so the shape is agreed first.
 
 | Brief                                           | Kind           |
 | ----------------------------------------------- | -------------- |
+| [SESSION-SEARCH.md](done/SESSION-SEARCH.md)    | design handoff |
 | [FOLDER-TREE.md](done/FOLDER-TREE.md)           | design handoff |
 | [OPENCODE-HANDOFF.md](done/OPENCODE-HANDOFF.md) | capability     |
 | [INTEGRATIONS.md](done/INTEGRATIONS.md)         | design handoff |

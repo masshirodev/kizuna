@@ -97,6 +97,7 @@ on right now.
 | Provider updates that miss the install that runs | [doc/shadowed-installs.md](doc/shadowed-installs.md) |
 | How concurrent OpenCode instances work | [doc/opencode-concurrent-instances.md](doc/opencode-concurrent-instances.md) |
 | Fresh OpenCode stores, resume by import, `kizuna compact` | [doc/session-store.md](doc/session-store.md) |
+| Searching what was said across every account (proposal) | [doc/session-search.md](doc/session-search.md) |
 | Agents finding and messaging each other: `kizuna peers`, `kizuna send` | [doc/agent-messaging.md](doc/agent-messaging.md) |
 | Reopening every session a power cut killed: `kizuna resume-all` | [doc/restore.md](doc/restore.md) |
 | Coming from ai-session: what the rename moved, and what it kept | [doc/rename.md](doc/rename.md) |
