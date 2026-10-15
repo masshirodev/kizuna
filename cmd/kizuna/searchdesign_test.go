@@ -94,7 +94,7 @@ func searchDesignModel(t *testing.T) tuiModel {
 		hits = append(hits, searchHit{provider: "claude", matches: 1, seqs: []int{0}, rank: 100,
 			record: recordedSession{session: instanceSession{id: "headless-" + string(rune('a'+index))}, profile: "claude-max", headless: true}})
 	}
-	m.search = searchState{on: true, query: "sqlite busy", tail: 0, focus: searchOnResults, seq: 1, landed: 1,
+	m.search = searchState{on: true, query: "sqlite busy", tail: 0, focus: searchOnResults, seq: 1, landed: 1, bestMatch: true,
 		result:   searchResult{query: "sqlite busy", reading: readQuery("sqlite busy", false), hits: hits},
 		coverage: indexCoverage{searched: 965, total: 965, known: true},
 		contexts: map[string]hitContext{}}
@@ -133,8 +133,8 @@ func searchDesignFrames(t *testing.T) map[string]tuiModel {
 	frames["f2a"] = base
 
 	b := searchDesignModel(t)
-	b.search.newest = true
-	sortHits(b.search.result.hits, true)
+	b.search.bestMatch = false
+	sortHits(b.search.result.hits, false)
 	b.search.cursor = 1
 	b.search.at = 0
 	b.setStatus(statusOK, "copied  kizuna claude-max resume 7a0c5e21-93bd-4c6a-8f12-e4d07b3a9c55")

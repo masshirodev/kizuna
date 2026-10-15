@@ -115,8 +115,10 @@ CREATE VIRTUAL TABLE turn_fts USING fts5(
   index drops its `turn` and `turn_source` tables on first open; they are a
   cache, and the backfill reads them again. An older kizuna binary still works
   against the new schema, because its inserts name their columns.
-- **Ranking.** A conversation is ranked by its best turn's `bm25`, then by last
-  activity; `o` (or `--newest`) orders by last activity alone. The snippet is
+- **Order.** Hits come newest first, by the conversation's last activity. `o`
+  (or `--best`, or `order: "best_match"` over MCP) ranks them instead by their
+  best turn's `bm25`, then by last activity. The 200-conversation cap is taken
+  after ordering, so it keeps the newest 200 or the best 200. The snippet is
   `snippet(turn_fts, 0, …, '…', 16)` of the best turn. Its matched tokens are
   drawn amber on a dark amber cell (`colorMatch`) in the TUI, and between
   square brackets in `--print` and `--json`.
@@ -201,8 +203,8 @@ results have the keys; until then they are typed.
 
 Under the list come:
 
-- the count and the order in force, worded like the headless note (`best match
-  first, o newest first`);
+- the count and the order in force, worded like the headless note (`newest
+  first, o best match first`);
 - the coverage: `searched all 965`, or a cyan progress bar while the backfill
   runs, with `so far` on every count;
 - a `✗` line in warning yellow for each source that could not be read;
@@ -267,6 +269,7 @@ kizuna search --print merge lock                  # one block per hit, no TUI
 kizuna search --print --profile max2 --repo kumiko --since 2026-09-01 ENOSPC
 kizuna search --print --headless wave-loop        # include headless runs
 kizuna search --print --from user ingress         # only what you said
+kizuna search --print --best merge lock           # best match first instead of newest
 kizuna search --json merge lock                   # for scripts and agents
 ```
 
@@ -292,7 +295,8 @@ kizuna search --json merge lock                   # for scripts and agents
 
 `kizuna mcp serve` has `search_sessions` beside `list_peers`, `send_message`
 and `read_inbox`. It takes `query`, and optionally `profile`, `repo`, `limit`
-(default 20), `from_user` and `headless`, and it answers with the `--json`
+(default 20), `from_user`, `headless` and `order` (`newest`, the default, or
+`best_match`), and it answers with the `--json`
 object. An agent can then answer "where did we decide X" from another account's
 history, or find the conversation a card came out of.
 
@@ -346,6 +350,11 @@ a session, and the store is already indexed on `part.session_id`.
   half-typed results, so the reading stays as it was shown.
 - **`ctrl+f` in the picker's fields switches modes** rather than moving the
   caret forward, as `Ctrl-F` does in every other field. `→` still moves it.
+- **Newest first is the default order** (2026-10-15), where the handoff drew
+  best match first. In use a search is nearly always for something recent, and
+  `bm25` across conversations of very different lengths put old, long ones on
+  top. The design test still pins the handoff's frames: 2a is drawn with best
+  match toggled on, 2b with newest first.
 - **The pane opens a long matching turn at its match.** The handoff's sample
   turns fit in six rows. Real ones do not, and their first match was cut off.
 
@@ -371,6 +380,9 @@ a session, and the store is already indexed on `part.session_id`.
   before.
 
 ## Decisions
+
+- **Newest first by default.** See the departures above. `--newest` is still
+  accepted and is now the default; `--best` asks for rank order.
 
 - **Both sides are searched.** Your turns and the agent's are searched by
   default, so "where did it tell me X" works; `--from user` (and `from_user`

@@ -187,11 +187,8 @@ func TestSearchGroupsMatchingTurnsByConversationAndRanksThem(t *testing.T) {
 		t.Fatalf("hits = %v, want two conversations", hitIDs(result))
 	}
 	many := result.hits[0]
-	if many.record.session.id != "ses-once" {
+	if many.record.session.id != "ses-many" {
 		many = result.hits[1]
-	}
-	if many.record.session.id == "ses-once" {
-		many = result.hits[0]
 	}
 	if many.matches != 3 || len(many.seqs) != 3 || many.seqs[0] != 0 || many.seqs[2] != 4 {
 		t.Fatalf("ses-many matched %d turns at %v, want 3 at [0 2 4]", many.matches, many.seqs)
@@ -207,9 +204,11 @@ func TestSearchGroupsMatchingTurnsByConversationAndRanksThem(t *testing.T) {
 		t.Fatalf("busy found %v", hitIDs(got))
 	}
 
-	newest := search(t, "sqlite busy", func(q *searchQuery) { q.newest = true })
-	if hitIDs(newest)[0] != "ses-once" {
-		t.Fatalf("newest first = %v, want ses-once first", hitIDs(newest))
+	if newest := search(t, "sqlite busy"); hitIDs(newest)[0] != "ses-once" {
+		t.Fatalf("newest first (the default) = %v, want ses-once first", hitIDs(newest))
+	}
+	if best := search(t, "sqlite busy", func(q *searchQuery) { q.bestMatch = true }); hitIDs(best)[0] != "ses-many" {
+		t.Fatalf("best match first = %v, want ses-many first", hitIDs(best))
 	}
 	if got := search(t, "sqlite busy", func(q *searchQuery) { q.profiles = indexedProfiles()[1:] }); len(got.hits) != 1 || got.hits[0].record.profile != "cl2" {
 		t.Fatalf("scoped to cl2 = %v", hitIDs(got))

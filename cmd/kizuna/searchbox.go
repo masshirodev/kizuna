@@ -36,8 +36,8 @@ type searchState struct {
 	query string
 	tail  int
 	focus searchFocus
-	// newest orders the hits newest first (o) instead of best match first.
-	newest bool
+	// bestMatch orders the hits best match first (o) instead of newest first.
+	bestMatch bool
 	// seq counts the queries asked; landed is the one the result on screen
 	// answered. While they differ the result is stale: dimmed, unmarked, and
 	// without a cursor, so nothing old reads as the answer.
@@ -193,7 +193,7 @@ func (m tuiModel) searchScope() []Profile {
 func (m tuiModel) searchQueryFor(prefix bool) searchQuery {
 	// Headless conversations are always asked for and hidden here, so the
 	// count line can say how many it is hiding.
-	return searchQuery{text: m.search.query, prefix: prefix, profiles: m.searchScope(), headless: true, newest: m.search.newest}
+	return searchQuery{text: m.search.query, prefix: prefix, profiles: m.searchScope(), headless: true, bestMatch: m.search.bestMatch}
 }
 
 // requery starts a new query generation after the debounce. prefix matches the
@@ -438,7 +438,7 @@ func (m tuiModel) updateSearchKeys(msg tea.KeyMsg, inHandoff bool) (tea.Model, t
 		}
 		return m, tea.Batch(m.requery(m.search.prefix), m.selectContext())
 	case "o":
-		m.search.newest = !m.search.newest
+		m.search.bestMatch = !m.search.bestMatch
 		return m, m.requery(m.search.prefix)
 	case "y":
 		hit, ok := m.selectedHit()
@@ -749,9 +749,9 @@ func (m tuiModel) searchTail(width int) []string {
 		return lines
 	}
 	hits := len(m.visibleHits())
-	order := "best match first, o newest first"
-	if m.search.newest {
-		order = "newest first, o best match first"
+	order := "newest first, o best match first"
+	if m.search.bestMatch {
+		order = "best match first, o newest first"
 	}
 	count := plural(hits, "conversation")
 	if !coverage.complete() {

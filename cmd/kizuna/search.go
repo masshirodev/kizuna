@@ -391,8 +391,10 @@ type searchQuery struct {
 	// folder, when set, keeps only conversations whose folder it accepts
 	// (--repo).
 	folder func(string) bool
-	newest bool
-	limit  int
+	// bestMatch orders by rank instead of by last activity, newest first,
+	// which is the default: a search is usually for something recent.
+	bestMatch bool
+	limit     int
 }
 
 // queryReading is how a query was read: what was sent to FTS5, the plain words
@@ -654,7 +656,7 @@ func matchTurns(db *sql.DB, query searchQuery, fts string, names []any) ([]searc
 		sort.Ints(hit.seqs)
 		hits = append(hits, *hit)
 	}
-	sortHits(hits, query.newest)
+	sortHits(hits, query.bestMatch)
 	limit := query.limit
 	if limit <= 0 {
 		limit = searchLimit
@@ -665,11 +667,12 @@ func matchTurns(db *sql.DB, query searchQuery, fts string, names []any) ([]searc
 	return hits, nil
 }
 
-// sortHits orders hits by their best turn's rank (bm25 is lower for a better
-// match), newest first among equals; or newest first outright.
-func sortHits(hits []searchHit, newest bool) {
+// sortHits orders hits newest first by last activity; or, by best match, by
+// their best turn's rank (bm25 is lower for a better match), newest first among
+// equals.
+func sortHits(hits []searchHit, bestMatch bool) {
 	sort.SliceStable(hits, func(i, j int) bool {
-		if !newest && hits[i].rank != hits[j].rank {
+		if bestMatch && hits[i].rank != hits[j].rank {
 			return hits[i].rank < hits[j].rank
 		}
 		return hits[i].record.activity().After(hits[j].record.activity())
