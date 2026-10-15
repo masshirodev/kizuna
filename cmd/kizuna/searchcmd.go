@@ -21,7 +21,7 @@ import (
 // a terminal with neither --print nor --json it opens the TUI on the query, so
 // a hit can be resumed or handed off from there.
 
-const searchUsage = "usage: kizuna search [--profile NAME]... [--repo NAME|PATH] [--since YYYY-MM-DD] [--headless] [--from user] [--newest] [--limit N] [--print|--json] <query>"
+const searchUsage = "usage: kizuna search [--profile NAME]... [--repo NAME|PATH] [--since YYYY-MM-DD] [--headless] [--from user] [--best] [--limit N] [--print|--json] <query>"
 
 type searchOptions struct {
 	query    searchQuery
@@ -54,8 +54,12 @@ func parseSearchArgs(cfg Config, args []string) (searchOptions, error) {
 			options.print = true
 		case "--headless":
 			options.query.headless = true
+		case "--best":
+			options.query.bestMatch = true
 		case "--newest":
-			options.query.newest = true
+			// The default since newest first became the order; still accepted
+			// so scripts written against the first release keep working.
+			options.query.bestMatch = false
 		case "--profile", "-p":
 			name, err := value(&index, flag)
 			if err != nil {
@@ -382,7 +386,7 @@ func runTUISearch(cfg Config, options searchOptions) error {
 			}
 		}
 	}
-	m.search = searchState{query: options.query.text, newest: options.query.newest}
+	m.search = searchState{query: options.query.text, bestMatch: options.query.bestMatch}
 	m.showHeadless = options.query.headless
 	opened := m.enterSearch()
 	// The query came whole from the command line, so the keys start on the

@@ -73,7 +73,7 @@ var messagingTools = []map[string]any{
 	},
 	{
 		"name":        "search_sessions",
-		"description": "Search what was said in the past conversations of every kizuna account on this machine (Claude Code, Codex, OpenCode, Antigravity), ranked by match. Only what the user and the agents said is searched, never tool calls or tool output. Use it to find where something was decided or discussed in another account's history. Plain words must all appear in one turn; \"a phrase\", prefix*, OR and NOT work as in SQLite FTS5. Each hit carries the conversation's account, title, folder, how many turns matched, its best snippet with the matched words in [brackets], who said it, and the command that resumes it. searched/total say how much of the history was readable when it ran.",
+		"description": "Search what was said in the past conversations of every kizuna account on this machine (Claude Code, Codex, OpenCode, Antigravity), newest first unless order is best_match. Only what the user and the agents said is searched, never tool calls or tool output. Use it to find where something was decided or discussed in another account's history. Plain words must all appear in one turn; \"a phrase\", prefix*, OR and NOT work as in SQLite FTS5. Each hit carries the conversation's account, title, folder, how many turns matched, its best snippet with the matched words in [brackets], who said it, and the command that resumes it. searched/total say how much of the history was readable when it ran.",
 		"inputSchema": map[string]any{
 			"type":     "object",
 			"required": []string{"query"},
@@ -84,6 +84,11 @@ var messagingTools = []map[string]any{
 				"limit":     map[string]any{"type": "integer", "description": "At most this many conversations (default 20)."},
 				"from_user": map[string]any{"type": "boolean", "description": "Only what the user said."},
 				"headless":  map[string]any{"type": "boolean", "description": "Include headless runs (claude -p, opencode run, wave workers)."},
+				"order": map[string]any{
+					"type":        "string",
+					"enum":        []string{"newest", "best_match"},
+					"description": "newest (default) orders by last activity; best_match by how well the best turn matched.",
+				},
 			},
 		},
 	},
@@ -283,7 +288,8 @@ const mcpSearchLimit = 20
 
 func searchSessionsTool(cfg Config, arguments map[string]string) (string, error) {
 	query := searchQuery{text: arguments["query"], profiles: cfg.Profiles, limit: mcpSearchLimit,
-		fromUser: arguments["from_user"] == "true", headless: arguments["headless"] == "true"}
+		fromUser: arguments["from_user"] == "true", headless: arguments["headless"] == "true",
+		bestMatch: arguments["order"] == "best_match"}
 	if strings.TrimSpace(query.text) == "" {
 		return "", fmt.Errorf("search_sessions needs a query")
 	}

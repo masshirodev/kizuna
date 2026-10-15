@@ -62,7 +62,7 @@ profile's stored defaults. See [doc/running.md](doc/running.md#run).
 - **Resume anything.** `R` reopens any recent conversation in the folder it ran
   in. `h` attaches to one that is still running.
 - **Find it by what was said.** `ctrl+f` searches what was said in every
-  account's past conversations, ranked, and a hit resumes or hands off from
+  account's past conversations, newest first, and a hit resumes or hands off from
   there; `kizuna search` is the same from the command line. See
   [doc/session-search.md](doc/session-search.md).
 - **Hand off when quota runs out.** `H` turns a conversation into a short brief
