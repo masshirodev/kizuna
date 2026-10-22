@@ -138,6 +138,17 @@ ends by itself, because the inbox is empty the next time round. An event it
 does not know puts the messages back. In hook mode every failure is silent and
 exits 0, because a hook must never break the agent it runs in.
 
+## `kizuna watchdog`
+
+The nudge `kizuna send` types at an idle agent, on a deadline instead of a
+message: an agent about to end its turn waiting on something that might never
+finish arms `kizuna watchdog self --idle 30m "<what to check>"`, and a systemd
+user timer types that line at its prompt if it is still idle 30 minutes later.
+It types through the same path and behind the same gate as `send` (only an
+agent reported `idle`), stops after three nudges with no busy period between
+them, and disarms itself when the agent exits. [watchdog.md](watchdog.md) is
+the account.
+
 ## `kizuna integrate messaging <profile>`
 
 ```
@@ -163,7 +174,7 @@ running binary), so a reinstall to the same place keeps working.
 
 ## `kizuna mcp serve`
 
-A stdio MCP server, one JSON-RPC object per line, with four tools:
+A stdio MCP server, one JSON-RPC object per line, with these tools:
 
 | Tool | Does |
 | ---- | ---- |
@@ -171,6 +182,9 @@ A stdio MCP server, one JSON-RPC object per line, with four tools:
 | `send_message` | `kizuna send`; `type_into_pane` is `auto` (default), `always` or `never`; `to_worker` is `--worker` |
 | `read_inbox` | `kizuna inbox` for the instance the server runs inside |
 | `search_sessions` | `kizuna search --json`: past conversations in every account, by what was said; see [session-search.md](session-search.md) |
+| `watchdog_arm` | `kizuna watchdog <target> --idle …`: have an agent (`self` by default) nudged when it sits idle past a deadline; see [watchdog.md](watchdog.md) |
+| `watchdog_disarm` | `kizuna watchdog --off [target]` |
+| `watchdog_list` | `kizuna watchdog --list --json` |
 
 Its `instructions` tell the agent what it is for: find the agent already in a
 checkout before opening a parallel worktree there.

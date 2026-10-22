@@ -93,6 +93,35 @@ var messagingTools = []map[string]any{
 		},
 	},
 	{
+		"name":        "watchdog_arm",
+		"description": "Arm a dead-man's switch on an agent, normally yourself: if it sits idle longer than `idle`, a one-line nudge is typed at its prompt, which wakes it. Use it before ending a turn to wait on something that might never finish (a background job, a worker): a hung job otherwise leaves you idle until a human looks. At most `max` nudges in a row while you stay idle; any busy period resets that. Only Claude Code sessions in a ranma or tmux pane can be armed. Re-arming replaces the old one; disarm with watchdog_disarm once the wait is over.",
+		"inputSchema": map[string]any{
+			"type":     "object",
+			"required": []string{"idle"},
+			"properties": map[string]any{
+				"target": map[string]any{"type": "string", "description": "self (default), or an id from list_peers."},
+				"idle":   map[string]any{"type": "string", "description": "How long idle before a nudge, as a duration: 30m, 1h30m. At least 1m."},
+				"text":   map[string]any{"type": "string", "description": "What the nudge says, one line. Say what you were waiting on and what to check, so the woken agent knows where to look."},
+				"max":    map[string]any{"type": "integer", "description": "Nudges in a row with no busy period before giving up (default 3)."},
+			},
+		},
+	},
+	{
+		"name":        "watchdog_disarm",
+		"description": "Disarm the idle watchdog on an agent (yourself by default).",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"target": map[string]any{"type": "string", "description": "self (default), or an armed id."},
+			},
+		},
+	},
+	{
+		"name":        "watchdog_list",
+		"description": "List the armed idle watchdogs: id, threshold, idle since, nudges sent, last nudge, and whether one is exhausted.",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
 		"name":        "read_inbox",
 		"description": "Read the messages other agents have left for you, and mark them read.",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
@@ -141,7 +170,7 @@ func handleMCPRequest(cfg Config, request rpcRequest) (any, *rpcError) {
 			"protocolVersion": version,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": appName, "version": currentBuild().short()},
-			"instructions":    "kizuna's directory of the agents running on this machine. list_peers shows who is working where; send_message hands work to the agent already in a checkout instead of opening a parallel worktree, and to a lead rather than to the workers it launched; read_inbox reads what others sent you; search_sessions finds past conversations, in any account, by what was said in them.",
+			"instructions":    "kizuna's directory of the agents running on this machine. list_peers shows who is working where; send_message hands work to the agent already in a checkout instead of opening a parallel worktree, and to a lead rather than to the workers it launched; read_inbox reads what others sent you; search_sessions finds past conversations, in any account, by what was said in them; watchdog_arm has you nudged if you sit idle past a deadline, for a wait that might never end.",
 		}, nil
 	case "ping":
 		return map[string]any{}, nil
@@ -198,6 +227,29 @@ func callMessagingTool(cfg Config, name string, arguments map[string]string) (st
 		return result.Summary, nil
 	case "search_sessions":
 		return searchSessionsTool(cfg, arguments)
+	case "watchdog_arm":
+		arm := watchdogArm{target: arguments["target"], text: arguments["text"], max: watchdogDefaultMax}
+		idle, err := time.ParseDuration(arguments["idle"])
+		if err != nil {
+			return "", fmt.Errorf("idle %q: %w (write it like 30m or 1h30m)", arguments["idle"], err)
+		}
+		arm.idle = idle
+		if text := arguments["max"]; text != "" {
+			if arm.max, err = strconv.Atoi(text); err != nil || arm.max < 1 {
+				return "", fmt.Errorf("max %q: want a whole number of nudges, at least 1", text)
+			}
+		}
+		entry, err := armWatchdog(cfg, collectPeers(cfg), arm, sender(cfg), time.Now())
+		if err != nil {
+			return "", err
+		}
+		return watchdogArmedSummary(entry), nil
+	case "watchdog_disarm":
+		return disarmWatchdog(cfg, func() []peer { return collectPeers(cfg) }, arguments["target"])
+	case "watchdog_list":
+		var b strings.Builder
+		err := watchdogList(&b, true, time.Now())
+		return strings.TrimSpace(b.String()), err
 	case "read_inbox":
 		lockDir := selfInstanceDir(cfg)
 		if lockDir == "" {
