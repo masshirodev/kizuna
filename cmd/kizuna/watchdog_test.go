@@ -468,3 +468,23 @@ func TestWatchdogSpanReadsLikeTheFlag(t *testing.T) {
 		}
 	}
 }
+
+func TestMCPListsTheWatchdogTools(t *testing.T) {
+	isolatePeers(t)
+	input := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}` + "\n" +
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"watchdog_list","arguments":{}}}` + "\n" +
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"watchdog_arm","arguments":{"idle":"soon"}}}` + "\n"
+	var out bytes.Buffer
+	if err := mcpServeCommand(Config{}, strings.NewReader(input), &out); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	for _, want := range []string{`"watchdog_arm"`, `"watchdog_disarm"`, `"watchdog_list"`} {
+		if !strings.Contains(lines[0], want) {
+			t.Fatalf("tools/list lacks %s", want)
+		}
+	}
+	if !strings.Contains(lines[1], `[]`) || !strings.Contains(lines[2], `"isError":true`) {
+		t.Fatalf("responses = %s", out.String())
+	}
+}

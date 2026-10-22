@@ -475,7 +475,7 @@ func integrateMessaging(profile Profile, off bool, stdout io.Writer) error {
 	if err := mergeMCPServers(profile, []mcpServer{server}); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "%s has the kizuna MCP server (list_peers, send_message, read_inbox)\n", profile.Name)
+	fmt.Fprintf(stdout, "%s has the kizuna MCP server (list_peers, send_message, read_inbox, search_sessions, and the watchdog tools)\n", profile.Name)
 	if profile.Provider != "claude" {
 		fmt.Fprintf(stdout, "%s has no hooks this launcher can use, so it reads its inbox only when it calls read_inbox; `kizuna send --type` nudges it\n", profile.Provider)
 		return nil
