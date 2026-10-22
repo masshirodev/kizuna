@@ -256,6 +256,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return sendCommand(cfg, args[1:], os.Stdin, stdout)
 	case "inbox":
 		return inboxCommand(cfg, args[1:], os.Stdin, stdout)
+	case "watchdog":
+		return watchdogCommand(cfg, args[1:], stdout)
 	case "path":
 		path, err := profileRoot()
 		if err != nil {
@@ -1192,7 +1194,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  kizuna search [--print|--json] <query>      find past conversations, in every account, by what was said in them")
 	fmt.Fprintln(w, "  kizuna send [--type|--no-type] <id> [text]  leave a running agent a message (text from stdin if left out)")
 	fmt.Fprintln(w, "  kizuna inbox [--peek] [id]                  read this agent's messages")
-	fmt.Fprintln(w, "  kizuna mcp serve                            the same three, and search, as an MCP server")
+	fmt.Fprintln(w, "  kizuna watchdog <id|self> --idle 30m [text] nudge an agent left idle past a deadline (--off, --list, --install)")
+	fmt.Fprintln(w, "  kizuna mcp serve                            the same, and search, as an MCP server")
 	fmt.Fprintln(w, "  kizuna integrate openusage <profile>")
 	fmt.Fprintln(w, "  kizuna integrate statusline <profile>       show the profile inside the CLI")
 	fmt.Fprintln(w, "  kizuna integrate ranma <profile> [--off]    in a ranma pane, open tmux panes (agent teams) as ranma panes")
