@@ -259,10 +259,17 @@ func nudgeText(from string) string {
 }
 
 func typeNudge(p peer, from string) error {
+	return typeIntoPane(p, nudgeText(from))
+}
+
+// typeIntoPane types one line at an agent's prompt and presses Enter. It is
+// the one typing path: `kizuna send` uses it for its nudge and the watchdog
+// (watchdog.go) for its own, so both reach a pane the same way. It does not
+// look at busy or idle; deciding that it is safe to type is the caller's job.
+func typeIntoPane(p peer, text string) error {
 	if p.Headless {
 		return errors.New("it is a headless run, with no prompt to type at")
 	}
-	text := nudgeText(from)
 	switch {
 	case p.Pane != "":
 		cmd := exec.Command("ranma", "send", "-p", p.Pane, "-e", text)
