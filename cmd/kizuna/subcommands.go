@@ -27,9 +27,12 @@ const (
 )
 
 // openCodeSubcommands is built from `opencode --help`, `opencode run --help`,
-// and `opencode models --help` (opencode 1.x). Only `run` starts a session the
-// launch defaults apply to; the bare TUI is not a subcommand and keeps its
-// defaults in front. DeepSeek runs through the same binary.
+// and `opencode models --help` (opencode 1.x), plus the words 2.x added
+// (opencode 2.0.32). Only `run` starts a session the launch defaults apply to:
+// 2.x's `mini` starts one too but takes no `--auto`. The bare TUI is not a
+// subcommand and keeps its defaults in front. DeepSeek runs through the same
+// binary. withOpenCodeStandalone also reads this table: a word in it that
+// does not reach the background service is left without --standalone.
 var openCodeSubcommands = map[string]subcommandKind{
 	"run":        subcommandTakesDefaults,
 	"completion": subcommandRejectsDefaults,
@@ -54,6 +57,12 @@ var openCodeSubcommands = map[string]subcommandKind{
 	"plugin":     subcommandRejectsDefaults,
 	"plug":       subcommandRejectsDefaults,
 	"db":         subcommandRejectsDefaults,
+	"mini":       subcommandRejectsDefaults,
+	"update":     subcommandRejectsDefaults,
+	"api":        subcommandRejectsDefaults,
+	"service":    subcommandRejectsDefaults,
+	"reload":     subcommandRejectsDefaults,
+	"pair":       subcommandRejectsDefaults,
 }
 
 // claudeSubcommands is built from `claude --help` and `claude mcp --help`.

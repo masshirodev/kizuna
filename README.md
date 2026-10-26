@@ -104,6 +104,7 @@ on right now.
 | Update check and self-update | [doc/updates.md](doc/updates.md) |
 | Provider updates that miss the install that runs | [doc/shadowed-installs.md](doc/shadowed-installs.md) |
 | How concurrent OpenCode instances work | [doc/opencode-concurrent-instances.md](doc/opencode-concurrent-instances.md) |
+| OpenCode 2.x's background service, and why kizuna runs it `--standalone` | [doc/opencode-service.md](doc/opencode-service.md) |
 | Fresh OpenCode stores, resume by import, `kizuna compact` | [doc/session-store.md](doc/session-store.md) |
 | Searching what was said across every account: `ctrl+f`, `kizuna search` | [doc/session-search.md](doc/session-search.md) |
 | Agents finding and messaging each other: `kizuna peers`, `kizuna send` | [doc/agent-messaging.md](doc/agent-messaging.md) |

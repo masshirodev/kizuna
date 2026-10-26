@@ -25,6 +25,15 @@ func TestRealDBResumeImportAndMerge(t *testing.T) {
 	if err != nil {
 		t.Skip("no opencode binary on PATH")
 	}
+	// The real binary decides its own spelling: 1.x's top-level export, or
+	// 2.x's `session export --standalone`.
+	previous := openCodeServiceProbe
+	openCodeServiceProbe = probeOpenCodeService
+	resetOpenCodeServiceCache()
+	t.Cleanup(func() {
+		openCodeServiceProbe = previous
+		resetOpenCodeServiceCache()
+	})
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", root)
 	profile := Profile{Name: "oc", Provider: "opencode", Command: binary}
