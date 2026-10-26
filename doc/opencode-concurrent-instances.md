@@ -241,6 +241,9 @@ workaround this spec exists to fix.
 4. `opencode serve` mode under a profile: same isolation should apply, but
    long-lived servers make "merge on exit" rare — quarantine surfacing must
    cover them or serve stays exclusive. Lean: serve stays exclusive.
+   **Overtaken 2026-10-26 by OpenCode 2.x**, which runs every TUI against a
+   detached background service unless told `--standalone`. kizuna now always
+   tells it: see [opencode-service.md](opencode-service.md).
 
 ## Implementation notes (as built)
 

@@ -541,7 +541,7 @@ func launchExternal(command string, args []string, profile Profile, stdout, stde
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(command, args...)
+	cmd := exec.Command(command, withOpenCodeStandalone(profile, command, args)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -565,7 +565,7 @@ func launchProfileCommand(command string, args []string, plain bool, profile Pro
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(command, args...)
+	cmd := exec.Command(command, withOpenCodeStandalone(profile, command, args)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
