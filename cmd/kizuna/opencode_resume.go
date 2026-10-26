@@ -19,7 +19,8 @@ import (
 // The profile's opencode.db is the archive every instance merges into; this
 // carries one session the other way.
 //
-// The carrying is opencode's own `export` and `import`, not a row copy. Their
+// The carrying is opencode's own `export` and `import` (`session export` and
+// `session import` since 2.x, see openCodeSessionToolArgs), not a row copy. Their
 // JSON is the one format opencode promises to read back across its own schema
 // changes, and a row copy would have to follow every migration they ship.
 
@@ -80,7 +81,7 @@ func importOpenCodeSession(profile Profile, workdir, lockDir, id string) error {
 	exported := filepath.Join(lockDir, "resume-"+sanitizeFileName(id)+".json")
 	defer os.Remove(exported)
 	_, err := withProfileMergeLockResult(workdir, func() (string, error) {
-		output, err := runOpenCodeTool(profile, workdir, workdir, os.TempDir(), "export", id)
+		output, err := runOpenCodeTool(profile, workdir, workdir, os.TempDir(), openCodeSessionToolArgs(profile, "export", id, "")...)
 		if err != nil {
 			return "", err
 		}
@@ -95,7 +96,7 @@ func importOpenCodeSession(profile Profile, workdir, lockDir, id string) error {
 	if _, err := os.Stat(directory); err != nil {
 		return fmt.Errorf("its folder %s is gone", directory)
 	}
-	if _, err := runOpenCodeTool(profile, workdir, lockDir, directory, "import", exported); err != nil {
+	if _, err := runOpenCodeTool(profile, workdir, lockDir, directory, openCodeSessionToolArgs(profile, "import", exported, directory)...); err != nil {
 		return fmt.Errorf("import: %w", err)
 	}
 	return nil
