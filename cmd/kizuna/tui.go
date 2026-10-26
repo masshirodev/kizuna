@@ -2170,7 +2170,7 @@ func (m *tuiModel) execProfileWith(profile Profile, args, env []string, exclusiv
 		m.setStatus(statusErr, err.Error())
 		return nil
 	}
-	cmd := exec.Command(profile.Command, args...)
+	cmd := exec.Command(profile.Command, withOpenCodeStandalone(profile, profile.Command, args)...)
 	cmd.Dir = folder
 	// The environment depends on the lock directory: an isolated OpenCode
 	// instance points its data/state homes at the instance, not the profile.

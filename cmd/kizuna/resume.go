@@ -107,7 +107,7 @@ func launchInFolder(profile Profile, args []string, folder string, stdout, stder
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(profile.Command, args...)
+	cmd := exec.Command(profile.Command, withOpenCodeStandalone(profile, profile.Command, args)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
