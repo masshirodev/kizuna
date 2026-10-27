@@ -71,8 +71,10 @@ profile's stored defaults. See [doc/running.md](doc/running.md#run).
   on a prompt.
 - **Agents that find each other.** `kizuna peers` lists every running agent across
   profiles, with the repository and checkout it is in. `kizuna send` leaves one a
-  message it reads at its next tool call. See
-  [doc/agent-messaging.md](doc/agent-messaging.md).
+  message it reads at its next tool call, and an idle Claude Code agent is woken
+  by a mod instead of keys typed over your draft. See
+  [doc/agent-messaging.md](doc/agent-messaging.md) and
+  [doc/inbox-mod.md](doc/inbox-mod.md).
 - **A watchdog for agents left waiting.** `kizuna watchdog self --idle 30m
   "…"` types a nudge at an agent that sits idle past its deadline, so a hung
   background job cannot leave it waiting all night. See
@@ -108,6 +110,7 @@ on right now.
 | Fresh OpenCode stores, resume by import, `kizuna compact` | [doc/session-store.md](doc/session-store.md) |
 | Searching what was said across every account: `ctrl+f`, `kizuna search` | [doc/session-search.md](doc/session-search.md) |
 | Agents finding and messaging each other: `kizuna peers`, `kizuna send` | [doc/agent-messaging.md](doc/agent-messaging.md) |
+| How an idle Claude agent gets a message with nothing typed: the kizuna-inbox mod | [doc/inbox-mod.md](doc/inbox-mod.md) |
 | Nudging an agent left idle past a deadline: `kizuna watchdog` | [doc/watchdog.md](doc/watchdog.md) |
 | Reopening every session a power cut killed: `kizuna resume-all` | [doc/restore.md](doc/restore.md) |
 | Coming from ai-session: what the rename moved, and what it kept | [doc/rename.md](doc/rename.md) |

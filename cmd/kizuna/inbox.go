@@ -213,18 +213,7 @@ func sendMessage(cfg Config, target, text string, options sendOptions) (sendResu
 		return sendResult{}, err
 	}
 	result := sendResult{Peer: p}
-	shouldType := false
-	switch options.typeMode {
-	case "always":
-		shouldType = true
-	case "never":
-	default:
-		// Hooks read the inbox on their own while the agent works. An idle
-		// agent needs a prompt to wake it, and only a known-idle one is safe
-		// to type into: a busy one may be showing a permission dialog.
-		shouldType = p.State == "idle" && !p.Headless
-	}
-	if shouldType {
+	if shouldTypeNudge(p, options.typeMode) {
 		if err := typeNudge(p, m.From); err != nil {
 			result.Summary = fmt.Sprintf("left in %s's inbox; typing a nudge into its pane failed: %v", p.ID, err)
 			return result, nil
@@ -235,11 +224,32 @@ func sendMessage(cfg Config, target, text string, options sendOptions) (sendResu
 	return result, nil
 }
 
+// shouldTypeNudge decides whether a message is followed by a nudge typed at
+// the agent's prompt. "always" and "never" are `--type` and `--no-type`.
+func shouldTypeNudge(p peer, typeMode string) bool {
+	switch typeMode {
+	case "always":
+		return true
+	case "never":
+		return false
+	}
+	// Hooks read the inbox on their own while the agent works. An idle agent
+	// needs a prompt to wake it, and only a known-idle one is safe to type
+	// into: a busy one may be showing a permission dialog. One whose
+	// kizuna-inbox mod is alive wakes itself, and typing would only land on
+	// top of whatever the user is writing there.
+	return p.State == "idle" && !p.Headless && p.Delivery != "mod"
+}
+
 func deliverySummary(p peer, typed bool) string {
 	where := p.ID + " (" + p.where() + ")"
 	switch {
 	case typed:
 		return "sent to " + where + "; it was idle, so a nudge was typed at its prompt"
+	case p.Delivery == "mod" && p.State == "busy":
+		return "sent to " + where + "; it reads it at its next tool call"
+	case p.Delivery == "mod":
+		return "sent to " + where + "; its kizuna-inbox mod hands it over as a prompt of its own within a few seconds, without typing into its pane"
 	case p.Delivery == "hooks" && p.State == "busy":
 		return "sent to " + where + "; it reads it at its next tool call"
 	case p.Delivery == "hooks":
@@ -325,6 +335,13 @@ func inboxCommand(cfg Config, args []string, stdin io.Reader, stdout io.Writer) 
 	if len(args) >= 1 && args[0] == "--hook" {
 		writeHookResponse(selfInstanceDir(cfg), stdin, stdout)
 		return nil
+	}
+	if rest, mod := takeFlag(args, "--mod"); mod {
+		rest, drain := takeFlag(rest, "--drain")
+		if len(rest) > 0 {
+			return errors.New("usage: kizuna inbox --mod [--drain]  (the kizuna-inbox mod's poll)")
+		}
+		return answerModPoll(selfInstanceDir(cfg), drain, stdout)
 	}
 	rest, peek := takeFlag(args, "--peek")
 	if len(rest) > 1 {
@@ -459,6 +476,9 @@ func integrateMessaging(profile Profile, off bool, stdout io.Writer) error {
 			if err := setMessagingHooks(profile, "", false); err != nil {
 				return err
 			}
+			if err := removeInboxMod(profile); err != nil {
+				return err
+			}
 		}
 		if err := removeMessagingServers(profile); err != nil {
 			return err
@@ -484,7 +504,11 @@ func integrateMessaging(profile Profile, off bool, stdout io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(stdout, "%s reads messages by itself: at its next tool call, before it stops, and when you type (%s)\n", profile.Name, strings.Join(messagingHookEvents, ", "))
-	fmt.Fprintln(stdout, "sessions already running pick the hooks up when they restart")
+	if err := installInboxMod(profile); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "%s has the %s mod: an idle session takes a message as a prompt of its own, with nothing typed into its pane\n", profile.Name, inboxModName)
+	fmt.Fprintln(stdout, "sessions already running pick the hooks and the mod up when they restart")
 	return nil
 }
 
