@@ -162,7 +162,9 @@ TUI's account line shows `ranma tmux shim` for a profile that has it on.
 
 `kizuna integrate messaging <profile>` (`--off` to undo) gives a profile's agents
 the `kizuna` MCP server, so they can list the other running agents and message
-them. A Claude Code profile also gets hooks that read its inbox by itself.
+them. A Claude Code profile also gets hooks that read its inbox by itself, and
+the [kizuna-inbox mod](inbox-mod.md), which wakes an idle session with a message
+without typing into its terminal.
 `kizuna integrate list` and the integrations box (`I`, its fourth row and column)
 show and toggle it. The board's expansion does not list it yet. The whole
 feature is in [agent-messaging.md](agent-messaging.md).

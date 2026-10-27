@@ -2178,6 +2178,7 @@ func (m *tuiModel) execProfileWith(profile Profile, args, env []string, exclusiv
 	if !exclusive {
 		cmd.Env = withLaunchEnv(cmd.Env, profile, false, env)
 	}
+	refreshInboxMod(profile)
 	if cmd, err = wrapLaunch(cmd, profile, lockDir); err != nil {
 		unlock()
 		m.setStatus(statusErr, err.Error())

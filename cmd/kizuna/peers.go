@@ -56,9 +56,11 @@ type peer struct {
 	// server its status bar wraps it in. Either is where text can be typed.
 	Pane       string `json:"pane,omitempty"`
 	TmuxSocket string `json:"tmux_socket,omitempty"`
-	// Delivery says how a message reaches the agent: "hooks" (read at its
-	// next tool call or turn end), "mcp" (it can read its inbox when it
-	// looks), or empty (only by typing into its pane, or a human).
+	// Delivery says how a message reaches the agent: "mod" (its
+	// kizuna-inbox mod is alive and wakes it when idle, besides the hooks),
+	// "hooks" (read at its next tool call or turn end), "mcp" (it can read
+	// its inbox when it looks), or empty (only by typing into its pane, or a
+	// human).
 	Delivery string `json:"delivery,omitempty"`
 	Unread   int    `json:"unread,omitempty"`
 	// Self marks the instance asking.
@@ -109,6 +111,9 @@ func collectPeers(cfg Config) []peer {
 				Unread:   len(inboxMessages(instance.lockDir)),
 				Self:     self != "" && filepath.Clean(self) == filepath.Clean(instance.lockDir),
 				lockDir:  instance.lockDir,
+			}
+			if delivery == "hooks" && modAlive(instance.lockDir, time.Now()) {
+				p.Delivery = "mod"
 			}
 			meta := readInstanceMeta(instance.lockDir)
 			p.Pane, p.ranmaSocket = meta.RanmaPane, meta.RanmaSocket
