@@ -54,6 +54,8 @@ func describeInstances(profile Profile, instances []profileInstance) []profileIn
 		for index, instance := range described {
 			described[index].session = codexSessionInFolder(profile, instance.folder)
 		}
+	case "antigravity":
+		describeAntigravityInstances(profile, described)
 	}
 	return described
 }

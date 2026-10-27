@@ -198,9 +198,10 @@ after the title, because it is how the status line and `claude agents` name the
 session. When the row is too narrow for both, the slug is dropped. When no
 transcript is found, the slug is the title.
 
-Hijacking an Antigravity profile is refused for the same reason a
-second launch is: its credential store is exclusive while the first process is
-running. Hijacking a live OpenCode instance is refused as well — reopening its
+Hijacking an Antigravity instance is refused: it would reopen the conversation
+that instance has open, and agy lets two processes write one conversation. The
+`R` picker refuses the same conversation while it is open, naming the PID that
+holds it ([antigravity-concurrency.md](antigravity-concurrency.md)). Hijacking a live OpenCode instance is refused as well — reopening its
 conversation elsewhere would put two writers on one session — while resuming a
 merged OpenCode session works like any other.
 
