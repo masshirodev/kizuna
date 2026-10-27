@@ -1,0 +1,6 @@
+{
+  "name": "kizuna-inbox",
+  "version": "1.0.0",
+  "description": "Delivers kizuna messages to an idle Claude Code session as a turn of its own, without typing into its terminal.",
+  "license": "MIT"
+}

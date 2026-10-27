@@ -42,7 +42,7 @@ path inside it. `kizuna peers --json` prints the same thing for an agent to read
 | WHERE | `git rev-parse` in the launch folder. The git common dir names the repository, so a worktree and its main checkout match as one repo, and the column says which one this is. A folder outside any repository shows the folder |
 | STATE | `busy` or `idle` from `claude agents --json`. Other providers do not say, and show `—` |
 | PANE | The ranma pane the launch ran in, recorded in `instance.json` (`ranma_pane`, `ranma_socket`). Instances started before this was recorded are read from the launcher's `/proc/<pid>/environ`. `tmux` for a launch inside the tmux status bar |
-| MAIL | How a message reaches it (below), and how many are unread |
+| MAIL | How a message reaches it (below), and how many are unread. `mod` is a Claude session whose [kizuna-inbox mod](inbox-mod.md) has polled in the last 15 seconds |
 | TITLE | The conversation's title, as in the `h` picker ([sessions.md](sessions.md#hijacking-a-running-instance)) |
 
 `(you)` marks the instance asking. That comes from `KIZUNA_INSTANCE_DIR`, or, where
@@ -107,7 +107,8 @@ target:
 | Target | Delivery |
 | ------ | -------- |
 | Claude Code, messaging integrated, busy | Read at its next tool call (`PostToolUse` hook) |
-| Claude Code, messaging integrated, idle | A one-line nudge is typed at its prompt, which wakes it, and the `UserPromptSubmit` hook hands it the message on that same prompt |
+| Claude Code, idle, its kizuna-inbox mod alive (`mod`) | Nothing is typed. The mod collects it within two seconds and submits it as a prompt of its own ([inbox-mod.md](inbox-mod.md)) |
+| Claude Code, messaging integrated, idle, no live mod | A one-line nudge is typed at its prompt, which wakes it, and the `UserPromptSubmit` hook hands it the message on that same prompt |
 | Anything with the MCP server only | Waits until the agent calls `read_inbox` |
 | Nothing integrated | Waits in the inbox; `kizuna send` says so and how to change it |
 
@@ -116,8 +117,10 @@ target:
 Typing is only automatic for an agent that reports `idle`, because text typed
 into a busy one can land in a permission dialog, and the `Enter` after it can
 answer the dialog. Even at an idle prompt, a half-written draft of the user's
-gets the nudge appended and submitted with it. That is the price of waking an
-idle agent, and why `--no-type` exists.
+gets the nudge appended and submitted with it, and Claude Code can take the
+`Enter` for part of a paste and leave the nudge unsent. That is why a Claude
+session with the [kizuna-inbox mod](inbox-mod.md) running is never typed into,
+and why `--no-type` exists for everything else.
 
 The receiver reads the message framed as coming from another agent, not from
 the user. It is told to treat it as a colleague's request, fit it around its
@@ -127,7 +130,8 @@ current work, and ask the user before anything destructive. It also gets the
 ## `kizuna inbox`
 
 `kizuna inbox` prints this instance's unread messages and moves them to
-`inbox/read/`. `--peek` leaves them unread, and `kizuna inbox <id>` reads someone
+`inbox/read/`. `kizuna inbox --mod [--drain]` is the kizuna-inbox mod's poll,
+answered in JSON ([inbox-mod.md](inbox-mod.md)). `--peek` leaves them unread, and `kizuna inbox <id>` reads someone
 else's. `kizuna inbox --hook` is what the Claude Code hooks run. It reads the hook
 event from stdin and answers `PostToolUse` and `UserPromptSubmit` with
 `additionalContext`, and `Stop` with `{"decision":"block","reason":…}`, which
@@ -159,12 +163,16 @@ kizuna integrate messaging max --off    # off again
 - **Every provider with an MCP config** (Claude Code, Codex, OpenCode,
   Antigravity) gets the `kizuna` MCP server, `kizuna mcp serve`. It is written the same
   way `kizuna mcp copy` writes servers, so the rest of the file stays as it was.
+- **Claude Code** also gets the [kizuna-inbox mod](inbox-mod.md), in the
+  profile's `claude/skills/kizuna-inbox/`, which wakes an idle session with
+  nothing typed. Every launch refreshes it from the binary, and `--off` removes
+  it.
 - **Claude Code** also gets three hooks in the profile's `settings.json`:
   `PostToolUse` (matcher `*`), `Stop` and `UserPromptSubmit`, each running
   `<kizuna> inbox --hook` with a 10-second timeout. The install is idempotent. An
   entry is recognised as kizuna's by `inbox --hook` in its command, and `--off`
   removes exactly those entries, plus any event left with no hooks.
-- Sessions already running pick the hooks up when they restart.
+- Sessions already running pick the hooks and the mod up when they restart.
 - The integrations box (`I`) shows the same thing as its `messaging` row and
   toggles it with `↵`. A Claude profile with the server but not the hooks
   reads `○ off  tools only`.
