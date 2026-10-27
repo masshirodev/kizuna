@@ -576,6 +576,7 @@ func launchProfileCommand(command string, args []string, plain bool, profile Pro
 	// The environment depends on the lock directory: an isolated OpenCode
 	// instance points its data/state homes at the instance, not the profile.
 	cmd.Env = withLaunchEnv(launchEnvironment(profile, workdir, lockDir, os.Environ()), profile, plain, nil)
+	refreshInboxMod(profile)
 	// A fresh OpenCode store holds no sessions; bring in the one being reopened.
 	prepareOpenCodeInstance(profile, workdir, lockDir, commandFolder(cmd), args, stderr)
 	cmd, err = wrapLaunch(cmd, profile, lockDir)
