@@ -37,7 +37,7 @@ path inside it. `kizuna peers --json` prints the same thing for an agent to read
 
 | Column | Where it comes from |
 | ------ | ------------------- |
-| ID | `<profile>/<run-dir>` for a concurrent instance, the profile name for one holding its profile's exclusive lock (Antigravity) |
+| ID | `<profile>/<run-dir>` for a concurrent instance, the profile name for one holding its profile's exclusive lock (a provider that cannot run twice) |
 | ROLE | Who launched whom ([below](#leads-and-workers)): `lead of N`, `worker of <id>`, `worker of <id> (ended)` once its lead has exited |
 | WHERE | `git rev-parse` in the launch folder. The git common dir names the repository, so a worktree and its main checkout match as one repo, and the column says which one this is. A folder outside any repository shows the folder |
 | STATE | `busy` or `idle` from `claude agents --json`. Other providers do not say, and show `—` |

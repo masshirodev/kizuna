@@ -87,12 +87,21 @@ func headlessLaunch(provider string, args []string) bool {
 	return false
 }
 
+// supportsConcurrentRuns names the providers whose shared home survives two
+// processes at once. Antigravity joined on 2026-10-27: agy refreshes its
+// access token in memory and never rewrites antigravity-oauth-token, and it
+// marks each open conversation with a lock of its own, which
+// antigravity_presence.go reads to keep two instances off one conversation.
 func supportsConcurrentRuns(profile Profile) bool {
-	return profile.Provider == "codex" || profile.Provider == "claude"
+	switch profile.Provider {
+	case "codex", "claude", "antigravity":
+		return true
+	}
+	return false
 }
 
-// acquireProfileRunLock gives Codex and Claude each a short-lived instance
-// directory while leaving their provider home shared. OpenCode gets an
+// acquireProfileRunLock gives Codex, Claude and Antigravity each a
+// short-lived instance directory while leaving their provider home shared. OpenCode gets an
 // instance directory too, but on a private data/state copy with a merge back
 // on exit, because its SQLite store cannot be shared. Providers whose auth
 // storage is not concurrency-safe keep the original profile-wide lock.

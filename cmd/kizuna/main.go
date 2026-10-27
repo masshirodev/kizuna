@@ -1206,5 +1206,5 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  kizuna version                              build revision and update check")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Providers with isolated state: codex, claude, antigravity, opencode, deepseek")
-	fmt.Fprintln(w, "Concurrent runs: codex, claude, and opencode (opencode runs each instance on a private data copy that merges back on exit; Antigravity remains exclusive)")
+	fmt.Fprintln(w, "Concurrent runs: codex, claude, antigravity, and opencode (opencode runs each instance on a private data copy that merges back on exit)")
 }

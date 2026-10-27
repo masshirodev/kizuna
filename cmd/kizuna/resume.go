@@ -66,6 +66,11 @@ func resumeSessionByID(profile Profile, id string, stdout, stderr io.Writer) err
 	// Unknown to the transcripts: hand the id to the provider and let it
 	// answer. An id from another folder, or another account's history, is the
 	// provider's to report on rather than this launcher's to refuse.
+	if profile.Provider == "antigravity" {
+		if pid := antigravityConversationHolder(profile, id); pid != 0 {
+			return errAntigravityConversationOpen(pid)
+		}
+	}
 	args, err := reopenArgs(profile.Provider, instanceSession{id: id})
 	if err != nil {
 		return err
@@ -88,6 +93,11 @@ func resumeRecordedSession(profile Profile, record recordedSession, stdout, stde
 	}
 	if profile.Provider == "opencode" && !opencodeSessionInProfileDB(profile, record.session.id) {
 		return fmt.Errorf("that session is still in a running instance and has not merged yet; stop that instance first")
+	}
+	if profile.Provider == "antigravity" {
+		if pid := antigravityConversationHolder(profile, record.session.id); pid != 0 {
+			return errAntigravityConversationOpen(pid)
+		}
 	}
 	args, err := reopenArgs(profile.Provider, record.session)
 	if err != nil {
