@@ -107,12 +107,13 @@ confused with a provider's own `-p`.
 
 ## Running several at once
 
-Codex and Claude profiles can be launched concurrently from multiple terminals.
+Codex, Claude and Antigravity profiles can be launched concurrently from
+multiple terminals.
 Every launch creates a temporary directory beneath the profile's `instances/`
 directory for its PID lock and an `instance.json` recording the folder it was
 launched in, when, and whether it is headless (`-p`, `exec`, `run` — the board
 marks those `◇`), while all instances continue to use the profile's
-single `CODEX_HOME` or `CLAUDE_CONFIG_DIR`. This means one login per profile and
+single `CODEX_HOME`, `CLAUDE_CONFIG_DIR` or Antigravity `HOME`. This means one login per profile and
 the same settings and session history in every instance. The instance directory
 is removed when the CLI exits and reclaimed automatically after a crash.
 
@@ -139,9 +140,13 @@ with the reason instead of opening nothing. And hijacking a live OpenCode
 instance stays refused for the same reason a second launch used to be: two
 writers on one session is exactly the shared-database bug.
 
-Antigravity profiles remain exclusive: a second launch is refused
-while the first is running because its file-backed OAuth stores are not known
-to coordinate token refreshes across processes.
+Antigravity profiles were exclusive until 2026-10-27. agy turned out to refresh
+its token in memory and never rewrite its token file, and it marks each open
+conversation with a lock of its own. kizuna reads those locks to name each
+instance's conversation, and to refuse resuming or hijacking a conversation
+another instance has open, which agy itself would allow.
+[antigravity-concurrency.md](antigravity-concurrency.md) has what was checked
+and the limits.
 
 ## Antigravity's private home
 
@@ -175,8 +180,7 @@ of guessing a provider or creating a profile.
 ## Concurrency and locks
 
 Login, integration, and export remain exclusive operations and are refused while any
-instance is running. Antigravity also retains the exclusive lock
-for ordinary runs. OpenCode runs concurrently on private per-instance stores
+instance is running. OpenCode runs concurrently on private per-instance stores
 (see [Running several at once](#running-several-at-once)); stopping one from the TUI merges its store back
 first. If a launcher is interrupted, its lock is reclaimed
 automatically after all PIDs recorded in it have exited, and an OpenCode store
