@@ -961,6 +961,15 @@ func (m tuiModel) updateHijack(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = tuiList
 			return m, nil
 		}
+		// Hijacking reopens the conversation the instance has open, which is
+		// exactly what agy lets two processes do and must not: both would
+		// append steps to it.
+		if profile.Provider == "antigravity" {
+			m.setStatus(statusErr, "an Antigravity instance cannot be hijacked: agy would let both processes write its conversation; close it there and resume it with R")
+			m.instances = nil
+			m.mode = tuiList
+			return m, nil
+		}
 		args, err := reopenArgs(profile.Provider, instance.session)
 		if err != nil {
 			m.setStatus(statusErr, err.Error())
@@ -1095,6 +1104,12 @@ func (m tuiModel) resumeRecord(record recordedSession) (tea.Model, tea.Cmd) {
 	if profile.Provider == "opencode" && !opencodeSessionInProfileDB(profile, record.session.id) {
 		m.setStatus(statusErr, "that session is still in a running instance and has not merged yet; stop that instance first")
 		return m, nil
+	}
+	if profile.Provider == "antigravity" {
+		if pid := antigravityConversationHolder(profile, record.session.id); pid != 0 {
+			m.setStatus(statusErr, errAntigravityConversationOpen(pid).Error())
+			return m, nil
+		}
 	}
 	args, err := reopenArgs(profile.Provider, record.session)
 	if err != nil {

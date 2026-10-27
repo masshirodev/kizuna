@@ -528,8 +528,8 @@ func TestProfileLockPreventsConcurrentLaunches(t *testing.T) {
 	}
 }
 
-func TestCodexAndClaudeUseIndependentRunLocks(t *testing.T) {
-	for _, provider := range []string{"codex", "claude"} {
+func TestConcurrentProvidersUseIndependentRunLocks(t *testing.T) {
+	for _, provider := range []string{"codex", "claude", "antigravity"} {
 		t.Run(provider, func(t *testing.T) {
 			workdir := t.TempDir()
 			profile := Profile{Name: "personal", Provider: provider, Command: provider}
