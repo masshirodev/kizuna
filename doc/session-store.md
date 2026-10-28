@@ -99,15 +99,19 @@ nothing (a headless `run`, a new session) imports nothing.
 **A resumed session exists on both sides, so the merge now carries edits.**
 The merge used to be a union: rows the archive already had were left alone.
 That silently dropped a resumed session's new title and `time_updated` and any
-message it rewrote. The session subtree (`session`, `message`, `part`,
-`session_message`, `session_share`, `todo`) now merges newest `time_updated`
-wins, the rule the credential tables already used. `project` stays
+message it rewrote. The session subtree (`session_v2`, `session_message`,
+and 1.x's `session`, `message`, `part`, `session_share`, `todo`) now merges
+newest `time_updated` wins, the rule the credential tables already used. `project` stays
 insert-only: a fresh store writes its own project row with default fields, and
 "newer wins" would wipe the archive's icon overrides and commands with them.
 
 **Schema drift.** Only merges and exports open the archive now, so an opencode
 upgrade migrates every fresh instance store and not the archive. The merge
-would then see different columns and skip `session`. Before merging, if the
+would then see different columns and skip the session table. Columns in a
+different order are not drift: every merge statement names its columns, and
+2.x orders `session_v2` and `project` differently in a store it migrated than
+in one it created fresh, which until 2026-10-28 skipped both on every merge
+from a new instance. Before merging, if the
 instance store has applied migrations the archive has not, the merge lets
 opencode migrate the archive first (`opencode db "select 1"`, about 1.3 s).
 

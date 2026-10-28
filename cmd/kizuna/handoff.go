@@ -71,10 +71,16 @@ type transcriptRef struct {
 func (r transcriptRef) empty() bool { return r.path == "" && r.store == "" }
 
 // command is a read-only shell command that prints one OpenCode session's rows.
-// It is what the brief hands an agent that wants the whole conversation.
+// It is what the brief hands an agent that wants the whole conversation, worded
+// for whichever schema the store has: 2.x's one row a turn, or 1.x's message
+// and parts (opencode_schema.go).
 func (r transcriptRef) command() string {
 	query := `SELECT m.data, p.data FROM part p JOIN message m ON m.id = p.message_id ` +
 		`WHERE p.session_id = ` + quoteString(r.sessionID) + ` ORDER BY m.time_created, p.time_created;`
+	if openCodeStoreSessionTable(r.store) == openCodeSessionTableV2 {
+		query = `SELECT type, data FROM session_message ` +
+			`WHERE session_id = ` + quoteString(r.sessionID) + ` ORDER BY seq;`
+	}
 	return "sqlite3 " + shellQuote(r.store) + " " + shellQuote(query)
 }
 

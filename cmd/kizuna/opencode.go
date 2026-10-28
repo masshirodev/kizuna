@@ -273,6 +273,7 @@ var opencodeAuthTables = map[string]bool{
 var opencodeSessionTables = map[string]bool{
 	"session": true, "message": true, "part": true,
 	"session_message": true, "session_share": true, "todo": true,
+	openCodeSessionTableV2: true,
 }
 
 // mergeInstanceDatabase folds the instance session store into the profile's.
@@ -310,7 +311,8 @@ func mergeInstanceDatabase(profileDB, instanceDB string) (int, []string, error) 
 	// wait on the transaction's own connection forever. Reported only when
 	// the session table itself merges cleanly below; a skipped table must
 	// not be announced.
-	sessions, sessionMergeable := countNewSessionsIfMergeable(db, tables)
+	sessionTable := openCodeSharedSessionTable(db)
+	sessions, sessionMergeable := countNewSessionsIfMergeable(db, tables, sessionTable)
 	tx, err := db.Begin()
 	if err != nil {
 		return 0, nil, err
@@ -334,14 +336,14 @@ func mergeInstanceDatabase(profileDB, instanceDB string) (int, []string, error) 
 		incomingCols, err := tableColumns(tx, "incoming", table)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("skipped %s (unreadable)", table))
-			if table == "session" {
+			if table == sessionTable {
 				sessionMerged = false
 			}
 			continue
 		}
-		if !equalStrings(mainCols.names, incomingCols.names) {
+		if !sameColumns(mainCols.names, incomingCols.names) {
 			warnings = append(warnings, fmt.Sprintf("skipped %s (schema drift)", table))
-			if table == "session" {
+			if table == sessionTable {
 				sessionMerged = false
 			}
 			continue
@@ -357,7 +359,7 @@ func mergeInstanceDatabase(profileDB, instanceDB string) (int, []string, error) 
 		}
 		if execErr != nil {
 			warnings = append(warnings, fmt.Sprintf("skipped %s (%s)", table, execErr))
-			if table == "session" {
+			if table == sessionTable {
 				sessionMerged = false
 			}
 		}
@@ -406,8 +408,12 @@ func countSessionsIn(dbPath string) (int, []string, error) {
 		return 0, nil, nil
 	}
 	defer db.Close()
+	table := openCodeSessionTable(db, "main")
+	if table == "" {
+		return 0, nil, nil
+	}
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM session`).Scan(&count); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM ` + quoteIdentifier(table)).Scan(&count); err != nil {
 		return 0, nil, nil
 	}
 	return count, nil, nil
@@ -565,22 +571,24 @@ func hasTable(tables []string, name string) bool {
 
 // countNewSessionsIfMergeable counts incoming sessions absent from the
 // profile store, or reports the session table unmergeable (missing or
-// drifted) so the caller announces nothing it did not do.
-func countNewSessionsIfMergeable(db *sql.DB, tables []string) (int, bool) {
-	if !hasTable(tables, "session") || !tableExists(db, "main", "session") {
+// drifted) so the caller announces nothing it did not do. table is the
+// session table both stores share (openCodeSharedSessionTable).
+func countNewSessionsIfMergeable(db *sql.DB, tables []string, table string) (int, bool) {
+	if table == "" || !hasTable(tables, table) || !tableExists(db, "main", table) {
 		return 0, false
 	}
-	mainCols, err := tableColumns(db, "main", "session")
+	mainCols, err := tableColumns(db, "main", table)
 	if err != nil {
 		return 0, false
 	}
-	incomingCols, err := tableColumns(db, "incoming", "session")
-	if err != nil || !equalStrings(mainCols.names, incomingCols.names) {
+	incomingCols, err := tableColumns(db, "incoming", table)
+	if err != nil || !sameColumns(mainCols.names, incomingCols.names) {
 		return 0, false
 	}
+	quoted := quoteIdentifier(table)
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM incoming.session AS s WHERE NOT EXISTS
-		(SELECT 1 FROM main.session AS m WHERE m.id = s.id)`).Scan(&count); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM incoming.` + quoted + ` AS s WHERE NOT EXISTS
+		(SELECT 1 FROM main.` + quoted + ` AS m WHERE m.id = s.id)`).Scan(&count); err != nil {
 		return 0, false
 	}
 	return count, true
@@ -600,6 +608,21 @@ func quoteIdentifiers(names []string) []string {
 
 func quoteString(value string) string {
 	return `'` + strings.ReplaceAll(value, `'`, `''`) + `'`
+}
+
+// sameColumns says two tables carry the same columns, in whatever order.
+// Order is not schema drift: every merge statement names its columns, and
+// OpenCode 2.x orders them differently in a store it migrated (columns a
+// migration added come last) than in one it created fresh, so comparing in
+// order skipped session_v2 and project on every merge from a new instance.
+func sameColumns(first, second []string) bool {
+	return equalStrings(sortedCopy(first), sortedCopy(second))
+}
+
+func sortedCopy(values []string) []string {
+	sorted := append([]string(nil), values...)
+	sort.Strings(sorted)
+	return sorted
 }
 
 func equalStrings(first, second []string) bool {
@@ -888,6 +911,10 @@ func opencodeSessionInProfileDB(profile Profile, id string) bool {
 		return false
 	}
 	defer db.Close()
+	table := openCodeSessionTable(db, "main")
+	if table == "" {
+		return false
+	}
 	var one int
-	return db.QueryRow(`SELECT 1 FROM session WHERE id = ?`, id).Scan(&one) == nil
+	return db.QueryRow(`SELECT 1 FROM `+quoteIdentifier(table)+` WHERE id = ?`, id).Scan(&one) == nil
 }
