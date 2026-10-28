@@ -272,7 +272,8 @@ workaround this spec exists to fix.
   pooled query landing on a second connection sees no `incoming`. The
   session count runs before `Begin` for the same reason.
 - `todo` merges `OR IGNORE` with everything else; `permission` too. A
-  drifted table is skipped with a warning naming it.
+  drifted table (a different set of columns, not a different order) is
+  skipped with a warning naming it.
 - Resume of a session that only exists in a live instance is refused with
   the reason (`opencodeSessionInProfileDB`); the picker still shows it.
 - `TestRealDBSeedAndMerge` seeds and merges a copy of the operator's real

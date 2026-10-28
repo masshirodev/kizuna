@@ -121,9 +121,11 @@ OpenCode keeps its own SQLite database (`opencode.db`) with title, folder, and
 timestamp as plain columns — no parsing needed, and resuming picks the exact
 conversation by id (`opencode --session <id>`), the same as Codex and Claude.
 The conversation itself is read out of that store too, for the handoff brief and
-the preview pane: `message` carries the role and `part` the prose, and only the
-`text` parts survive the read (tool calls, reasoning and step markers are not
-something anyone said). See [Handing a session to another account](#handing-a-session-to-another-account).
+the preview pane: in a 2.x store each `session_message` row is one turn, in a
+1.x store `message` carries the role and `part` the prose, and either way only
+text survives the read (tool calls, reasoning and step markers are not
+something anyone said). [The 2.x schema](opencode-service.md#the-2x-schema)
+says which tables kizuna reads when. See [Handing a session to another account](#handing-a-session-to-another-account).
 
 **A row is titled with the conversation's own name where there is one.** Claude
 Code names a conversation itself a few turns in and writes that name into the
@@ -331,9 +333,13 @@ to land. The brief step's key line says which of the two it will do.
 ### Reading OpenCode
 
 The OpenCode reader is the same reduction the other two get, from a different
-shape of store. `message` carries the role and `part` the prose; only `text`
-parts survive, and the store is filtered by `session_id` so a large database is
-queried by session rather than read whole. The rows are parsed in Go rather than
+shape of store. OpenCode 2.x keeps one `session_message` row a turn: a `user`
+turn's `text`, an `assistant` turn's `text` items in `content`, and `system`,
+`synthetic` and `idle` turns dropped. A 1.x store keeps `message` for the role
+and `part` for the prose, and only `text` parts survive. A store that has both
+(2.x migrated it) is read from `session_message`, falling back to the parts for
+a session that has no turns there. Either way the store is filtered by
+`session_id` so a large database is queried by session rather than read whole. The rows are parsed in Go rather than
 with SQL's JSON functions, so the reader does not depend on how the SQLite build
 was compiled.
 

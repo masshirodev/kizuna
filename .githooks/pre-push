@@ -1,0 +1,80 @@
+#!/usr/bin/env sh
+
+# Whole-repository checks, once per push rather than per commit: the hooks are
+# armed, and the suite passes above its coverage floor. See doc/TESTING.md.
+#
+# Skip flags (set to any non-empty value):
+#   SKIP_HOOKS SKIP_TESTS SKIP_HAJIME SKIP_ALL
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+DIM='\033[2m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+step() { printf "\n${CYAN}${BOLD}> %s${RESET}\n" "$1"; }
+ok() { printf "${GREEN}[ok] %s${RESET}\n" "$1"; }
+skip() { printf "${YELLOW}[skip] %s${RESET}\n" "$1"; }
+fail() { printf "${RED}[fail] %s${RESET}\n" "$1"; }
+
+# git exports GIT_DIR, GIT_INDEX_FILE and the rest to every hook. A test that
+# runs `git init` or `git commit` in a temporary directory then acts on THIS
+# repository instead: adopting kizuna, its suite set core.bare on the owner's
+# checkout and committed to the branch being pushed (Hajime c35). Every step
+# below finds the repository from the working directory instead.
+unset $(git rev-parse --local-env-vars)
+
+if [ -n "$SKIP_ALL" ]; then
+	printf "${YELLOW}${BOLD}pre-push: SKIP_ALL set - skipping every check${RESET}\n"
+	exit 0
+fi
+
+printf "${BOLD}pre-push: running repository checks${RESET}\n"
+printf "${DIM}  skip flags: SKIP_HOOKS SKIP_TESTS SKIP_HAJIME SKIP_ALL${RESET}\n"
+
+# Reaching this file means git found the hooks this time. What the step catches
+# is the checkout that found them by accident: a core.hooksPath that is absolute
+# and names another checkout's .githooks, or one set by hand and about to be
+# lost. scripts/hooks.sh is the one way it is meant to be set.
+if [ -n "$SKIP_HOOKS" ]; then
+	skip "hook arming"
+else
+	step "hook arming"
+	if ! scripts/hooks.sh --check; then
+		fail "git hooks are not armed for this checkout"
+		exit 1
+	fi
+	ok "hooks armed"
+fi
+
+if [ -n "$SKIP_TESTS" ]; then
+	skip "tests + coverage"
+else
+	step "tests + coverage (77% floor)"
+	if ! scripts/coverage.sh; then
+		fail "a test failed or coverage fell below 77%"
+		exit 1
+	fi
+	ok "tests passed above the floor"
+fi
+
+# The house rules hajime holds (~/projects/hajime, doc/DESIGN.md): briefs,
+# bare yarn calls, what git tracks, the floor's settings. Offline and seconds,
+# so it runs on every push instead of when somebody remembers to. A machine
+# without hajime skips rather than fails, like the agent-docs budget.
+if [ -n "$SKIP_HAJIME" ]; then
+	skip "house rules"
+elif command -v hajime >/dev/null 2>&1; then
+	step "house rules (hajime check)"
+	if ! hajime check --offline; then
+		fail "a house rule is broken: hajime apply fixes what it can, the rest says what to do"
+		exit 1
+	fi
+	ok "house rules hold"
+else
+	skip "hajime not installed"
+fi
+
+printf "\n${GREEN}${BOLD}[ok] pre-push checks passed${RESET}\n"
