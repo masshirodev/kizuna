@@ -9,7 +9,8 @@ updated from that by hand. The layout follows ranma's
 
 ## CI
 
-`.github/workflows/ci.yml` runs `gofmt`, `go vet` and `go test` on every push to
+`.github/workflows/ci.yml` runs `gofmt`, `go vet` and the suite with its coverage floor
+(`scripts/coverage.sh`, [TESTING.md](TESTING.md)) on every push to
 `main` and every pull request; `release.yml` runs them again on a tag before it
 publishes. The suite must pass on a clean runner, which has none of the provider
 CLIs installed and none of the processes a workstation runs: a test that needs

@@ -1,0 +1,12 @@
+{
+	"name": "kizuna",
+	"title": "Kizuna",
+	"stack": "go",
+	"visibility": "public",
+	"owner": "masshirodev",
+	"ports": {},
+	"floor": 77,
+	"board": "ai-session",
+	"skip": [],
+	"repo": "masshirodev/kizuna"
+}
