@@ -116,6 +116,8 @@ on right now.
 | Reopening every session a power cut killed: `kizuna resume-all` | [doc/restore.md](doc/restore.md) |
 | Coming from ai-session: what the rename moved, and what it kept | [doc/rename.md](doc/rename.md) |
 | Cutting a release, and the AUR packages | [doc/RELEASING.md](doc/RELEASING.md) |
+| The decisions that cut across features | [doc/DESIGN.md](doc/DESIGN.md) |
+| Tests, the coverage floor, and the git hooks | [doc/TESTING.md](doc/TESTING.md) |
 
 ## License
 
