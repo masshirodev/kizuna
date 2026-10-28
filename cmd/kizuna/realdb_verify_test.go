@@ -47,12 +47,20 @@ func TestRealDBResumeImportAndMerge(t *testing.T) {
 	}
 
 	// A small top-level session whose folder still exists: import runs there.
+	// The archive says which schema it keeps (a 2.x store: session_v2 and one
+	// session_message row a turn; a 1.x one: session and its parts), and the
+	// assertions below read whichever that is.
 	db, err := sql.Open("sqlite", archive)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err := db.Query(`SELECT s.id, s.directory, s.project_id, (SELECT COUNT(*) FROM part p WHERE p.session_id = s.id)
-		FROM session s WHERE s.parent_id IS NULL ORDER BY 4 ASC`)
+	sessions, turns := openCodeSessionTable(db, "main"), "part"
+	if sessions == openCodeSessionTableV2 {
+		turns = openCodeTurnTableV2
+	}
+	t.Logf("archive schema: sessions in %s, turns in %s", sessions, turns)
+	rows, err := db.Query(`SELECT s.id, s.directory, s.project_id, (SELECT COUNT(*) FROM ` + turns + ` p WHERE p.session_id = s.id)
+		FROM ` + sessions + ` s WHERE s.parent_id IS NULL ORDER BY 4 ASC`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,11 +95,18 @@ func TestRealDBResumeImportAndMerge(t *testing.T) {
 	if stderr.Len() > 0 {
 		t.Fatalf("import reported: %s", stderr.String())
 	}
-	if got := queryCell(t, instanceDB, `SELECT project_id FROM session WHERE id = '`+id+`'`); got != project {
+	if got := queryCell(t, instanceDB, `SELECT project_id FROM `+sessions+` WHERE id = '`+id+`'`); got != project {
 		t.Fatalf("imported session is under project %q, want the archive's %q", got, project)
 	}
-	if got := countRows(t, instanceDB, "part"); got != parts {
-		t.Fatalf("instance holds %d parts, want the session's %d", got, parts)
+	if got := countRows(t, instanceDB, turns); got != parts {
+		t.Fatalf("instance holds %d %s rows, want the session's %d", got, turns, parts)
+	}
+	// kizuna's own readers find it in the instance, by the schema it has.
+	if directory, ok := openCodeSessionDirectory(instanceDB, id); !ok || directory != folder {
+		t.Fatalf("openCodeSessionDirectory(instance) = %q, %v; want %q", directory, ok, folder)
+	}
+	if said, err := readOpenCodeMessages(instanceDB, id); err != nil || len(said) == 0 {
+		t.Fatalf("readOpenCodeMessages(instance) = %d messages, %v; want the session's prose", len(said), err)
 	}
 	if got := countRows(t, instanceDB, "event"); got != 0 {
 		t.Fatalf("import wrote %d event rows into the instance", got)
@@ -102,14 +117,14 @@ func TestRealDBResumeImportAndMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := idb.Exec(`UPDATE session SET title = 'continued', time_updated = time_updated + 1000 WHERE id = ?`, id); err != nil {
+	if _, err := idb.Exec(`UPDATE `+sessions+` SET title = 'continued', time_updated = time_updated + 1000 WHERE id = ?`, id); err != nil {
 		t.Fatal(err)
 	}
 	idb.Close()
 
 	note := unlock()
 	t.Logf("merge note: %q", note)
-	if got := queryCell(t, archive, `SELECT title FROM session WHERE id = '`+id+`'`); got != "continued" {
+	if got := queryCell(t, archive, `SELECT title FROM `+sessions+` WHERE id = '`+id+`'`); got != "continued" {
 		t.Fatalf("archive kept title %q after the resumed session moved on", got)
 	}
 }

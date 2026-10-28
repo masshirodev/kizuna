@@ -85,15 +85,33 @@ XDG_CONFIG_HOME=$P/config XDG_DATA_HOME=$P/data XDG_STATE_HOME=$P/state \
 `ss -ltnp | grep opencode` lists the ones still listening, and
 `/proc/<pid>/environ` says which store each one serves.
 
-## Still open: the 2.x schema
+## The 2.x schema
 
-2.x also moved sessions to new tables (`session_v2`, `session_message`), and a
-fresh 2.x store has no `session`, `message`, `part` or `todo` at all. kizuna's
-readers, the resume lookup and the merge still read the legacy tables, so the
-sessions 2.x creates do not show up in kizuna. On 2026-10-26 the `opencode`
-profile's archive held 139 legacy sessions and 146 in `session_v2`, and the
-legacy table had not changed since 2026-10-14.
-`TestRealDBResumeImportAndMerge`, which runs the real binary on a copy of the
-real store, fails on exactly this: the import now succeeds but lands in tables
-the test does not read. That migration is its own piece of work and is not
-part of this fix.
+2.x also moved sessions to new tables: `session_v2` for the sessions and
+`session_message` for their turns, one row a turn ordered by `seq`. A fresh
+2.x store has no `session`, `message`, `part` or `todo` at all; a store 2.x
+migrated from 1.x keeps both, and the v2 tables are the superset. On
+2026-10-28 the `opencode` profile's archive held 139 legacy sessions, every
+one of them also in `session_v2` beside 10 newer ones, and the legacy tables
+had not moved since 2026-10-14.
+
+Every reader asks the store which it has and prefers v2
+(`cmd/kizuna/opencode_schema.go`): the session list and its headless marks,
+the resume lookups (the folder a session ran in, the newest one in a folder,
+whether the archive holds it), the freshest copy of a live session, the
+conversation read for search, previews and handoff briefs, and the
+`sqlite3` command a brief hands over. A 1.x store still reads as before.
+
+The merge carries `session_v2` newest `time_updated` wins, like the legacy
+session table, and counts the sessions of whichever session table both stores
+share. It also compares columns as a set: a migrated archive orders
+`session_v2` and `project` differently from a fresh instance store (a
+migration's columns come last), and the ordered comparison skipped both as
+"schema drift" whenever the two orders differed. The merge still succeeded,
+so the instance store was retired with its sessions never carried into the
+archive. Which past launches that hit is not known (no instance store
+survives to check); from this fix on it cannot happen.
+
+`TestRealDBResumeImportAndMerge` runs the real binary on a copy of the real
+store (the original is only read) and checks the import, kizuna's readers on
+the instance, and the merge back, against whichever schema the store has.
