@@ -67,3 +67,9 @@ shows it line by line.
 The hooks live in `.githooks/`, which git only runs once `core.hooksPath`
 points at it. A clone does not carry that setting: run `scripts/hooks.sh`
 once per clone, and `scripts/hooks.sh --check` says whether it has been.
+
+`pre-push` clears git's own hook environment before any step
+(`git rev-parse --local-env-vars`). Several tests make a repository with
+`git init` in a `t.TempDir()`; with `GIT_DIR` inherited from the hook they
+acted on kizuna's own repository instead, set `core.bare` on the main
+checkout and committed onto the branch being pushed.
