@@ -176,8 +176,12 @@ func newestOpenCodeSessionIn(archive, folder string) string {
 		return ""
 	}
 	defer db.Close()
+	table := openCodeSessionTable(db, "main")
+	if table == "" {
+		return ""
+	}
 	var id string
-	if err := db.QueryRow(`SELECT id FROM session WHERE directory = ? AND parent_id IS NULL
+	if err := db.QueryRow(`SELECT id FROM `+quoteIdentifier(table)+` WHERE directory = ? AND parent_id IS NULL
 		ORDER BY time_updated DESC LIMIT 1`, folder).Scan(&id); err != nil {
 		return ""
 	}
@@ -194,8 +198,12 @@ func openCodeSessionDirectory(archive, id string) (string, bool) {
 		return "", false
 	}
 	defer db.Close()
+	table := openCodeSessionTable(db, "main")
+	if table == "" {
+		return "", false
+	}
 	var directory string
-	if err := db.QueryRow(`SELECT directory FROM session WHERE id = ?`, id).Scan(&directory); err != nil {
+	if err := db.QueryRow(`SELECT directory FROM `+quoteIdentifier(table)+` WHERE id = ?`, id).Scan(&directory); err != nil {
 		return "", false
 	}
 	return directory, true

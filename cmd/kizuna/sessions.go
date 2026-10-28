@@ -430,13 +430,17 @@ func queryOpenCodeSessions(dbPath string, limit int) ([]recordedSession, error) 
 	}
 	defer db.Close()
 
-	records, err := queryOpenCodeSessionRows(db, "time_updated", limit)
+	table := openCodeSessionTable(db, "main")
+	if table == "" {
+		return nil, errors.New(dbPath + " has no session table")
+	}
+	records, err := queryOpenCodeSessionRows(db, table, "time_updated", limit)
 	if err != nil {
-		if records, err = queryOpenCodeSessionRows(db, "time_created", limit); err != nil {
+		if records, err = queryOpenCodeSessionRows(db, table, "time_created", limit); err != nil {
 			return nil, err
 		}
 	}
-	markHeadlessOpenCodeSessions(db, records)
+	markHeadlessOpenCodeSessions(db, table, records)
 	return records, nil
 }
 
@@ -448,8 +452,8 @@ const openCodeHeadlessPermission = `"permission":"question","pattern":"*","actio
 
 // markHeadlessOpenCodeSessions flags the headless ones among records. A store
 // too old to have the permission column marks nothing.
-func markHeadlessOpenCodeSessions(db *sql.DB, records []recordedSession) {
-	rows, err := db.Query(`SELECT id FROM session WHERE instr(permission, ?) > 0`, openCodeHeadlessPermission)
+func markHeadlessOpenCodeSessions(db *sql.DB, table string, records []recordedSession) {
+	rows, err := db.Query(`SELECT id FROM `+quoteIdentifier(table)+` WHERE instr(permission, ?) > 0`, openCodeHeadlessPermission)
 	if err != nil {
 		return
 	}
@@ -468,8 +472,10 @@ func markHeadlessOpenCodeSessions(db *sql.DB, records []recordedSession) {
 
 // queryOpenCodeSessionRows runs the listing against one known timestamp column,
 // selected twice so a store without time_updated still gets a lastActive back.
-func queryOpenCodeSessionRows(db *sql.DB, column string, limit int) ([]recordedSession, error) {
-	query := "SELECT id, title, directory, time_created, " + column + " FROM session ORDER BY " + column + " DESC"
+// session_v2's title may be NULL (a session 2.x has not titled yet), so it is
+// read as an empty title rather than failing the row.
+func queryOpenCodeSessionRows(db *sql.DB, table, column string, limit int) ([]recordedSession, error) {
+	query := "SELECT id, COALESCE(title, ''), directory, time_created, " + column + " FROM " + quoteIdentifier(table) + " ORDER BY " + column + " DESC"
 	var rows *sql.Rows
 	var err error
 	if limit > 0 {
@@ -539,7 +545,9 @@ func decodeOpenCodePart(messageData, partData []byte) (handoffMessage, bool) {
 
 // readOpenCodeMessages reads one session's prose out of an OpenCode store, in
 // order. It is the OpenCode counterpart to readAllMessages: the same reduction
-// from a different shape of store.
+// from a different shape of store. A 2.x store is read from session_message;
+// a session found there with no turns, or a store without the table, falls
+// back to the legacy message and part tables (opencode_schema.go).
 //
 // It waits on a lock rather than failing: the search backfill reads several
 // sessions of one store at once, beside an OpenCode that may be writing it, and
@@ -553,6 +561,12 @@ func readOpenCodeMessages(dbPath, sessionID string) ([]handoffMessage, error) {
 	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
 		return nil, err
+	}
+	if tableExists(db, "main", openCodeTurnTableV2) {
+		messages, turns, err := readOpenCodeTurns(db, sessionID)
+		if err != nil || turns > 0 || !tableExists(db, "main", "part") {
+			return messages, err
+		}
 	}
 	rows, err := db.Query(opencodeMessagesQuery, sessionID)
 	if err != nil {
@@ -570,6 +584,30 @@ func readOpenCodeMessages(dbPath, sessionID string) ([]handoffMessage, error) {
 		}
 	}
 	return messages, rows.Err()
+}
+
+// readOpenCodeTurns reads one session out of session_message. turns counts
+// every row, said or not, so the caller can tell a session 2.x holds with
+// nothing said from one it does not hold at all.
+func readOpenCodeTurns(db *sql.DB, sessionID string) ([]handoffMessage, int, error) {
+	rows, err := db.Query(opencodeTurnsQuery, sessionID)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var messages []handoffMessage
+	turns := 0
+	for rows.Next() {
+		var kind, data string
+		if err := rows.Scan(&kind, &data); err != nil {
+			continue
+		}
+		turns++
+		if message, ok := decodeOpenCodeTurn(kind, []byte(data)); ok {
+			messages = append(messages, message)
+		}
+	}
+	return messages, turns, rows.Err()
 }
 
 // opencodeStoreFor finds the store a session can be read out of. More than one
@@ -607,8 +645,12 @@ func opencodeSessionUpdated(dbPath, id string) (int64, bool) {
 		return 0, false
 	}
 	defer db.Close()
+	table := openCodeSessionTable(db, "main")
+	if table == "" {
+		return 0, false
+	}
 	var updated int64
-	if err := db.QueryRow(`SELECT time_updated FROM session WHERE id = ?`, id).Scan(&updated); err != nil {
+	if err := db.QueryRow(`SELECT time_updated FROM `+quoteIdentifier(table)+` WHERE id = ?`, id).Scan(&updated); err != nil {
 		return 0, false
 	}
 	return updated, true
