@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -179,6 +180,101 @@ func TestRestoreLedgerKeepsTheRecordOnlyWhenCutOff(t *testing.T) {
 	ledger.finish(false)
 	if len(readRestoreRecords(dir)) != 0 {
 		t.Fatal("a launch that ended on its own kept its record")
+	}
+}
+
+func TestTrackedLaunchRestoresSessionsButNotLoginsOrHeadlessRuns(t *testing.T) {
+	claude := Profile{Name: "pro", Provider: "claude"}
+	cmd := exec.Command("true")
+	if trackedLaunch(cmd, "", claude, nil, false).restore == nil {
+		t.Error("an interactive TUI launch keeps no restore record")
+	}
+	if trackedLaunch(cmd, "", claude, []string{"-p", "x"}, false).restore != nil {
+		t.Error("a headless TUI launch keeps a restore record")
+	}
+	if trackedLaunch(cmd, "", claude, loginArgs("claude"), true).restore != nil {
+		t.Error("a login keeps a restore record")
+	}
+}
+
+// startTracked runs a TUI launch of `sleep 30` in the background and waits
+// until its restore record is on disk, so a test can end it and look at what
+// the record became.
+func startTracked(t *testing.T) (dir string, child int, result <-chan os.Signal) {
+	t.Helper()
+	root := isolatePeers(t)
+	profile := Profile{Name: "oc", Provider: "opencode"}
+	lockDir := filepath.Join(root, appName, "profiles", "oc", instancesDirectory, "run-1")
+	if err := os.MkdirAll(lockDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sleep", "30")
+	cmd.Dir = t.TempDir()
+	tracked := trackedLaunch(cmd, lockDir, profile, nil, false)
+	done := make(chan os.Signal, 1)
+	go func() {
+		stoppedBy, _ := tracked.run()
+		done <- stoppedBy
+	}()
+	dir, _ = restoreDir()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(readRestoreRecords(dir)) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("a TUI launch wrote no restore record")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	records := readRestoreRecords(dir)
+	if records[0].Folder != cmd.Dir || records[0].PID != os.Getpid() {
+		t.Fatalf("record = %+v, want the launch's folder and the TUI's pid", records[0])
+	}
+	// The child's pid comes off the lock, written before the record, rather
+	// than off cmd.Process, which belongs to the goroutine running it.
+	lock, err := os.ReadFile(filepath.Join(lockDir, ".active.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Fields(string(lock))
+	child, err = strconv.Atoi(lines[len(lines)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
+	return dir, child, done
+}
+
+func awaitTracked(t *testing.T, done <-chan os.Signal) os.Signal {
+	t.Helper()
+	select {
+	case stoppedBy := <-done:
+		return stoppedBy
+	case <-time.After(10 * time.Second):
+		t.Fatal("the TUI launch never returned")
+		return nil
+	}
+}
+
+func TestTrackedLaunchDropsTheRecordOfASessionThatEnded(t *testing.T) {
+	dir, child, done := startTracked(t)
+	_ = syscall.Kill(child, syscall.SIGINT)
+	if stoppedBy := awaitTracked(t, done); stoppedBy != nil {
+		t.Errorf("stoppedBy = %v, want none", stoppedBy)
+	}
+	if records := readRestoreRecords(dir); len(records) != 0 {
+		t.Fatalf("a session that ended on its own kept its record: %+v", records)
+	}
+}
+
+func TestTrackedLaunchKeepsTheRecordThroughAShutdown(t *testing.T) {
+	dir, _, done := startTracked(t)
+	// What systemd sends at shutdown. The forwarder holds it for the child,
+	// so the test process survives it.
+	_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
+	if stoppedBy := awaitTracked(t, done); stoppedBy != syscall.SIGTERM {
+		t.Errorf("stoppedBy = %v, want SIGTERM", stoppedBy)
+	}
+	if records := readRestoreRecords(dir); len(records) != 1 {
+		t.Fatalf("a session cut off by a shutdown lost its record: %+v", records)
 	}
 }
 

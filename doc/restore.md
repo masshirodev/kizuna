@@ -47,6 +47,16 @@ starts, and rewrites it every 20 seconds while it runs
   asked of `ranma panes --json` on every refresh, since panes move;
 - the boot id and the launcher's pid, which say whether it is still alive.
 
+A launch from the TUI goes through `trackedExecCommand` in `cmd/kizuna/tui.go`
+rather than `runCommandWithLock`, so it carries the same two pieces itself: the
+restore ledger, and the signal forwarder that tells a shutdown from a closed
+pane. Until 2026-10-28 it carried neither. Every session started from the
+picker (a bare `kizuna`, then a profile) went unrecorded, and after a crash
+that day `resume-all` found nothing to reopen while five agents had been
+running. Anything that adds a third way to launch a session has to start the
+ledger too: `restorable` decides whether a launch is worth it, and only a
+launch that starts the ledger ever gets a record.
+
 The records live outside the instance directories on purpose: those are
 reclaimed by the first `kizuna` that finds their lock dead, which after a reboot is
 whichever runs first.
@@ -64,6 +74,11 @@ end by themselves and have nothing to come back to.
 | SIGHUP while `systemctl is-system-running` says `stopping` | kept |
 | SIGTERM: a shutdown or reboot | kept |
 | Power cut, SIGKILL, kernel panic: no signal at all | kept |
+
+The TUI holds a SIGHUP back while its launch winds down, so the ledger can
+settle the record, then raises it again on itself. Bubble Tea handles no
+SIGHUP, and without that second raise the picker would come back on a terminal
+that is already gone. A SIGTERM needs no second raise: Bubble Tea quits on it.
 
 A record is **dead**, and a candidate, when it comes from another boot
 (`/proc/sys/kernel/random/boot_id` differs, so a reused pid cannot fool it) or
@@ -94,7 +109,8 @@ it, not at their old sizes.
 
 - A conversation switched inside the CLI (`/resume`, `/clear`) less than 20
   seconds before the cut reopens as the one before.
-- Only sessions started by a `kizuna` that has this feature keep records. Install
+- Only sessions started by a `kizuna` that has this feature keep records, and
+  for launches from the TUI that means a build from 2026-10-28 or later. Install
   it (`go install ./...`, or `kizuna self-update`) and relaunch before the next
   blackout, or the sessions running now are not covered.
 - OpenCode's private instance stores are merged back by

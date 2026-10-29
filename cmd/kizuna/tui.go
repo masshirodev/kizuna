@@ -2201,9 +2201,20 @@ func (m *tuiModel) execProfileWith(profile Profile, args, env []string, exclusiv
 	}
 	m.running = true
 	m.unlock = unlock
-	return tea.Exec(trackedExecCommand{cmd: cmd, workdir: lockDir, title: sessionTitle(profile)}, func(err error) tea.Msg {
+	return tea.Exec(trackedLaunch(cmd, lockDir, profile, args, exclusive), func(err error) tea.Msg {
 		return processFinishedMsg{err: err}
 	})
+}
+
+// trackedLaunch keeps a restore record for a TUI launch on the same terms as
+// a CLI one (launchProfileCommand): a login has nothing to come back to after
+// a power cut, and neither does a headless run or a management command.
+func trackedLaunch(cmd *exec.Cmd, lockDir string, profile Profile, args []string, exclusive bool) trackedExecCommand {
+	tracked := trackedExecCommand{cmd: cmd, workdir: lockDir, title: sessionTitle(profile)}
+	if !exclusive && restorable(profile, args) {
+		tracked.restore = &profile
+	}
+	return tracked
 }
 
 func (m *tuiModel) execUpdate(profile Profile) tea.Cmd {
@@ -2294,28 +2305,58 @@ type trackedExecCommand struct {
 	cmd     *exec.Cmd
 	workdir string
 	title   string
+	// restore names the profile of a launch worth reopening after a power
+	// cut, as runCommandWithLock's argument does; nil keeps no record.
+	restore *Profile
 }
 
 func (c trackedExecCommand) SetStdin(reader io.Reader)  { c.cmd.Stdin = reader }
 func (c trackedExecCommand) SetStdout(writer io.Writer) { c.cmd.Stdout = writer }
 func (c trackedExecCommand) SetStderr(writer io.Writer) { c.cmd.Stderr = writer }
 func (c trackedExecCommand) Run() error {
+	stoppedBy, err := c.run()
+	// The forwarder held back a SIGHUP that used to end the TUI outright, and
+	// Bubble Tea does not handle one, so left alone the picker would come back
+	// on a terminal that is gone. With default handling restored, raising it
+	// again ends the TUI the way it always ended. SIGTERM needs no help: Bubble
+	// Tea quits on it.
+	if stoppedBy == syscall.SIGHUP {
+		_ = syscall.Kill(os.Getpid(), syscall.SIGHUP)
+	}
+	return err
+}
+
+func (c trackedExecCommand) run() (os.Signal, error) {
 	// Bubble Tea has already released the terminal, so the title escape reaches
 	// it directly rather than being swallowed by the alternate screen.
 	restoreTitle := markTerminalTitle(c.cmd.Stdout, c.title)
 	defer restoreTitle()
 	defer stopTmuxServer(c.workdir)
+	// The same forwarding a CLI launch has, and for the same reason: the
+	// restore record needs to know whether a SIGHUP was a pane closed by hand
+	// or the machine going down, and without a handler a SIGHUP kills the TUI
+	// before the ledger can drop the record of a session that ended on purpose.
+	signals := forwardSignals()
+	defer signals.stop()
 	if err := c.cmd.Start(); err != nil {
-		return err
+		return nil, err
 	}
+	signals.attach(c.cmd.Process)
 	if err := setProfileChildPID(c.workdir, c.cmd.Process.Pid); err != nil {
 		_ = c.cmd.Process.Kill()
 		_ = c.cmd.Wait()
-		return err
+		return signals.stopSignal(), err
 	}
 	// Every launch from the TUI hands the terminal over, so none is headless.
 	_ = setProfileInstanceMeta(c.workdir, c.cmd.Dir, false, c.cmd.Env, launchingInstanceID())
-	return c.cmd.Wait()
+	if c.restore == nil {
+		err := c.cmd.Wait()
+		return signals.stopSignal(), err
+	}
+	ledger := startRestoreLedger(*c.restore, c.workdir, c.cmd.Process.Pid, commandFolder(c.cmd), c.cmd.Env)
+	err := c.cmd.Wait()
+	ledger.finish(cutOff(signals.stopSignal(), systemStopping))
+	return signals.stopSignal(), err
 }
 
 const usageWidth = 4
