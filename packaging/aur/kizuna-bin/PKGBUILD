@@ -1,4 +1,4 @@
-# Maintainer: masshirodev <guilhermemrka@gmail.com>
+# Maintainer: masshirodev <masshiro.iro.kk@gmail.com>
 # The prebuilt binary from a GitHub release. doc/RELEASING.md says how to bump it.
 pkgname=kizuna-bin
 pkgver=0.1.0

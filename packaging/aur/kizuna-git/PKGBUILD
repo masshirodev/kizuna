@@ -1,4 +1,4 @@
-# Maintainer: masshirodev <guilhermemrka@gmail.com>
+# Maintainer: masshirodev <masshiro.iro.kk@gmail.com>
 # Built from main. doc/RELEASING.md covers the packages.
 pkgname=kizuna-git
 pkgver=0.1.0.r0.g0000000
