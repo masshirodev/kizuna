@@ -71,6 +71,10 @@ type isolatedSeedInfo struct {
 	// HistorySize is the byte size of the profile's prompt-history.jsonl at
 	// seed time; everything past it in the instance copy is this run's.
 	HistorySize int64 `json:"history_size"`
+	// Credentials lists the credential rows the instance received from the
+	// archive at launch (seedOpenCodeCredentials), so the merge can tell a
+	// copy left alone from a change or a logout.
+	Credentials []seededCredentialRow `json:"credentials,omitempty"`
 }
 
 // isIsolatedInstanceDir reports whether lockDir holds a seeded OpenCode store.
@@ -215,7 +219,7 @@ func mergeIsolatedStore(workdir string, profile Profile, instanceDir string) (st
 			migrateWarning = fmt.Sprintf("could not migrate the archive (%s)", err)
 		}
 	}
-	sessions, warnings, err := mergeInstanceDatabase(profileDB, instanceDB)
+	sessions, warnings, err := mergeInstanceDatabase(profileDB, instanceDB, seed.Credentials)
 	if err != nil {
 		return "", err
 	}
@@ -278,9 +282,10 @@ var opencodeSessionTables = map[string]bool{
 
 // mergeInstanceDatabase folds the instance session store into the profile's.
 // New rows arrive by id; rows the profile already has are left alone, except
-// auth rows, which compare time_updated. A missing profile database means the
+// auth rows, which compare time_updated once the rows copied in at launch are
+// settled (settleSeededCredentials). A missing profile database means the
 // profile never ran, so the instance store is adopted wholesale.
-func mergeInstanceDatabase(profileDB, instanceDB string) (int, []string, error) {
+func mergeInstanceDatabase(profileDB, instanceDB string, seeded []seededCredentialRow) (int, []string, error) {
 	if _, err := os.Stat(instanceDB); err != nil {
 		return 0, nil, nil
 	}
@@ -351,7 +356,10 @@ func mergeInstanceDatabase(profileDB, instanceDB string) (int, []string, error) 
 		var execErr error
 		switch {
 		case opencodeAuthTables[table]:
-			execErr = mergeNewerRows(tx, table, mainCols)
+			execErr = settleSeededCredentials(tx, table, mainCols, seeded)
+			if execErr == nil {
+				execErr = mergeNewerRows(tx, table, mainCols)
+			}
 		case opencodeSessionTables[table] && canOrderByUpdated(mainCols):
 			execErr = mergeNewerRows(tx, table, mainCols)
 		default:

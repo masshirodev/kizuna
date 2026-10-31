@@ -48,12 +48,16 @@ func openCodeResumeTarget(args []string) (id string, latest bool) {
 	return "", latest
 }
 
-// prepareOpenCodeInstance imports the conversation a launch reopens into its
-// fresh instance store. It never fails the launch: a session that cannot be
-// brought in is reported, and opencode then says itself that it found none.
+// prepareOpenCodeInstance brings the profile's stored credentials and the
+// conversation a launch reopens into its fresh instance store. It never fails
+// the launch: what cannot be brought in is reported, and opencode then says
+// itself what it is missing.
 func prepareOpenCodeInstance(profile Profile, workdir, lockDir, folder string, args []string, stderr io.Writer) {
 	if !usesIsolatedDataDir(profile) || !isIsolatedInstanceDir(lockDir) {
 		return
+	}
+	if err := seedOpenCodeCredentials(profile, workdir, lockDir); err != nil {
+		fmt.Fprintf(stderr, "could not bring %s's credentials into this instance: %s\n", profile.Name, err)
 	}
 	id, latest := openCodeResumeTarget(args)
 	archive := filepath.Join(workdir, "data", "opencode", "opencode.db")
@@ -115,16 +119,22 @@ func runOpenCodeTool(profile Profile, workdir, lockDir, dir string, args ...stri
 	cmd.Stderr = &stderr
 	output, err := cmd.Output()
 	if err != nil {
-		detail := strings.TrimSpace(stderr.String())
-		if index := strings.LastIndexByte(detail, '\n'); index >= 0 {
-			detail = detail[index+1:]
-		}
-		if detail != "" {
-			return nil, fmt.Errorf("%w: %s", err, detail)
-		}
-		return nil, err
+		return nil, openCodeToolError(err, stderr.String())
 	}
 	return output, nil
+}
+
+// openCodeToolError adds the last line opencode wrote to stderr, which is
+// where it says what went wrong, to a helper run's exit error.
+func openCodeToolError(err error, stderr string) error {
+	detail := strings.TrimSpace(stderr)
+	if index := strings.LastIndexByte(detail, '\n'); index >= 0 {
+		detail = detail[index+1:]
+	}
+	if detail != "" {
+		return fmt.Errorf("%w: %s", err, detail)
+	}
+	return err
 }
 
 // archiveBehindInstance reports whether an instance store was migrated by an

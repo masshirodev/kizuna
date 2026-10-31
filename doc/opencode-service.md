@@ -53,7 +53,7 @@ exclusive ones (`kizuna <profile> login`), and resume-in-folder.
   the rest: `run --standalone …`, `session export --standalone <id>`,
   `auth login --standalone`.
 - **Where it does not.** Subcommands that never reach the service (`upgrade`,
-  `mcp`, `service`, `auth list`, …), and `api`, `reload` and `pair`, which
+  `mcp`, `service`, …), and `api`, `reload` and `pair`, which
   exist to talk to a running service and are left to whoever typed them. An
   invocation that already says `--standalone` or `--server` keeps its choice.
   Other tools a profile runs under its environment (openusage) never get it.
@@ -63,6 +63,11 @@ exclusive ones (`kizuna <profile> login`), and resume-in-folder.
   answer counts as 1.x: a missing flag brings back the daemon, a wrong one
   breaks every launch. DeepSeek profiles run the same binary and get the
   same treatment.
+
+On 2.2.5 every `auth` verb (`list`, `logout`, `export`, `import`, `switch`)
+reaches the service, not only `login`, and all of them get the flag. The
+credential seed a launch runs (`auth export | auth import`,
+[opencode-credentials.md](opencode-credentials.md)) passes it itself.
 
 The session import that a resume runs (session-store.md) moved too: 2.x
 spells it `session export` and `session import`, and its import takes

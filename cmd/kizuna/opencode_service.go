@@ -38,9 +38,10 @@ const openCodeStandaloneFlag = "--standalone"
 const openCodeServerFlag = "--server"
 
 // openCodeStandaloneCommands names the OpenCode 2.x subcommands that reach the
-// background service, built from each one's `--help` (opencode 2.0.32): the
-// value lists the second word that does, or is nil when the subcommand itself
-// does. The bare TUI is not a subcommand and is handled apart. `api`,
+// background service, built from each one's `--help` (opencode 2.0.32; the
+// auth verbs past login from 2.2.5, where they all do): the value lists the
+// second word that does, or is nil when the subcommand itself does. The bare
+// TUI is not a subcommand and is handled apart. `api`,
 // `reload` and `pair` also take the flag but exist to talk to a running
 // service, so they are left to the person who typed them.
 var openCodeStandaloneCommands = map[string][]string{
@@ -49,7 +50,7 @@ var openCodeStandaloneCommands = map[string][]string{
 	"models":  nil,
 	"stats":   nil,
 	"session": {"list", "delete", "export", "import"},
-	"auth":    {"login"},
+	"auth":    {"login", "list", "logout", "export", "import", "switch"},
 }
 
 // openCodeVersionTimeout bounds the version probe. `opencode --version`

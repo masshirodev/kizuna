@@ -109,6 +109,7 @@ on right now.
 | Several Antigravity instances of one profile, and what keeps them off one conversation | [doc/antigravity-concurrency.md](doc/antigravity-concurrency.md) |
 | OpenCode 2.x's background service, and why kizuna runs it `--standalone` | [doc/opencode-service.md](doc/opencode-service.md) |
 | Fresh OpenCode stores, resume by import, `kizuna compact` | [doc/session-store.md](doc/session-store.md) |
+| How a fresh OpenCode instance gets the profile's connected providers | [doc/opencode-credentials.md](doc/opencode-credentials.md) |
 | Searching what was said across every account: `ctrl+f`, `kizuna search` | [doc/session-search.md](doc/session-search.md) |
 | Agents finding and messaging each other: `kizuna peers`, `kizuna send` | [doc/agent-messaging.md](doc/agent-messaging.md) |
 | How an idle Claude agent gets a message with nothing typed: the kizuna-inbox mod | [doc/inbox-mod.md](doc/inbox-mod.md) |

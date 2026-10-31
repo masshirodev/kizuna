@@ -240,7 +240,10 @@ deleted?
 ## As built (P1)
 
 - `seedIsolatedInstance` copies `auth.json`, `model.json` and prompt history,
-  and no store. `snapshotSQLiteDB` is gone with the copy.
+  and no store. `snapshotSQLiteDB` is gone with the copy. That left out the
+  credentials OpenCode 2.x keeps in the store itself; since c194
+  `prepareOpenCodeInstance` brings them in first
+  ([opencode-credentials.md](opencode-credentials.md)).
 - `cmd/kizuna/opencode_resume.go`: `openCodeResumeTarget` reads
   `-s/--session[=]` and `-c/--continue`. `prepareOpenCodeInstance` runs in
   both launch paths that take an instance (`launchProfileCommand`,

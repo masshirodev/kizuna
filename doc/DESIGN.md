@@ -39,3 +39,8 @@ README's table lists them); this file holds what cuts across them.
   not have, so no hook ran.
 - **Coverage is held at a floor that only rises** (77% of statements when it
   was set; `doc/TESTING.md`).
+- **A fresh OpenCode instance gets the profile's credentials through
+  opencode's own `auth export | auth import`**, piped from one process to
+  the other so kizuna never holds a secret, and the seed receipt records
+  each copied row's stamps so the merge carries back only what the instance
+  changed or logged out of (`doc/opencode-credentials.md`).
