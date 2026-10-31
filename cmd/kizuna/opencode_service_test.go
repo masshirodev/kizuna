@@ -90,8 +90,12 @@ func TestOpenCodeStandaloneGoesWhereTheServiceWouldBeReached(t *testing.T) {
 		{[]string{"session", "export", "ses_a"}, []string{"session", "export", "--standalone", "ses_a"}},
 		{[]string{"session", "list"}, []string{"session", "list", "--standalone"}},
 		{[]string{"auth", "login"}, []string{"auth", "login", "--standalone"}},
+		// 2.2.5 sends every auth verb through the service, not only login.
+		{[]string{"auth", "list"}, []string{"auth", "list", "--standalone"}},
+		{[]string{"auth", "logout", "anthropic"}, []string{"auth", "logout", "--standalone", "anthropic"}},
+		{[]string{"auth", "export"}, []string{"auth", "export", "--standalone"}},
 		// Nothing that never reaches the service.
-		{[]string{"auth", "list"}, []string{"auth", "list"}},
+		{[]string{"auth"}, []string{"auth"}},
 		{[]string{"session"}, []string{"session"}},
 		{[]string{"service", "status"}, []string{"service", "status"}},
 		{[]string{"upgrade"}, []string{"upgrade"}},

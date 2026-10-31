@@ -231,7 +231,7 @@ func TestMergeCarries2xSessionsAcrossColumnOrder(t *testing.T) {
 		`INSERT INTO session_v2 VALUES ('new','p',NULL,'fresh','/work',NULL,2,30)`,
 		`INSERT INTO session_message VALUES ('t1','new','user',1,30,30,'{"text":"hello"}')`)
 
-	sessions, warnings, err := mergeInstanceDatabase(profileDB, instanceDB)
+	sessions, warnings, err := mergeInstanceDatabase(profileDB, instanceDB, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestMergeAnnouncesNothingWhenNoSessionTableIsShared(t *testing.T) {
 	writeSchemaDB(t, profileDB, openCodeReadSchema)
 	writeSchemaDB(t, instanceDB, openCodeV2Schema,
 		`INSERT INTO session_v2 VALUES ('new','p',NULL,'fresh','/work',NULL,2,30)`)
-	sessions, _, err := mergeInstanceDatabase(profileDB, instanceDB)
+	sessions, _, err := mergeInstanceDatabase(profileDB, instanceDB, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
