@@ -100,6 +100,76 @@ func TestLaunchCarriesTheProfilesCredentialsIntoTheInstance(t *testing.T) {
 	}
 }
 
+// The TUI builds its launches apart from launchProfileCommand, and once left
+// prepareOpenCodeInstance out: the fix shipped and every instance opened from
+// the TUI still came up without the profile's providers.
+func TestTUILaunchCarriesTheProfilesCredentialsIntoTheInstance(t *testing.T) {
+	useOpenCodeService(t, true)
+	root := isolatePeers(t)
+	t.Setenv(ranmaSocketEnv, "")
+	t.Setenv(ranmaPaneEnv, "")
+	instanceStore := filepath.Join(t.TempDir(), "instance.db")
+	writeCredentialDB(t, instanceStore,
+		`INSERT INTO credential VALUES ('cred_a', 'anthropic', 'Anthropic', 'k', 1, 5000, 5000)`)
+	binary, log := fakeOpenCodeAuth(t, instanceStore, 0)
+	profile := Profile{Name: "oc", Provider: "opencode", Command: binary}
+	workdir := profileWorkdir(t, root, profile.Name)
+	writeCredentialDB(t, filepath.Join(workdir, "data", "opencode", "opencode.db"),
+		`INSERT INTO credential VALUES ('cred_a', 'anthropic', 'Anthropic', 'k', 1, 100, 100)`)
+
+	tracked, unlock, err := tuiLaunch(profile, nil, nil, false, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if calls := readCalls(t, log); len(calls) != 0 {
+		t.Fatalf("calls = %q before the terminal was handed over, want none", calls)
+	}
+	var stderr bytes.Buffer
+	tracked.cmd.Stderr = &stderr
+	if _, err := tracked.run(); err != nil {
+		t.Fatal(err)
+	}
+	if stderr.Len() > 0 {
+		t.Fatalf("seeding reported: %s", stderr.String())
+	}
+
+	instanceData := filepath.Join(tracked.workdir, "data")
+	calls := readCalls(t, log)
+	want := []string{
+		filepath.Join(workdir, "data") + "|auth export --standalone",
+		instanceData + "|auth import --standalone",
+	}
+	if len(calls) != 3 || !hasCall(calls[:2], want[0]) || !hasCall(calls[:2], want[1]) ||
+		!strings.HasPrefix(calls[2], instanceData+"|") {
+		t.Fatalf("calls = %q, want %q and then the session on the instance", calls, want)
+	}
+	seed, err := readIsolatedSeed(tracked.workdir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seed.Credentials) != 1 || seed.Credentials[0].Key[0] != "cred_a" {
+		t.Fatalf("receipt credentials = %+v, want cred_a recorded", seed.Credentials)
+	}
+}
+
+func TestTUILoginPreparesNoInstance(t *testing.T) {
+	useOpenCodeService(t, true)
+	root := isolatePeers(t)
+	t.Setenv(ranmaSocketEnv, "")
+	t.Setenv(ranmaPaneEnv, "")
+	profile := Profile{Name: "oc", Provider: "opencode", Command: "true"}
+	profileWorkdir(t, root, profile.Name)
+	tracked, unlock, err := tuiLaunch(profile, loginArgs("opencode"), nil, true, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if tracked.prepare != nil {
+		t.Fatal("a login under the exclusive lock prepares an instance it does not have")
+	}
+}
+
 func TestLaunchWithoutStoredCredentialsRunsNoExport(t *testing.T) {
 	useOpenCodeService(t, true)
 	root := t.TempDir()
