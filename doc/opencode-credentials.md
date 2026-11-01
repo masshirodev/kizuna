@@ -23,7 +23,8 @@ was in the archive and missing from the instance launched after it.
 ## What kizuna does
 
 **At launch** (`seedOpenCodeCredentials`, `cmd/kizuna/opencode_credentials.go`,
-called first in `prepareOpenCodeInstance`):
+called first in `prepareOpenCodeInstance`, which every launch path that takes
+an instance runs; see "The TUI path" below):
 
 1. Skip unless the binary is 2.x (1.x keeps credentials in `auth.json`,
    which the seed already copies) and the archive has a credential row.
@@ -53,6 +54,26 @@ each credential table). For every recorded row:
 Rows the instance created itself are not in the receipt and merge
 newest-wins, as before. So does every row of an instance launched by a kizuna
 from before this change, whose receipt lists no credentials.
+
+## The TUI path
+
+The first version of this fix ran only for `kizuna <profile>` and `resume`
+from a shell. A launch from the TUI (Enter, `p`, a hijack, a reopen) builds
+its command in `cmd/kizuna/tui.go`, apart from `launchProfileCommand`, and
+that code never called `prepareOpenCodeInstance`. So once installed, the fix
+changed nothing for the way the profile is actually opened: on 2026-10-31 an
+instance launched from the TUI, on the fixed binary, came up with no
+`credentials` in its receipt and no Anthropic, though the export and import
+worked when run by hand against copies of the same stores. The same gap had
+kept a session chosen in the TUI out of its fresh instance since c115.
+
+`tuiLaunch` now builds the TUI's launch and gives it a `prepare` step, which
+`trackedExecCommand` runs just before starting the command. It runs there,
+not while the launch is built, so the second or two it takes is spent after
+Bubble Tea has released the terminal (the picker does not freeze), and a
+"could not bring … credentials" message reaches the terminal as it does from
+a shell. A login runs under the exclusive lock, has no instance, and gets no
+`prepare` step.
 
 ## Why the receipt is needed
 
@@ -89,6 +110,10 @@ reaches the background service, not only `login`, so
 
 - `TestLaunchCarriesTheProfilesCredentialsIntoTheInstance`, with a stand-in
   binary: the pipe, the receipt, and a row the import skipped left out.
+- `TestTUILaunchCarriesTheProfilesCredentialsIntoTheInstance`: the same
+  through the TUI's `tuiLaunch`, checking that nothing runs before the
+  terminal is handed over and that the session starts after the import.
+  `TestTUILoginPreparesNoInstance` covers the login.
 - `TestMergeSettlesCopiedCredentialsAgainstTheReceipt`: untouched, refreshed,
   logged out, logged out but re-added elsewhere, and new, on a single-key
   and a composite-key table.

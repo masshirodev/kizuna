@@ -2169,10 +2169,27 @@ func (m *tuiModel) execProfileIn(profile Profile, args []string, exclusive bool,
 // exclusive run is a login, which takes neither those nor the defaults, the
 // same as it takes no default arguments.
 func (m *tuiModel) execProfileWith(profile Profile, args, env []string, exclusive bool, folder string) tea.Cmd {
-	workdir, err := ensureProfileState(profile)
+	tracked, unlock, err := tuiLaunch(profile, args, env, exclusive, folder)
 	if err != nil {
 		m.setStatus(statusErr, err.Error())
 		return nil
+	}
+	m.running = true
+	m.unlock = unlock
+	return tea.Exec(tracked, func(err error) tea.Msg {
+		return processFinishedMsg{err: err}
+	})
+}
+
+// tuiLaunch builds what a TUI launch runs once Bubble Tea hands over the
+// terminal, the TUI's half of launchProfileCommand. The two must prepare an
+// instance the same way: this path once skipped prepareOpenCodeInstance, so
+// every OpenCode instance started from the TUI came up without the profile's
+// credentials and without the session being reopened (c194).
+func tuiLaunch(profile Profile, args, env []string, exclusive bool, folder string) (trackedExecCommand, func() string, error) {
+	workdir, err := ensureProfileState(profile)
+	if err != nil {
+		return trackedExecCommand{}, nil, err
 	}
 	var lockDir string
 	var unlock func() string
@@ -2182,8 +2199,7 @@ func (m *tuiModel) execProfileWith(profile Profile, args, env []string, exclusiv
 		lockDir, unlock, err = acquireProfileRunLock(profile, workdir)
 	}
 	if err != nil {
-		m.setStatus(statusErr, err.Error())
-		return nil
+		return trackedExecCommand{}, nil, err
 	}
 	cmd := exec.Command(profile.Command, withOpenCodeStandalone(profile, profile.Command, args)...)
 	cmd.Dir = folder
@@ -2194,16 +2210,19 @@ func (m *tuiModel) execProfileWith(profile Profile, args, env []string, exclusiv
 		cmd.Env = withLaunchEnv(cmd.Env, profile, false, env)
 	}
 	refreshInboxMod(profile)
+	// Read before wrapLaunch, which may put a shim in front of the command.
+	sessionFolder := commandFolder(cmd)
 	if cmd, err = wrapLaunch(cmd, profile, lockDir); err != nil {
 		unlock()
-		m.setStatus(statusErr, err.Error())
-		return nil
+		return trackedExecCommand{}, nil, err
 	}
-	m.running = true
-	m.unlock = unlock
-	return tea.Exec(trackedLaunch(cmd, lockDir, profile, args, exclusive), func(err error) tea.Msg {
-		return processFinishedMsg{err: err}
-	})
+	tracked := trackedLaunch(cmd, lockDir, profile, args, exclusive)
+	if !exclusive {
+		tracked.prepare = func(stderr io.Writer) {
+			prepareOpenCodeInstance(profile, workdir, lockDir, sessionFolder, args, stderr)
+		}
+	}
+	return tracked, unlock, nil
 }
 
 // trackedLaunch keeps a restore record for a TUI launch on the same terms as
@@ -2308,6 +2327,12 @@ type trackedExecCommand struct {
 	// restore names the profile of a launch worth reopening after a power
 	// cut, as runCommandWithLock's argument does; nil keeps no record.
 	restore *Profile
+	// prepare readies the instance before the command starts: for OpenCode,
+	// the credentials and the session being reopened (prepareOpenCodeInstance).
+	// It runs here rather than when the launch is built so the seconds it can
+	// take are spent after Bubble Tea has let go of the terminal, not frozen
+	// in its update loop, and what it reports reaches the terminal.
+	prepare func(stderr io.Writer)
 }
 
 func (c trackedExecCommand) SetStdin(reader io.Reader)  { c.cmd.Stdin = reader }
@@ -2338,6 +2363,13 @@ func (c trackedExecCommand) run() (os.Signal, error) {
 	// before the ledger can drop the record of a session that ended on purpose.
 	signals := forwardSignals()
 	defer signals.stop()
+	if c.prepare != nil {
+		stderr := c.cmd.Stderr
+		if stderr == nil {
+			stderr = os.Stderr
+		}
+		c.prepare(stderr)
+	}
 	if err := c.cmd.Start(); err != nil {
 		return nil, err
 	}

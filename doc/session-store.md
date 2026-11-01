@@ -246,9 +246,11 @@ deleted?
   ([opencode-credentials.md](opencode-credentials.md)).
 - `cmd/kizuna/opencode_resume.go`: `openCodeResumeTarget` reads
   `-s/--session[=]` and `-c/--continue`. `prepareOpenCodeInstance` runs in
-  both launch paths that take an instance (`launchProfileCommand`,
-  `launchInFolder`) and never fails a launch: a session it cannot bring in is
-  reported, and opencode then says it found none.
+  every launch path that takes an instance (`launchProfileCommand`,
+  `launchInFolder`, and the TUI's `tuiLaunch`) and never fails a launch: a
+  session it cannot bring in is reported, and opencode then says it found
+  none. Until 2026-10-31 the TUI path left it out, so a session reopened from
+  the TUI also came up empty (opencode-credentials.md, "The TUI path").
 - `mergeNewerRows` (formerly `mergeAuthTable`) serves the credential tables and
   the session subtree. `archiveBehindInstance` compares the two stores'
   `migration` ids.

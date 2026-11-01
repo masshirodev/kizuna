@@ -43,4 +43,6 @@ README's table lists them); this file holds what cuts across them.
   opencode's own `auth export | auth import`**, piped from one process to
   the other so kizuna never holds a secret, and the seed receipt records
   each copied row's stamps so the merge carries back only what the instance
-  changed or logged out of (`doc/opencode-credentials.md`).
+  changed or logged out of (`doc/opencode-credentials.md`). Every launch
+  path that takes an instance, the TUI's included, runs the same
+  `prepareOpenCodeInstance`; the TUI runs it after handing over the terminal.
