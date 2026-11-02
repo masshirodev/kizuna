@@ -39,6 +39,12 @@ README's table lists them); this file holds what cuts across them.
   not have, so no hook ran.
 - **Coverage is held at a floor that only rises** (77% of statements when it
   was set; `doc/TESTING.md`).
+- **`kizuna peers` places an agent where it works, not where it was
+  launched.** For Claude the session's newest transcript `cwd` decides. When
+  that is in no repository, the checkout its recent tool calls touched most
+  decides, and the row says it was inferred. The launch folder is kept as
+  `launch_folder` for restore and hijack (`doc/agent-messaging.md`, "Where an
+  agent works").
 - **A fresh OpenCode instance gets the profile's credentials through
   opencode's own `auth export | auth import`**, piped from one process to
   the other so kizuna never holds a secret, and the seed receipt records

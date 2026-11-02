@@ -33,13 +33,13 @@ opencode3/run-48213377    worker of max/run-2705011154  opencode  ranma (worktre
 ```
 
 `kizuna peers ranma` keeps the agents in one repository, named by its name or any
-path inside it. `kizuna peers --json` prints the same thing for an agent to read.
+path inside it, or the folder they were launched in. `kizuna peers --json` prints the same thing for an agent to read.
 
 | Column | Where it comes from |
 | ------ | ------------------- |
 | ID | `<profile>/<run-dir>` for a concurrent instance, the profile name for one holding its profile's exclusive lock (a provider that cannot run twice) |
 | ROLE | Who launched whom ([below](#leads-and-workers)): `lead of N`, `worker of <id>`, `worker of <id> (ended)` once its lead has exited |
-| WHERE | `git rev-parse` in the launch folder. The git common dir names the repository, so a worktree and its main checkout match as one repo, and the column says which one this is. A folder outside any repository shows the folder |
+| WHERE | `git rev-parse` in the folder the agent is working in ([below](#where-an-agent-works)), which is not always the one it was launched in. The git common dir names the repository, so a worktree and its main checkout match as one repo, and the column says which one this is. `, inferred` marks a checkout read off the agent's tool calls. A folder outside any repository shows the folder |
 | STATE | `busy` or `idle` from `claude agents --json`. Other providers do not say, and show `—` |
 | PANE | The ranma pane the launch ran in, recorded in `instance.json` (`ranma_pane`, `ranma_socket`). Instances started before this was recorded are read from the launcher's `/proc/<pid>/environ`. `tmux` for a launch inside the tmux status bar |
 | MAIL | How a message reaches it (below), and how many are unread. `mod` is a Claude session whose [kizuna-inbox mod](inbox-mod.md) has polled in the last 15 seconds |
@@ -48,6 +48,48 @@ path inside it. `kizuna peers --json` prints the same thing for an agent to read
 `(you)` marks the instance asking. That comes from `KIZUNA_INSTANCE_DIR`, or, where
 a CLI scrubbed the environment, from finding the instance whose recorded CLI
 PID is one of this process's ancestors.
+
+## Where an agent works
+
+An agent is often launched in the folder that holds the repositories
+(`~/projects`) and then works in one of them. Until 2026-11-02 `kizuna peers`
+placed every agent at its launch folder, so that agent listed as
+`/home/masshiro/projects` with no repository, `kizuna peers tsundoku` did not
+find it, and the advice to hand work to the agent already in a checkout found
+nobody there. Neither of the obvious signals moves: Claude Code's process keeps
+the launch folder as its cwd, and `claude agents --json` reports that folder
+too. (c196, "kizuna peers places an agent by its launch folder, not where it
+works".)
+
+For a Claude session, `kizuna peers` reads the last 4 MB of the session's
+transcript (`workfolder.go`):
+
+1. **Its newest `cwd`.** Claude Code writes the session's working directory on
+   every transcript line, and a `cd` in its shell tool moves it. A `cwd`
+   inside a repository is taken as it is.
+2. **Otherwise, its recent tool calls.** An agent that works by absolute path
+   (`Read /…/tsundoku/src/app.ts`, `git -C /…/tsundoku status`) never moves its
+   `cwd`. The newest 40 tool calls are read for the folders they name: a
+   `file_path` or `notebook_path` names its folder, a `path` names itself, and
+   a Bash command names each `cd <dir>` and `git -C <dir>`. A target built from
+   a variable or a substitution is left out, not guessed. Each folder is
+   resolved to its checkout (a worktree is its own), and the checkout most of
+   them touched wins, the newest winning a tie. A count rather than the newest
+   call is what keeps one look at another repository's docs from moving the
+   agent there. The row is marked `, inferred`, and `folder_inferred` in
+   `--json` and `list_peers`, because it is a reading, not a fact the session
+   records.
+3. **With neither**, the launch folder stands.
+
+`folder` in `--json` and `list_peers` is the working folder. `launch_folder`
+carries the folder the instance was started in, given only when the two
+differ. Restore and the hijack picker go on using the launch folder: Claude
+files the conversation under it, and resuming has to start from there.
+
+Codex, OpenCode and Antigravity are still placed at their launch folder.
+Codex records each turn's `cwd` and each shell call's `workdir` in its rollout,
+which would serve. It is not read yet, because this machine had no rollout with
+tool calls in it to check the format against.
 
 ## Leads and workers
 
