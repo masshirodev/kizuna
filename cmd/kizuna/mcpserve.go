@@ -42,7 +42,7 @@ type rpcResponse struct {
 var messagingTools = []map[string]any{
 	{
 		"name":        "list_peers",
-		"description": "List every AI agent running on this machine under kizuna, across all profiles and providers: its id, the repository and checkout (main checkout or worktree) it works in, branch, busy/idle where known, how it reads messages, and its role: a \"worker\" was launched by another agent (its \"lead\") for one task, often in a worktree, and a \"lead\" lists its \"workers\". Use it to find the agent already working in a repository before starting parallel work there, and send work to the lead, not to one of its workers.",
+		"description": "List every AI agent running on this machine under kizuna, across all profiles and providers: its id, the repository and checkout (main checkout or worktree) it works in now, which may differ from launch_folder, branch, busy/idle where known, how it reads messages, and its role: a \"worker\" was launched by another agent (its \"lead\") for one task, often in a worktree, and a \"lead\" lists its \"workers\". Use it to find the agent already working in a repository before starting parallel work there, and send work to the lead, not to one of its workers.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{

@@ -33,7 +33,14 @@ type peer struct {
 	Profile  string `json:"profile"`
 	Provider string `json:"provider"`
 	PID      int    `json:"pid"`
-	Folder   string `json:"folder,omitempty"`
+	// Folder is where the instance is working now (workfolder.go), which is
+	// what Repo and the rest describe. LaunchFolder is where it was started,
+	// given only when the two differ: restore and hijack reopen from there.
+	// FolderInferred says Folder was read off the instance's recent tool
+	// calls because its working directory is in no repository.
+	Folder         string `json:"folder,omitempty"`
+	LaunchFolder   string `json:"launch_folder,omitempty"`
+	FolderInferred bool   `json:"folder_inferred,omitempty"`
 	// Repo is the repository's name, and RepoRoot its main checkout. A
 	// worktree reports the same pair as its main checkout, which is what lets
 	// "whoever is in ranma" find an agent in either.
@@ -126,12 +133,20 @@ func collectPeers(cfg Config) []peer {
 			if profile.Indicator == tmuxIndicator {
 				p.TmuxSocket = tmuxSocketPath(instance.lockDir)
 			}
-			if instance.folder != "" {
-				checkout, seen := gitCache[instance.folder]
+			place := instanceWorkPlace(profile, instance, func(folder string) gitCheckout {
+				checkout, seen := gitCache[folder]
 				if !seen {
-					checkout = readGitCheckout(instance.folder)
-					gitCache[instance.folder] = checkout
+					checkout = readGitCheckout(folder)
+					gitCache[folder] = checkout
 				}
+				return checkout
+			})
+			if place.folder != "" {
+				p.Folder, p.FolderInferred = place.folder, place.inferred
+				if filepath.Clean(place.folder) != filepath.Clean(instance.folder) {
+					p.LaunchFolder = instance.folder
+				}
+				checkout := place.checkout
 				p.Repo, p.RepoRoot, p.Worktree, p.Branch = checkout.repo, checkout.root, checkout.worktree, checkout.branch
 			}
 			peers = append(peers, p)
@@ -145,6 +160,23 @@ func collectPeers(cfg Config) []peer {
 		return peers[i].ID < peers[j].ID
 	})
 	return peers
+}
+
+// instanceWorkPlace says where an instance is working. A Claude session's
+// transcript says where it has moved to since launch; the other providers
+// record nothing kizuna reads yet, and stay at their launch folder.
+func instanceWorkPlace(profile Profile, instance profileInstance, lookup func(string) gitCheckout) workPlace {
+	if profile.Provider == "claude" {
+		if path := liveClaudeTranscript(profile, instance.session.id); path != "" {
+			activity := readTranscriptActivity(path)
+			cwd := activity.cwd
+			if cwd == "" {
+				cwd = instance.folder
+			}
+			return resolveWorkPlace(cwd, activity.hints, lookup)
+		}
+	}
+	return resolveWorkPlace(instance.folder, nil, lookup)
 }
 
 // linkLeads fills in each instance's role from the leads recorded at launch.
@@ -200,8 +232,10 @@ func launcherRanmaPane(lockDir string) (string, string) {
 }
 
 type gitCheckout struct {
-	repo, root, branch string
-	worktree           bool
+	// top is the checkout's own top level, root the repository's main
+	// checkout; they differ in a worktree.
+	repo, top, root, branch string
+	worktree                bool
 }
 
 // gitLookupTimeout bounds each git call, so a folder on a hung mount cannot
@@ -234,6 +268,7 @@ func readGitCheckout(folder string) gitCheckout {
 	}
 	return gitCheckout{
 		repo:     filepath.Base(root),
+		top:      top,
 		root:     root,
 		branch:   branch,
 		worktree: filepath.Clean(top) != filepath.Clean(root),
@@ -286,7 +321,7 @@ func peersCommand(cfg Config, args []string, stdout io.Writer) error {
 func peersInRepo(peers []peer, repo string) []peer {
 	var kept []peer
 	for _, p := range peers {
-		if p.Repo == repo || (p.RepoRoot != "" && pathInside(repo, p.RepoRoot)) || p.Folder == repo {
+		if p.Repo == repo || (p.RepoRoot != "" && pathInside(repo, p.RepoRoot)) || p.Folder == repo || (p.LaunchFolder != "" && p.LaunchFolder == repo) {
 			kept = append(kept, p)
 		}
 	}
@@ -294,14 +329,21 @@ func peersInRepo(peers []peer, repo string) []peer {
 }
 
 func (p peer) where() string {
+	var checkout string
 	switch {
 	case p.Repo == "":
 		return dash(p.Folder)
 	case p.Worktree:
-		return p.Repo + " (worktree " + filepath.Base(p.Folder) + ")"
+		checkout = "worktree " + filepath.Base(p.Folder)
 	default:
-		return p.Repo + " (main checkout)"
+		checkout = "main checkout"
 	}
+	// An inferred place is a reading of the agent's tool calls, not a fact
+	// the session records, and the reader should know which it is.
+	if p.FolderInferred {
+		checkout += ", inferred"
+	}
+	return p.Repo + " (" + checkout + ")"
 }
 
 // roleLabel says who answers to whom. A worker of a worker is a lead too, and
