@@ -32,7 +32,8 @@ README's table lists them); this file holds what cuts across them.
   (`doc/updates.md`).
 - **CI runs on GitHub Actions**, not the workstation runner the private
   repositories use: the repository is public, so the minutes are free.
-- **`main` is protected**; every change is a pull request the owner merges.
+- **`main` is protected**; every change is a pull request. The ruleset requires
+  no approval and no status check (AGENTS.md, "Conventions").
 - **Git hooks live in `.githooks/`**, armed by `scripts/hooks.sh`, not husky:
   there is no `package.json` to hang husky on. Until hajime adopted the
   repository (2026-10-28), `core.hooksPath` named a `.husky/` that `main` did

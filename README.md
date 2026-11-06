@@ -19,8 +19,7 @@ token refreshes. `kizuna` never reads, prints, or stores token contents.
 
 ## Install
 
-On Arch, from the AUR: `kizuna-bin` (the release binary) or `kizuna-git`
-(built from `main`). Elsewhere, take a binary from the
+Take a binary from the
 [releases](https://github.com/masshirodev/kizuna/releases): it is static, so
 any Linux on amd64 or arm64 runs it. Or build from source:
 
@@ -32,6 +31,9 @@ That builds `kizuna` from `cmd/kizuna` into `$(go env GOPATH)/bin`, and after
 that `kizuna self-update` (or `U` in the TUI) keeps it current. A packaged
 kizuna leaves updating to its package manager. See
 [doc/RELEASING.md](doc/RELEASING.md).
+
+AUR packages (`kizuna-bin` and `kizuna-git`) are prepared in `packaging/aur/`
+but not yet published.
 
 **Coming from ai-session?** kizuna is its new name, and the command was `ai`.
 Self-updating the old `ai` installs kizuna and keeps `ai` as a link to it; the

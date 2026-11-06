@@ -36,8 +36,14 @@ jobs:
           have="$(sed -n 's/^const version = "\(.*\)"/\1/p' cmd/kizuna/version.go)"
           [ "$want" = "$have" ] || { echo "tag $GITHUB_REF_NAME, version.go $have"; exit 1; }
 
-      - name: Test
-        run: go vet ./... && go test ./...
+      # The same checks as ci.yml, floor included: a release does not run less
+      # than a pull request does.
+      - name: Formatted
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: Vet
+        run: go vet ./...
+      - name: Test and coverage floor
+        run: scripts/coverage.sh
 
       - name: Build and package
         run: |
