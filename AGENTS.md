@@ -4,7 +4,8 @@ kizuna is a launcher for several AI CLI accounts (Claude Code, Codex,
 OpenCode, Antigravity), each profile isolated in its own state directory, plus
 the TUI cockpit, session resume and search, and the messaging that lets agents
 on different profiles find each other. It is a public Go module
-(`masshirodev/kizuna`, MIT) packaged on the AUR. The `README.md` is the map;
+(`masshirodev/kizuna`, MIT), released as binaries on GitHub, with AUR packages
+prepared but not yet published. The `README.md` is the map;
 each feature has its own document in `doc/`. Read `doc/DESIGN.md` before
 changing behaviour: it records the decisions.
 
@@ -59,8 +60,10 @@ does not lower the bar.
 - Work is tracked on the **ai-session** board in Kumiko. Name cards by id and
   title together.
 - **`main` is protected: every change goes through a pull request**, never a
-  direct push. The owner merges.
+  direct push (an admin can bypass this; do not). The ruleset requires no
+  approval and no status check, so nothing stops a red pull request from being
+  merged: wait for `ci` to pass first. Merge only when asked to.
 - A release is a `v*` tag whose version matches `cmd/kizuna/version.go`;
-  `doc/RELEASING.md` is the procedure, AUR packages included.
+  `doc/RELEASING.md` is the procedure, and says what the AUR packages will need.
 - This repository is held to the house conventions by hajime (`.hajime.json`);
   `hajime check` says what has drifted.

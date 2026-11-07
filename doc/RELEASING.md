@@ -4,7 +4,7 @@ Back to the [README](../README.md).
 
 A release is a `v*` tag. `.github/workflows/release.yml` builds it, tests it
 and publishes a GitHub release; the AUR packages in `packaging/aur/` are
-updated from that by hand. The layout follows ranma's
+prepared but not yet published ("The AUR packages"). The layout follows ranma's
 (`masshirodev/ranma`, `doc/RELEASING.md`), so one maintainer keeps one habit.
 
 ## CI
@@ -46,8 +46,8 @@ is a build from source and updates as before ([updates.md](updates.md)).
    git push origin v0.2.0
    ```
 
-3. The workflow runs `go vet` and `go test`, builds both architectures, and
-   creates the release with notes generated from the commits since the last
+3. The workflow runs `gofmt`, `go vet` and the suite with its coverage floor,
+   builds both architectures, and creates the release with notes generated from the commits since the last
    tag.
 
 To try the build without releasing, run the workflow by hand
@@ -59,6 +59,12 @@ belongs there, not on the workstation. A build from the workstation would also
 work (it is static), but it would not be the one the tag points at.
 
 ## The AUR packages
+
+**Neither package is on the AUR yet.** The AUR had no `kizuna`, `kizuna-bin`
+or `kizuna-git` when this was last checked (2026-11-06), so nothing below has
+been done for a release so far, and an install today is a release binary or a
+build from source. This section is what publishing and keeping them up to date
+will take.
 
 `packaging/aur/` holds the two packages, each a directory that is the whole
 AUR repository: `PKGBUILD`, `kizuna.install` and the generated `.SRCINFO`.

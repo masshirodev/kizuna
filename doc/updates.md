@@ -3,7 +3,8 @@
 Back to the [README](../README.md).
 
 Everything here is about a build from source. **A packaged kizuna** (a
-release binary, or the AUR's `kizuna-bin` and `kizuna-git`) was linked with
+release binary, or `kizuna-bin` and `kizuna-git`, the AUR packages prepared
+but not yet published) was linked with
 `main.packaged` naming where it came from: it never asks GitHub whether it is
 behind, `kizuna self-update` and `U` refuse and point at the package manager,
 and `kizuna version` says where the binary came from
