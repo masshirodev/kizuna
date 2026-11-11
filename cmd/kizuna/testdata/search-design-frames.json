@@ -33,7 +33,7 @@
   "                                                               │",
   "                                                               │",
   "",
-  "↑↓ choose   ↵ resume in ~/projects/kizuna   H hand off   n N next match   y copy command                                     esc close"
+  "↑↓ choose   ↵ resume on codex-work   H hand off   n N next match   y copy command   O open this one                          esc close"
  ],
  "f2b": [
   "RESUME   this account   all accounts   a                                                               titles   what was said   ctrl+f",
@@ -249,7 +249,7 @@
   "",
   "",
   "",
-  "↑↓ choose   ↵ resume in ~/projects/kizuna   H hand off         esc close"
+  "↑↓ choose   ↵ resume on codex-work   H hand off                esc close"
  ],
  "f2h": [
   "RESUME   this account   all accounts   a                                                                titles   what was said  ctrl+f",

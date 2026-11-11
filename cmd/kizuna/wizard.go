@@ -52,11 +52,22 @@ func (m tuiModel) recentPicker(width, rows int) []string {
 	lines := []string{m.resumeHeading(width), "", m.titlesCorner(width)}
 	lines = append(lines, m.pickerBody(width, max(rows-1, minBlockRows))...)
 	where := "resume it"
+	keys := []helpEntry{{"esc", "close"}, {"↑↓", "choose"}}
+	open := helpEntry{}
 	if record, ok := m.pickedRecord(); ok {
 		where = "resume in " + shortenHome(record.folder)
+		// A handed-off row resumes where its work went, and the footer says
+		// so: the row's own folder and account are not where Enter lands.
+		if link, passed := m.lineage[record.session.id]; passed && record.session.id != "" {
+			where, open = "resume on "+link.TargetProfile, helpEntry{"O", "open this one"}
+		}
 	}
-	return append(lines, "", boxFooter(width, helpEntry{"esc", "close"},
-		helpEntry{"↑↓", "choose"}, helpEntry{"↵", where}, helpEntry{"H", "hand this off instead"}))
+	keys = append(keys, helpEntry{"↵", where})
+	if open.key != "" {
+		keys = append(keys, open)
+	}
+	keys = append(keys, helpEntry{"H", "hand this off instead"})
+	return append(lines, "", boxFooter(width, keys[0], keys[1:]...))
 }
 
 func (m tuiModel) pickedRecord() (recordedSession, bool) {

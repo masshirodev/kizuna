@@ -1069,6 +1069,10 @@ func (m tuiModel) updateRecent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.record >= 0 && m.record < len(visible) {
 			return m.leaveWith(visible[m.record])
 		}
+	case "O":
+		if m.record >= 0 && m.record < len(visible) {
+			return m.reopenRecord(visible[m.record])
+		}
 	case "enter":
 		if m.record < 0 || m.record >= len(visible) {
 			m.mode = tuiList
@@ -1082,9 +1086,69 @@ func (m tuiModel) updateRecent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// resumeRecord reopens one recorded conversation under the account that
-// recorded it, in the folder it ran in. Both pickers' searches reach it.
+// resumeRecord resumes the work a row stands for. Usually that is the row
+// itself. A row marked → <account> was handed off, and its work went on in
+// another conversation under another account: Enter follows it there, since
+// reopening the finished source under the account it left — usually the one
+// out of quota — undoes the handoff. O reopens the row itself (reopenRecord).
+// Both pickers and their searches reach it.
 func (m tuiModel) resumeRecord(record recordedSession) (tea.Model, tea.Cmd) {
+	target, err := m.resumeTarget(record)
+	// Following a hop may have found and recorded its conversation; the
+	// markers read the same file.
+	m.lineage = handedOff(readLineage())
+	if err != nil {
+		m.setStatus(statusErr, err.Error())
+		return m, nil
+	}
+	return m.reopenRecord(target)
+}
+
+// resumeTarget is the conversation a row's work is in now: the row, or the end
+// of its handoff chain. A hop whose conversation the board has not resolved
+// yet is resolved here, from the destination's recent sessions, because the
+// board only does that while the destination account is expanded. A chain
+// that still ends unresolved is reported rather than guessed at: the work is
+// somewhere the launcher cannot name, and the source is not it.
+func (m tuiModel) resumeTarget(record recordedSession) (recordedSession, error) {
+	resolve := func(link lineageLink) string {
+		profile := profileNamed(m.profiles, link.TargetProfile)
+		if profile.Name == "" {
+			return ""
+		}
+		links, _ := resolveIncoming(profile, readLineage(), recentSessions(profile, recentSessionLimit), nil)
+		for _, resolved := range links {
+			if resolved.SourceSessionID == link.SourceSessionID && resolved.TargetProfile == link.TargetProfile && resolved.When.Equal(link.When) {
+				return resolved.TargetSessionID
+			}
+		}
+		return ""
+	}
+	last, handed, resolved := followHandoffs(record.session.id, m.lineage, resolve)
+	if !handed {
+		return record, nil
+	}
+	profile := profileNamed(m.profiles, last.TargetProfile)
+	if profile.Name == "" {
+		return recordedSession{}, fmt.Errorf("handed off to %s, which is no longer a profile; O opens this one", last.TargetProfile)
+	}
+	if !resolved {
+		return recordedSession{}, fmt.Errorf("handed off to %s, and the conversation it became is not found yet; O opens this one", last.TargetProfile)
+	}
+	for _, candidate := range recentSessions(profile, resumeLookupLimit) {
+		if candidate.session.id == last.TargetSessionID {
+			candidate.profile = profile.Name
+			return candidate, nil
+		}
+	}
+	// Older than the lookup reaches: the handoff's own folder is where it
+	// began, which is what resolving it checked.
+	return recordedSession{session: instanceSession{id: last.TargetSessionID}, folder: last.Folder, profile: profile.Name}, nil
+}
+
+// reopenRecord reopens one recorded conversation under the account that
+// recorded it, in the folder it ran in.
+func (m tuiModel) reopenRecord(record recordedSession) (tea.Model, tea.Cmd) {
 	profile, ok := m.profileForRecord(record)
 	if !ok {
 		m.mode = tuiList

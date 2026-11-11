@@ -452,6 +452,10 @@ func (m tuiModel) updateSearchKeys(msg tea.KeyMsg, inHandoff bool) (tea.Model, t
 		if hit, ok := m.selectedHit(); ok && !inHandoff {
 			return m.leaveWith(hit.record)
 		}
+	case "O":
+		if hit, ok := m.selectedHit(); ok && !inHandoff {
+			return m.reopenRecord(hit.record)
+		}
 	case "enter":
 		hit, ok := m.selectedHit()
 		if !ok {
@@ -606,8 +610,13 @@ func (m tuiModel) searchFooter(width int, inHandoff bool) string {
 		choose = "hand off from "
 	}
 	where := "it"
+	handedTo := ""
 	if hit, ok := m.selectedHit(); ok {
 		where = shortenHome(hit.record.folder)
+		if link, passed := m.lineage[hit.record.session.id]; passed && hit.record.session.id != "" && !inHandoff {
+			handedTo = link.TargetProfile
+			choose, where = "resume on ", handedTo
+		}
 	}
 	entries := []helpEntry{{"↑↓", "choose"}, {"↵", strings.TrimSpace(choose + where)}}
 	if !inHandoff {
@@ -617,6 +626,11 @@ func (m tuiModel) searchFooter(width int, inHandoff bool) string {
 		entries = append(entries, helpEntry{"n N", "next match"})
 	}
 	entries = append(entries, helpEntry{"y", "copy command"})
+	// Last, so a narrow box gives it up before H: Enter already reaches
+	// the work, and this only reaches the finished conversation it left.
+	if handedTo != "" {
+		entries = append(entries, helpEntry{"O", "open this one"})
+	}
 	return boxFooter(width, esc, entries...)
 }
 

@@ -53,3 +53,9 @@ README's table lists them); this file holds what cuts across them.
   changed or logged out of (`doc/opencode-credentials.md`). Every launch
   path that takes an instance, the TUI's included, runs the same
   `prepareOpenCodeInstance`; the TUI runs it after handing over the terminal.
+- **Resuming a handed-off conversation resumes where its work went.** The
+  pickers follow the lineage to the conversation the handoff became, under the
+  account it went to, resolving it on the spot if the board has not; `O`
+  opens the source itself. An unresolvable handoff is reported, never
+  silently replaced by the source (`doc/sessions.md`, "Resuming a handed-off
+  conversation").

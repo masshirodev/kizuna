@@ -116,7 +116,14 @@ func TestEnterResumesTheHitInItsOwnFolderOrSaysWhyNot(t *testing.T) {
 	m := searchDesignModel(t)
 	gone := filepath.Join(t.TempDir(), "moved-away")
 	m.search.result.hits[0].record.folder = gone
-	m, _ = pressKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	// The sample's first hit was handed to codex-work, whose conversation
+	// was never recorded: Enter follows the handoff and says it cannot.
+	handed, _ := pressKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if handed.mode != tuiRecent || !strings.Contains(handed.status, "handed off to codex-work") {
+		t.Fatalf("mode %v status %q, want the unresolved handoff reported", handed.mode, handed.status)
+	}
+	// O reopens the hit itself, which meets the moved folder.
+	m, _ = pressKey(t, m, keyRunes("O"))
 	if m.mode != tuiRecent || !strings.Contains(m.status, "is gone; that session cannot be resumed") {
 		t.Fatalf("mode %v status %q, want the box kept open and the moved folder reported", m.mode, m.status)
 	}
