@@ -240,7 +240,8 @@ Japanese is cut and wrapped by display width, and a line never begins with
 
 | Key | Does |
 | --- | --- |
-| `↵` | Resumes the hit under the account that recorded it, in its folder, exactly as the picker does. A folder that has moved is reported and the box stays open. In the `H` picker, `↵` chooses the hit as the conversation leaving. |
+| `↵` | Resumes the hit under the account that recorded it, in its folder, exactly as the picker does — including following a handed-off hit to where its work went. A folder that has moved is reported and the box stays open. In the `H` picker, `↵` chooses the hit as the conversation leaving. |
+| `O` | On a hit marked `→ <account>`, reopens the hit itself rather than where its work went (`↵` follows the handoff, as in the picker). |
 | `H` | Hands the hit off, skipping the wizard's first step. |
 | `y` | Copies `kizuna <profile> resume <id>` to the clipboard (OSC 52). |
 | `n` / `N` | Steps through the hit's matches. |
@@ -337,7 +338,7 @@ a session, and the store is already indexed on `part.session_id`.
   today's picker; today's picker indents its count two cells too. The two cells
   line them up with the row text, and the titles and search modes agree.
   `TestSearchBoxMatchesTheDesignFrames` pins this; every other cell of the
-  eight frames matches the handoff's own rendering.
+  eight frames matches the handoff's own rendering, but for the footer below.
 - **"N headless hidden" counts the headless hits, not the index.** The handoff's
   sample says 14 of the 965 conversations are headless. A search can only say
   how many of its matches it is hiding, so the TUI always searches headless runs
@@ -355,6 +356,12 @@ a session, and the store is already indexed on `part.session_id`.
   `bm25` across conversations of very different lengths put old, long ones on
   top. The design test still pins the handoff's frames: 2a is drawn with best
   match toggled on, 2b with newest first.
+- **A handed-off hit's footer says where Enter goes** (2026-11-11). Frames 2a
+  and 2g have the cursor on a hit handed to `codex-work`, and the handoff drew
+  `↵ resume in ~/projects/kizuna` there. Enter now follows a handoff, so the
+  footer says `↵ resume on codex-work` and adds `O open this one` last, the
+  first key a narrow box gives up. The golden file was regenerated for those
+  two rows only.
 - **The pane opens a long matching turn at its match.** The handoff's sample
   turns fit in six rows. Real ones do not, and their first match was cut off.
 

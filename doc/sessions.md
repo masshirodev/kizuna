@@ -304,6 +304,29 @@ the board fills it in later, from the conversation whose first prompt is the
 handoff's — the path of the brief, or a pasted brief's heading. See
 [Where a conversation came from](board-expansion.md#where-a-conversation-came-from).
 
+### Resuming a handed-off conversation
+
+Enter on a row marked `→ <account>`, in the picker or in a search, resumes the
+conversation the handoff became, under the account it went to — not the row
+itself. The source is the conversation that was finished when it was handed
+over, usually because its account was out of quota, so reopening it there
+undoes the handoff. The chain is followed to its end: work handed on twice
+resumes in the third conversation. The footer says `↵ resume on <account>`
+rather than naming a folder.
+
+The board resolves `target_session_id` only while the destination account is
+expanded, so a handoff may not be resolved yet when Enter is pressed. Enter
+then resolves it on the spot, the same way, from the destination's recent
+sessions. If that still finds nothing (the target never started, or its
+transcript is gone), Enter says so and leaves the picker open; it does not fall
+back to the source, which would be the wrong conversation said nowhere.
+
+`O` opens the row itself, under the account that recorded it, for when the
+finished conversation is what you want to read or continue.
+
+`kizuna <profile> resume <id>` is not redirected: an id typed in full names one
+conversation, and that is the one it opens.
+
 ## Auto-swap
 
 `A` toggles auto-swap, which is **off by default** and persisted in

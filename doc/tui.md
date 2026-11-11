@@ -263,7 +263,11 @@ as a toggle (`this account` / `all accounts`, `a` flips it) and the mode pair
 title, folder, account, or conversation id) is the line under the heading. The
 other mode is the search of what was said, in
 [session-search.md](session-search.md). The footer names the
-folder Enter will reopen the row in, and `H` hands that row off instead.
+folder Enter will reopen the row in, and `H` hands that row off instead. A row
+marked `→ <account>` was handed off, and Enter follows it to the conversation
+its work went on in, under that account; the footer then says
+`↵ resume on <account>`, and `O` opens the row itself. See
+[Resuming a handed-off conversation](sessions.md#resuming-a-handed-off-conversation).
 Headless runs (`opencode run`, `claude -p`, the wave workers) are hidden until
 `.` shows them, in this picker and the handoff picker alike; the count under the
 list says how many are hidden. See

@@ -129,3 +129,35 @@ func TestHandoffRefusesWithNothingRecorded(t *testing.T) {
 		t.Fatalf("mode = %v, status = %q", got.mode, got.status)
 	}
 }
+
+// The chain is followed to its last hand, and a hop the board has not resolved
+// is asked of the resolver rather than treated as the end of the work.
+func TestFollowHandoffsWalksTheChainForward(t *testing.T) {
+	passed := map[string]lineageLink{
+		"aaa":  {SourceSessionID: "aaa", TargetProfile: "codex-work", TargetSessionID: "bbb"},
+		"bbb":  {SourceSessionID: "bbb", TargetProfile: "ka"},
+		"loop": {SourceSessionID: "loop", TargetProfile: "ka", TargetSessionID: "pool"},
+		"pool": {SourceSessionID: "pool", TargetProfile: "kb", TargetSessionID: "loop"},
+	}
+	if _, handed, _ := followHandoffs("zzz", passed, nil); handed {
+		t.Fatal("a session never handed off was reported handed")
+	}
+	if _, handed, _ := followHandoffs("", passed, nil); handed {
+		t.Fatal("an unnamed session was followed")
+	}
+	last, handed, resolved := followHandoffs("aaa", passed, nil)
+	if !handed || resolved || last.TargetProfile != "ka" {
+		t.Fatalf("unresolved second hop = %+v, handed %v, resolved %v", last, handed, resolved)
+	}
+	asked := ""
+	last, _, resolved = followHandoffs("aaa", passed, func(link lineageLink) string {
+		asked = link.SourceSessionID
+		return "ccc"
+	})
+	if !resolved || last.TargetSessionID != "ccc" || asked != "bbb" {
+		t.Fatalf("resolved chain = %+v, resolved %v, asked about %q", last, resolved, asked)
+	}
+	if _, _, resolved := followHandoffs("loop", passed, nil); !resolved {
+		t.Fatal("a cycle did not stop where it repeats")
+	}
+}

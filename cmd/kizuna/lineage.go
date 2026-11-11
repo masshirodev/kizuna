@@ -96,3 +96,35 @@ func handedOff(links []lineageLink) map[string]lineageLink {
 	}
 	return bySession
 }
+
+// followHandoffs walks a conversation's handoffs forward to the one the work
+// is in now. A session handed on twice is followed twice: the chain is a baton
+// passed along, and the hand holding it is the last one.
+//
+// resolve is asked for a hop whose destination conversation is not known yet,
+// and answers its id or "". The walk stops at the first hop it cannot cross
+// and reports it with resolved false, so the caller can say where the work
+// went even when it cannot open it. A cycle, which a hand-edited lineage could
+// hold, stops where it would repeat rather than looping.
+func followHandoffs(id string, passed map[string]lineageLink, resolve func(lineageLink) string) (last lineageLink, handed, resolved bool) {
+	seen := map[string]bool{id: true}
+	for {
+		link, ok := passed[id]
+		if !ok || id == "" {
+			return last, handed, handed
+		}
+		handed = true
+		if link.TargetSessionID == "" && resolve != nil {
+			link.TargetSessionID = resolve(link)
+		}
+		last = link
+		if link.TargetSessionID == "" {
+			return last, true, false
+		}
+		if seen[link.TargetSessionID] {
+			return last, true, true
+		}
+		seen[link.TargetSessionID] = true
+		id = link.TargetSessionID
+	}
+}

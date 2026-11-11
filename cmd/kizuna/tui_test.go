@@ -1597,3 +1597,92 @@ func TestProfileEditorCyclesTheProviderChips(t *testing.T) {
 		t.Fatalf("the editor does not show what it launches:\n%s", view)
 	}
 }
+
+// A row handed off resumes where its work went, under the account it went to;
+// reopening the finished source under the account that ran out is what the
+// handoff was for avoiding.
+func TestResumeFollowsAHandoffToWhereTheWorkWent(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	folder := t.TempDir()
+	m := wideModel(testProfiles())
+	m.workingDir = t.TempDir()
+	source := recordedSession{session: instanceSession{id: "aaa"}, folder: folder, profile: "claude-personal"}
+	m.lineage = map[string]lineageLink{"aaa": {SourceSessionID: "aaa", SourceProfile: "claude-personal",
+		TargetProfile: "codex-work", TargetSessionID: "bbb", Folder: folder}}
+
+	target, err := m.resumeTarget(source)
+	if err != nil || target.session.id != "bbb" || target.profile != "codex-work" || target.folder != folder {
+		t.Fatalf("resumeTarget = %+v, %v, want bbb under codex-work in %s", target, err, folder)
+	}
+	plain := recordedSession{session: instanceSession{id: "ccc"}, folder: folder}
+	if got, err := m.resumeTarget(plain); err != nil || got.session.id != "ccc" {
+		t.Fatalf("a row never handed off = %+v, %v, want itself", got, err)
+	}
+
+	m.lineage["aaa"] = lineageLink{SourceSessionID: "aaa", TargetProfile: "codex-work", Folder: folder}
+	if _, err := m.resumeTarget(source); err == nil || !strings.Contains(err.Error(), "not found yet") {
+		t.Fatalf("an unresolved handoff = %v, want it reported", err)
+	}
+	m.lineage["aaa"] = lineageLink{SourceSessionID: "aaa", TargetProfile: "gone", TargetSessionID: "bbb"}
+	if _, err := m.resumeTarget(source); err == nil || !strings.Contains(err.Error(), "no longer a profile") {
+		t.Fatalf("a handoff to a deleted profile = %v, want it reported", err)
+	}
+}
+
+// The board resolves a handoff's conversation only while the destination is
+// expanded, so resuming resolves it on the spot rather than refusing.
+func TestResumeResolvesAnUnresolvedHandoff(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	folder := t.TempDir()
+	brief := filepath.Join(t.TempDir(), "HANDOFF.md")
+	if err := os.WriteFile(brief, []byte("# Handoff: the work\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	writeClaudeSession(t, root, "claude-personal", "-work", "ddd",
+		`{"type":"user","cwd":"`+folder+`","message":{"content":[{"type":"text","text":"Read `+brief+` and continue"}]}}`)
+	link := lineageLink{When: time.Now(), SourceProfile: "codex-work", SourceSessionID: "src",
+		TargetProfile: "claude-personal", Folder: folder, Brief: brief}
+	if err := appendLineage(link); err != nil {
+		t.Fatal(err)
+	}
+	m := wideModel(testProfiles())
+	m.lineage = handedOff(readLineage())
+
+	target, err := m.resumeTarget(recordedSession{session: instanceSession{id: "src"}, profile: "codex-work"})
+	if err != nil || target.session.id != "ddd" || target.profile != "claude-personal" {
+		t.Fatalf("resumeTarget = %+v, %v, want the conversation the brief opened", target, err)
+	}
+	if got := handedOff(readLineage())["src"].TargetSessionID; got != "ddd" {
+		t.Fatalf("the resolution was not recorded: %q", got)
+	}
+}
+
+// Enter on a handed-off row whose destination cannot be named says so and
+// keeps the picker up; O still reopens the row itself, and the footer names
+// both.
+func TestResumePickerOffersTheSourceBesideTheHandoff(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	folder := t.TempDir()
+	m := wideModel(testProfiles())
+	m.cursor = 1
+	m.workingDir = t.TempDir()
+	m.recent = []recordedSession{{session: instanceSession{id: "aaa", title: "the work"}, folder: folder}}
+	m.lineage = map[string]lineageLink{"aaa": {SourceSessionID: "aaa", TargetProfile: "claude-personal"}}
+	m.mode = tuiRecent
+
+	view := strings.Join(m.recentPicker(140, 20), "\n")
+	if !strings.Contains(view, "resume on claude-personal") || !strings.Contains(view, "open this one") {
+		t.Fatalf("the footer does not say where Enter goes:\n%s", view)
+	}
+
+	updated, cmd := m.updateRecent(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(tuiModel)
+	if cmd != nil || got.mode != tuiRecent || !strings.Contains(got.status, "O opens this one") {
+		t.Fatalf("an unresolved handoff resumed anyway: mode %v, status %q", got.mode, got.status)
+	}
+	updated, cmd = got.updateRecent(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("O")})
+	if got := updated.(tuiModel); cmd == nil || got.mode != tuiList {
+		t.Fatalf("O did not reopen the row itself: mode %v, status %q", got.mode, got.status)
+	}
+}
