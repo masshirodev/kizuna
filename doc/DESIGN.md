@@ -53,6 +53,11 @@ README's table lists them); this file holds what cuts across them.
   changed or logged out of (`doc/opencode-credentials.md`). Every launch
   path that takes an instance, the TUI's included, runs the same
   `prepareOpenCodeInstance`; the TUI runs it after handing over the terminal.
+  The instance's `auth.json` is set aside while the import creates its store,
+  so opencode's one-time fold of `auth.json` into credential rows finds
+  nothing there: the profile's store folded it in long ago, and a second fold
+  made a new duplicate row on every launch (`doc/opencode-credentials.md`,
+  "Duplicate logins from auth.json (c199)").
 - **Resuming a handed-off conversation resumes where its work went.** The
   pickers follow the lineage to the conversation the handoff became, under the
   account it went to, resolving it on the spot if the board has not; `O`

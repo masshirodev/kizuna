@@ -31,6 +31,19 @@ import (
 // another instance refreshed meanwhile. The receipt therefore records each
 // copied row's key and both stamps (never a value), and the merge settles
 // copied rows against it first (settleSeededCredentials).
+//
+// The instance's auth.json is set aside while the import runs. opencode 2.x
+// has a one-time schema migration (20260805200742_import_legacy_credentials)
+// that reads auth.json and adds a credential row, under a new id, for every
+// provider the store holds none of. The import is the fresh store's first
+// open, so the store is still empty when that migration runs: every launch
+// got a second row for each key auth.json holds, the receipt could not know
+// it (no archive row shares its id), and the merge added it to the profile.
+// One more duplicate per launch, for good. The profile's own store ran the
+// migration long ago, and the export reads the archive with auth.json in
+// place, so whatever auth.json holds is already among the rows the import
+// carries. auth.json goes back afterwards, unchanged (so the seed receipt's
+// hash stays true), for whatever opencode still reads from it at run time.
 
 // seededCredentialRow is one credential row an instance received at launch:
 // its primary key, the archive's time_updated when it was exported, and the
@@ -70,7 +83,18 @@ func seedOpenCodeCredentials(profile Profile, workdir, lockDir string) error {
 			return "", err
 		}
 		archiveRows = rows
-		return "", pipeOpenCodeCredentials(profile, workdir, lockDir)
+		restore, asideErr := setAsideLegacyAuth(lockDir)
+		pipeErr := pipeOpenCodeCredentials(profile, workdir, lockDir)
+		if restoreErr := restore(); restoreErr != nil && asideErr == nil {
+			asideErr = restoreErr
+		}
+		if pipeErr != nil {
+			return "", pipeErr
+		}
+		if asideErr != nil {
+			return "", fmt.Errorf("auth.json: %w", asideErr)
+		}
+		return "", nil
 	})
 	// Recorded even after a failed import: whatever did land must still be
 	// recognised as a copy at merge time, or its fresh stamp would win there.
@@ -83,6 +107,25 @@ func seedOpenCodeCredentials(profile Profile, workdir, lockDir string) error {
 		err = readErr
 	}
 	return err
+}
+
+// legacyAuthAside is where an instance's auth.json waits during the import.
+const legacyAuthAside = "auth.json.kizuna-aside"
+
+// setAsideLegacyAuth moves an instance's auth.json out of opencode's sight
+// and returns how to put it back. An instance without one has nothing to
+// restore. When the move fails the import goes ahead anyway: a duplicate
+// row is a lesser harm than an instance without the profile's providers.
+func setAsideLegacyAuth(lockDir string) (restore func() error, err error) {
+	path := filepath.Join(lockDir, "data", "opencode", "auth.json")
+	aside := filepath.Join(lockDir, "data", "opencode", legacyAuthAside)
+	if err := os.Rename(path, aside); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			err = nil
+		}
+		return func() error { return nil }, err
+	}
+	return func() error { return os.Rename(aside, path) }, nil
 }
 
 // pipeOpenCodeCredentials runs `auth export` against the archive with its

@@ -25,7 +25,8 @@ func writeCredentialDB(t *testing.T, path string, stmts ...string) {
 
 // fakeOpenCodeAuth writes a stand-in 2.x opencode that logs each call as
 // "<XDG_DATA_HOME>|<args>". Its export prints a marker; its import saves what
-// it read on stdin beside the store and puts the prepared instance store in
+// it read on stdin beside the store, notes whether auth.json was there to
+// be folded in ("auth-at-import"), and puts the prepared instance store in
 // place, which is what the real import leaves behind. exportStatus is the
 // exit status export ends with.
 func fakeOpenCodeAuth(t *testing.T, instanceStore string, exportStatus int) (binary, log string) {
@@ -36,7 +37,9 @@ func fakeOpenCodeAuth(t *testing.T, instanceStore string, exportStatus int) (bin
 	script := "#!/bin/sh\n" +
 		"echo \"$XDG_DATA_HOME|$*\" >> " + log + "\n" +
 		"if [ \"$1 $2\" = 'auth export' ]; then echo exported-from-archive; echo 'archive locked' >&2; exit " + strconv.Itoa(exportStatus) + "; fi\n" +
-		"if [ \"$1 $2\" = 'auth import' ]; then mkdir -p \"$XDG_DATA_HOME/opencode\"; cat > \"$XDG_DATA_HOME/opencode/imported\"; cp " + instanceStore + " \"$XDG_DATA_HOME/opencode/opencode.db\"; fi\n" +
+		"if [ \"$1 $2\" = 'auth import' ]; then mkdir -p \"$XDG_DATA_HOME/opencode\"; cat > \"$XDG_DATA_HOME/opencode/imported\"; " +
+		"if [ -e \"$XDG_DATA_HOME/opencode/auth.json\" ]; then touch \"$XDG_DATA_HOME/opencode/auth-at-import\"; fi; " +
+		"cp " + instanceStore + " \"$XDG_DATA_HOME/opencode/opencode.db\"; fi\n" +
 		"exit 0\n"
 	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
 		t.Fatal(err)
@@ -61,6 +64,10 @@ func TestLaunchCarriesTheProfilesCredentialsIntoTheInstance(t *testing.T) {
 		`INSERT INTO credential VALUES ('cred_a', 'anthropic', 'Anthropic', 'k', 1, 100, 100)`,
 		`INSERT INTO credential VALUES ('cred_skipped', 'other', 'Other', 'k', 1, 200, 200)`,
 		`INSERT INTO control_account VALUES ('me@example.com', 'https://x', 't', 300)`)
+	legacyAuth := []byte(`{"anthropic":{"type":"api","key":"k"}}`)
+	if err := os.WriteFile(filepath.Join(workdir, "data", "opencode", "auth.json"), legacyAuth, 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	dir, unlock, err := acquireIsolatedInstance(profile, workdir)
 	if err != nil {
@@ -71,6 +78,15 @@ func TestLaunchCarriesTheProfilesCredentialsIntoTheInstance(t *testing.T) {
 	prepareOpenCodeInstance(profile, workdir, dir, "/work", nil, &stderr)
 	if stderr.Len() > 0 {
 		t.Fatalf("seeding reported: %s", stderr.String())
+	}
+	// The import creates the store, and with it opencode's one-time fold of
+	// auth.json into fresh credential rows: it must find no auth.json then,
+	// and the instance must have it back, unchanged, afterwards.
+	if _, err := os.Stat(filepath.Join(dir, "data", "opencode", "auth-at-import")); err == nil {
+		t.Fatal("auth.json was in the instance while the import created its store")
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "data", "opencode", "auth.json")); !bytes.Equal(got, legacyAuth) {
+		t.Fatalf("instance auth.json after the import = %q, want the profile's", got)
 	}
 
 	calls := readCalls(t, log)
@@ -357,6 +373,14 @@ func TestRealOpenCodeCarriesCredentialsAndLogouts(t *testing.T) {
 		return queryCell(t, archive, `SELECT time_updated FROM credential WHERE id='`+id+`'`)
 	}
 	kept := stamp("cred_kizunatest0002")
+	// A profile from before 2.x still has auth.json beside a store that
+	// folded it in long ago. A fresh instance store folds it in again on its
+	// first open, as a new row with a new id, unless kizuna keeps it out of
+	// the way: that row merged back as one more duplicate on every launch.
+	if err := os.WriteFile(filepath.Join(workdir, "data", "opencode", "auth.json"),
+		[]byte(`{"anthropic":{"type":"api","key":"not-a-real-key-1"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	dir, unlock, err := acquireIsolatedInstance(profile, workdir)
 	if err != nil {
@@ -402,4 +426,18 @@ func mustJSON(t *testing.T, value any) []byte {
 		t.Fatal(err)
 	}
 	return encoded
+}
+
+func TestSetAsideLegacyAuthWithoutAnAuthFileHasNothingToRestore(t *testing.T) {
+	dir := t.TempDir()
+	restore, err := setAsideLegacyAuth(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restore(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "data", "opencode", "auth.json")); !os.IsNotExist(err) {
+		t.Fatal("restoring created an auth.json the instance never had")
+	}
 }
