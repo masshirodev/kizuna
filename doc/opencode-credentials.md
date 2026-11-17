@@ -55,6 +55,48 @@ Rows the instance created itself are not in the receipt and merge
 newest-wins, as before. So does every row of an instance launched by a kizuna
 from before this change, whose receipt lists no credentials.
 
+## Duplicate logins from auth.json (c199)
+
+Seen on 2026-11-17: OpenCode's "Connected accounts" list for OpenCode Go
+showed the same key four, then seven times. The `opencode` profile's
+archive held seven `opencode-go` rows for four keys, and `opencode2` held
+five rows for one key, one more for every launch since 2026-11-16.
+
+OpenCode 2.x has a one-time schema migration,
+`20260805200742_import_legacy_credentials`. On a store's first open it reads
+`auth.json` and adds a credential row, under a new id, for each provider the
+store has no row for. Every profile here ran it on 2026-10-24, folding its
+pre-2.x `opencode-go` key in. But the seed still copied `auth.json` into
+each instance, and the instance's store is created by the credential import
+(step 3 above), so the migration ran there too, on a store that was still
+empty: a second row for the same key, created a second before the import
+wrote the archive's copy. The receipt cannot match it (no archive row shares
+its id), so the merge treated it as a row the instance made and added it to
+the archive. Fixed on 2026-11-17.
+
+**What kizuna does now:** `seedOpenCodeCredentials` renames the instance's
+`auth.json` to `auth.json.kizuna-aside` for the length of the import and
+renames it back after, whether the import worked or not. The migration runs
+during the import, finds no `auth.json`, and is recorded as done in the
+instance's store, so it never runs there again. Nothing is lost by it: the
+export opens the archive with `auth.json` in place, so whatever that file
+holds is already among the archive's rows, and the import carries them. The
+file comes back unchanged, so the receipt's `auth_sha256` stays true and the
+merge leaves the profile's copy alone; it stays for whatever OpenCode still
+reads from it at run time (the GitLab provider does).
+
+When the rename fails, the import goes ahead anyway and the failure is
+reported: one duplicate row is a lesser harm than an instance without the
+profile's providers. A profile with no stored credentials runs no import,
+and its first launch folds `auth.json` in inside the instance, which the
+merge then carries back once, as before.
+
+**What it does not do:** it removes no duplicate already in an archive.
+Deciding that two rows are the same login means comparing their secrets,
+which kizuna never reads. They are removed by hand, from OpenCode's own
+account list, or once with SQL against the archive while no instance of the
+profile runs.
+
 ## The TUI path
 
 The first version of this fix ran only for `kizuna <profile>` and `resume`
@@ -120,4 +162,11 @@ reaches the background service, not only `login`, so
 - `TestRealOpenCodeCarriesCredentialsAndLogouts`: the real 2.x binary on
   stores it creates with made-up keys (no operator data). A stored key
   reaches the instance, an untouched copy does not restamp the archive, and
-  a logout in the instance reaches the archive.
+  a logout in the instance reaches the archive. The profile also holds an
+  `auth.json` written after its store, as every pre-2.x profile does, and
+  the instance must still hold exactly the profile's two rows (it held
+  three before the fix).
+- `TestLaunchCarriesTheProfilesCredentialsIntoTheInstance` also checks that
+  the stand-in import found no `auth.json` and that the instance has it back
+  unchanged afterwards; `TestSetAsideLegacyAuthWithoutAnAuthFileHasNothingToRestore`
+  covers an instance without one.
