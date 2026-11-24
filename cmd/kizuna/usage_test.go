@@ -100,7 +100,7 @@ func TestUsageCarriesWhenEachWindowResets(t *testing.T) {
 	reset := now.Add(90 * time.Minute)
 	used := 82.0
 	windows := []*codexRateLimitWindow{{UsedPercent: &used, WindowMinutes: 300, ResetsAt: reset.Unix()}}
-	got := codexWindowsRemaining(windows, now)
+	got := codexWindowsRemaining(windows, now, now)
 	if !got.FiveHour.Resets.Equal(reset) {
 		t.Fatalf("codex reset = %s, want %s", got.FiveHour.Resets, reset)
 	}

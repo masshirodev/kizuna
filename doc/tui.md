@@ -124,7 +124,11 @@ The gauges show the remaining five-hour and weekly quotas reported by each
 account's own local CLI cache, along with when each window rolls over. Codex is
 read from the newest rate-limit events in that profile's session logs; Claude
 Code is read from its cached usage utilization. `…` means the caches have not
-been read yet; `—` means a window is expired or unavailable. This is
+been read yet; `—` means a window is unavailable, or stale: it has rolled over
+since the cache was last written (the cache is only refreshed while a session
+runs on that profile), so the old figure no longer says anything.
+`kizuna usage` prints the same readings for scripts, and says which windows are
+stale ([doc/usage.md](usage.md)). This is
 intentionally profile-local and does not use OpenUsage, so multiple accounts for
 the same provider stay separate. Credential files are never opened.
 

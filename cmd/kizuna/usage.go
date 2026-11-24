@@ -18,15 +18,60 @@ type usageWindow struct {
 	// The percentage alone cannot tell a quota about to refill from one that has
 	// to last the rest of the week.
 	Resets time.Time
+	// Stale marks a window the cache did report, but whose figure has gone out
+	// of date: the window has rolled over since the reading was taken, so it
+	// has probably refilled. A stale window is never Known, and Resets then
+	// holds the rollover that already passed (zero when the provider gave none
+	// and the age of the reading alone settled it). Readers that only show
+	// current figures (the TUI) treat it as unknown; `kizuna usage` says so.
+	Stale bool
 }
 
 type usageRemaining struct {
 	FiveHour usageWindow
 	Weekly   usageWindow
+	// FetchedAt is when the provider took the reading, zero when it did not
+	// say. The cache is refreshed only while a session runs on the profile, so
+	// an idle profile's reading can be weeks old.
+	FetchedAt time.Time
 }
 
 func (usage usageRemaining) known() bool {
 	return usage.FiveHour.Known || usage.Weekly.Known
+}
+
+func (usage usageRemaining) stale() bool {
+	return usage.FiveHour.Stale || usage.Weekly.Stale
+}
+
+// read reports whether the cache held any reading for the profile at all,
+// current or stale.
+func (usage usageRemaining) read() bool {
+	return usage.known() || usage.stale()
+}
+
+const (
+	fiveHourLength = 5 * time.Hour
+	weeklyLength   = 7 * 24 * time.Hour
+)
+
+// windowFigure turns one cached window into what is left of it now. A window
+// whose reset has passed since the reading is stale, never the old figure. So
+// is one with no reset time whose reading is older than the window itself:
+// it has rolled over at least once since, whatever its reset was.
+func windowFigure(used *float64, resets, fetchedAt, now time.Time, length time.Duration) usageWindow {
+	if !resets.IsZero() && !now.Before(resets) {
+		return usageWindow{Stale: true, Resets: resets}
+	}
+	if used == nil {
+		return usageWindow{}
+	}
+	if resets.IsZero() && !fetchedAt.IsZero() && now.Sub(fetchedAt) >= length {
+		return usageWindow{Stale: true}
+	}
+	remaining := remainingFromUsed(*used)
+	remaining.Resets = resets
+	return remaining
 }
 
 // profileUsageRemaining reads only quota caches written inside the selected
@@ -74,14 +119,24 @@ func codexUsageRemaining(sessionsDir string, now time.Time) usageRemaining {
 		return nil
 	})
 	sort.Slice(files, func(i, j int) bool { return files[i].modTime.After(files[j].modTime) })
+	var newestStale usageRemaining
 	for _, file := range files {
-		if usage, found := codexUsageFromSession(file.path, now); found {
+		usage, found := codexUsageFromSession(file.path, file.modTime, now)
+		if !found {
+			continue
+		}
+		if usage.known() {
 			// One rate-limit event carries every window currently applicable to
 			// the account. Older session files may contain obsolete plan limits.
 			return usage
 		}
+		if !newestStale.read() {
+			newestStale = usage
+		}
 	}
-	return usageRemaining{}
+	// No file holds a current figure. The newest stale reading is the honest
+	// answer: older files only hold older readings of the same windows.
+	return newestStale
 }
 
 type codexRateLimitWindow struct {
@@ -90,7 +145,10 @@ type codexRateLimitWindow struct {
 	ResetsAt      int64    `json:"resets_at"`
 }
 
-func codexUsageFromSession(path string, now time.Time) (usageRemaining, bool) {
+// codexUsageFromSession reads the rate-limit events of one session file. Each
+// event's own timestamp dates the reading; a file whose events carry none is
+// dated by its modification time, the last moment Codex wrote to it.
+func codexUsageFromSession(path string, modTime, now time.Time) (usageRemaining, bool) {
 	file, err := os.Open(path)
 	if err != nil {
 		return usageRemaining{}, false
@@ -102,7 +160,8 @@ func codexUsageFromSession(path string, now time.Time) (usageRemaining, bool) {
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
 		var event struct {
-			Payload struct {
+			Timestamp string `json:"timestamp"`
+			Payload   struct {
 				RateLimits *struct {
 					Primary         *codexRateLimitWindow `json:"primary"`
 					Secondary       *codexRateLimitWindow `json:"secondary"`
@@ -118,35 +177,42 @@ func codexUsageFromSession(path string, now time.Time) (usageRemaining, bool) {
 			event.Payload.RateLimits.Secondary,
 			event.Payload.RateLimits.IndividualLimit,
 		}
-		remaining := codexWindowsRemaining(windows, now)
-		if remaining.FiveHour.Known {
-			latest.FiveHour = remaining.FiveHour
+		fetchedAt := modTime
+		if stamp, err := time.Parse(time.RFC3339Nano, event.Timestamp); err == nil {
+			fetchedAt = stamp
 		}
-		if remaining.Weekly.Known {
-			latest.Weekly = remaining.Weekly
+		remaining := codexWindowsRemaining(windows, fetchedAt, now)
+		// A later event supersedes an earlier one, except that a stale window
+		// never displaces a current figure.
+		took := false
+		if remaining.FiveHour.Known || remaining.FiveHour.Stale && !latest.FiveHour.Known {
+			latest.FiveHour, took = remaining.FiveHour, true
+		}
+		if remaining.Weekly.Known || remaining.Weekly.Stale && !latest.Weekly.Known {
+			latest.Weekly, took = remaining.Weekly, true
+		}
+		if took {
+			latest.FetchedAt = fetchedAt
 		}
 	}
-	return latest, latest.known()
+	return latest, latest.read()
 }
 
-func codexWindowsRemaining(windows []*codexRateLimitWindow, now time.Time) usageRemaining {
+func codexWindowsRemaining(windows []*codexRateLimitWindow, fetchedAt, now time.Time) usageRemaining {
 	var result usageRemaining
 	for _, window := range windows {
 		if window == nil || window.UsedPercent == nil {
 			continue
 		}
-		if window.ResetsAt > 0 && now.Unix() >= window.ResetsAt {
-			continue
-		}
-		remaining := remainingFromUsed(*window.UsedPercent)
+		var resets time.Time
 		if window.ResetsAt > 0 {
-			remaining.Resets = time.Unix(window.ResetsAt, 0)
+			resets = time.Unix(window.ResetsAt, 0)
 		}
 		switch window.WindowMinutes {
 		case 300:
-			result.FiveHour = mostConstrained(result.FiveHour, remaining)
+			result.FiveHour = mostConstrained(result.FiveHour, windowFigure(window.UsedPercent, resets, fetchedAt, now, fiveHourLength))
 		case 10080:
-			result.Weekly = mostConstrained(result.Weekly, remaining)
+			result.Weekly = mostConstrained(result.Weekly, windowFigure(window.UsedPercent, resets, fetchedAt, now, weeklyLength))
 		}
 	}
 	return result
@@ -166,6 +232,7 @@ func claudeUsageRemaining(path string, now time.Time) usageRemaining {
 	}
 	var state struct {
 		CachedUsage struct {
+			FetchedAtMs int64 `json:"fetchedAtMs"`
 			Utilization struct {
 				Limits   []limit `json:"limits"`
 				FiveHour limit   `json:"five_hour"`
@@ -176,14 +243,14 @@ func claudeUsageRemaining(path string, now time.Time) usageRemaining {
 	if json.Unmarshal(data, &state) != nil {
 		return usageRemaining{}
 	}
-	windowRemaining := func(window limit) usageWindow {
+	var result usageRemaining
+	if ms := state.CachedUsage.FetchedAtMs; ms > 0 {
+		result.FetchedAt = time.UnixMilli(ms)
+	}
+	windowRemaining := func(window limit, length time.Duration) usageWindow {
 		var resets time.Time
 		if window.ResetsAt != "" {
-			reset, err := time.Parse(time.RFC3339Nano, window.ResetsAt)
-			if err == nil {
-				if !now.Before(reset) {
-					return usageWindow{}
-				}
+			if reset, err := time.Parse(time.RFC3339Nano, window.ResetsAt); err == nil {
 				resets = reset
 			}
 		}
@@ -191,38 +258,41 @@ func claudeUsageRemaining(path string, now time.Time) usageRemaining {
 		if used == nil {
 			used = window.Utilization
 		}
-		if used == nil {
-			return usageWindow{}
-		}
-		remaining := remainingFromUsed(*used)
-		remaining.Resets = resets
-		return remaining
+		return windowFigure(used, resets, result.FetchedAt, now, length)
 	}
 
-	var result usageRemaining
 	limits := state.CachedUsage.Utilization.Limits
 	if len(limits) == 0 {
-		result.FiveHour = windowRemaining(state.CachedUsage.Utilization.FiveHour)
-		result.Weekly = windowRemaining(state.CachedUsage.Utilization.SevenDay)
+		result.FiveHour = windowRemaining(state.CachedUsage.Utilization.FiveHour, fiveHourLength)
+		result.Weekly = windowRemaining(state.CachedUsage.Utilization.SevenDay, weeklyLength)
 		return result
 	}
 	for _, window := range limits {
-		remaining := windowRemaining(window)
 		switch {
 		case window.Group == "session" || window.Kind == "session":
-			result.FiveHour = mostConstrained(result.FiveHour, remaining)
+			result.FiveHour = mostConstrained(result.FiveHour, windowRemaining(window, fiveHourLength))
 		case window.Group == "weekly" || window.Kind == "weekly_all":
-			result.Weekly = mostConstrained(result.Weekly, remaining)
+			result.Weekly = mostConstrained(result.Weekly, windowRemaining(window, weeklyLength))
 		}
 	}
 	return result
 }
 
+// mostConstrained keeps the tighter of two readings of the same window. A
+// current figure always beats a stale one, and a stale one beats nothing, so
+// an out-of-date window is reported as such rather than as unknown.
 func mostConstrained(current, candidate usageWindow) usageWindow {
-	if !candidate.Known || current.Known && current.Percent <= candidate.Percent {
+	switch {
+	case candidate.Known:
+		if current.Known && current.Percent <= candidate.Percent {
+			return current
+		}
+		return candidate
+	case current.Known || current.Stale:
 		return current
+	default:
+		return candidate
 	}
-	return candidate
 }
 
 func remainingFromUsed(used float64) usageWindow {

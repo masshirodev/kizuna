@@ -64,3 +64,14 @@ README's table lists them); this file holds what cuts across them.
   opens the source itself. An unresolvable handoff is reported, never
   silently replaced by the source (`doc/sessions.md`, "Resuming a handed-off
   conversation").
+- **`kizuna usage` reports a stale reading as stale, never as its old
+  figure.** Every provider refreshes its quota cache only while a session
+  runs on the profile, and kizuna never calls a usage endpoint with the
+  profile's token, so an idle profile's reading can be weeks old. A window
+  whose reset has passed since the reading, or that has no reset time and was
+  read longer ago than the window lasts, is stale: `remaining` is `null` and
+  the profile's `stale` is true. The TUI shows such a window as unavailable,
+  as it already did for a passed reset. `--json` is a contract other tools
+  (Kantoku's per-profile quota reserve) read, with its own exit codes, and any
+  command given `--json` keeps stdout for the JSON alone: stray-instance notes
+  go to stderr (`doc/usage.md`).

@@ -77,6 +77,10 @@ profile's stored defaults. See [doc/running.md](doc/running.md#run).
   by a mod instead of keys typed over your draft. See
   [doc/agent-messaging.md](doc/agent-messaging.md) and
   [doc/inbox-mod.md](doc/inbox-mod.md).
+- **Quota for scripts.** `kizuna usage <profile> --json` prints what each
+  window has left and when it resets, and says when the reading is stale, so a
+  script can pick the account with room before it launches. See
+  [doc/usage.md](doc/usage.md).
 - **A watchdog for agents left waiting.** `kizuna watchdog self --idle 30m
   "…"` types a nudge at an agent that sits idle past its deadline, so a hung
   background job cannot leave it waiting all night. See
@@ -114,6 +118,7 @@ on right now.
 | How a fresh OpenCode instance gets the profile's connected providers | [doc/opencode-credentials.md](doc/opencode-credentials.md) |
 | Searching what was said across every account: `ctrl+f`, `kizuna search` | [doc/session-search.md](doc/session-search.md) |
 | Agents finding and messaging each other: `kizuna peers`, `kizuna send` | [doc/agent-messaging.md](doc/agent-messaging.md) |
+| Quota left per profile, for scripts: `kizuna usage [--json]`, its JSON and exit codes | [doc/usage.md](doc/usage.md) |
 | How an idle Claude agent gets a message with nothing typed: the kizuna-inbox mod | [doc/inbox-mod.md](doc/inbox-mod.md) |
 | Nudging an agent left idle past a deadline: `kizuna watchdog` | [doc/watchdog.md](doc/watchdog.md) |
 | Reopening every session a power cut killed: `kizuna resume-all` | [doc/restore.md](doc/restore.md) |
