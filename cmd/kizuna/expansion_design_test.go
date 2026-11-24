@@ -64,10 +64,10 @@ func expansionDesignModel(t *testing.T) tuiModel {
 	billing := filepath.Join(home, "work/billing")
 	m := tuiModel{profiles: profiles, width: 150, height: 42, loaded: true, workingDir: ai, now: now, update: updateStatus{Known: true, Behind: 3}}
 	m.usage = map[string]usageRemaining{
-		"codex-personal":  {w(82, at(23, 10, 0)), w(64, at(9, 0, 3))},
-		"codex-work":      {w(12, at(19, 55, 0)), w(41, at(9, 0, 2))},
-		"claude-personal": {w(7, at(21, 40, 0)), w(22, at(9, 0, 1))},
-		"claude-max":      {w(91, at(22, 5, 0)), w(78, at(9, 0, 5))},
+		"codex-personal":  {FiveHour: w(82, at(23, 10, 0)), Weekly: w(64, at(9, 0, 3))},
+		"codex-work":      {FiveHour: w(12, at(19, 55, 0)), Weekly: w(41, at(9, 0, 2))},
+		"claude-personal": {FiveHour: w(7, at(21, 40, 0)), Weekly: w(22, at(9, 0, 1))},
+		"claude-max":      {FiveHour: w(91, at(22, 5, 0)), Weekly: w(78, at(9, 0, 5))},
 	}
 	m.live = []profileInstance{
 		{profile: "codex-work", pid: 39021, folder: billing, started: now.Add(-185 * time.Minute), session: instanceSession{title: "Migrate billing webhooks"}},

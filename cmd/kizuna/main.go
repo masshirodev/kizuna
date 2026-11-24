@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -111,6 +112,13 @@ type Settings struct {
 func main() {
 	migrateLegacyConfig(os.Stderr)
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		var status exitStatus
+		if errors.As(err, &status) {
+			if status.err != nil {
+				fmt.Fprintln(os.Stderr, "error:", status.err)
+			}
+			os.Exit(status.code)
+		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -134,9 +142,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	// Power-offs, term kills, and SIGKILLs never run an exit merge. Reclaim
-	// those stray stores now, before anything else touches the profiles.
+	// those stray stores now, before anything else touches the profiles. A
+	// command asked for JSON keeps stdout for the JSON alone, so a script's
+	// parser never meets a note.
+	notes := stdout
+	if wantsJSON(args) {
+		notes = stderr
+	}
 	for _, note := range reclaimStrayIsolatedInstances(cfg) {
-		fmt.Fprintln(stdout, note)
+		fmt.Fprintln(notes, note)
 	}
 
 	switch args[0] {
@@ -258,6 +272,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return inboxCommand(cfg, args[1:], os.Stdin, stdout)
 	case "watchdog":
 		return watchdogCommand(cfg, args[1:], stdout)
+	case "usage":
+		return usageCommand(cfg, args[1:], time.Now(), stdout)
 	case "path":
 		path, err := profileRoot()
 		if err != nil {
@@ -1157,6 +1173,16 @@ func validName(value string) bool {
 	return true
 }
 
+// wantsJSON reports whether the command line asks for machine-readable output.
+func wantsJSON(args []string) bool {
+	for _, arg := range args {
+		if arg == "--json" {
+			return true
+		}
+	}
+	return false
+}
+
 func usage(w io.Writer) {
 	fmt.Fprintln(w, "kizuna - isolated local profiles for AI CLI accounts")
 	fmt.Fprintln(w, "")
@@ -1191,6 +1217,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  kizuna <profile> resume [session-id]        reopen a recent conversation")
 	fmt.Fprintln(w, "  kizuna env <profile>")
 	fmt.Fprintln(w, "  kizuna resume-all [--busy] [-n] [--forget]  after a power cut, reopen every session it killed, each in its ranma workspace")
+	fmt.Fprintln(w, "  kizuna usage [--json] [profile|app]         quota left per window, from each profile's own cache (exit 0 known, 2 no such profile, 3 stale, 4 unknown)")
 	fmt.Fprintln(w, "  kizuna peers [--json] [repo]                every running agent: where it works, busy or idle, its pane")
 	fmt.Fprintln(w, "  kizuna search [--print|--json] <query>      find past conversations, in every account, by what was said in them")
 	fmt.Fprintln(w, "  kizuna send [--type|--no-type] <id> [text]  leave a running agent a message (text from stdin if left out)")
